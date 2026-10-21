@@ -2,7 +2,13 @@
 //! independent parse unit.
 
 pub mod decode;
+mod fast;
 
+thread_local! {
+    static PLANS: std::cell::RefCell<fast::PlanCache> = Default::default();
+}
+
+use std::borrow::Cow;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -41,18 +47,53 @@ impl Artifact for EvtxArtifact {
     }
 }
 
+/// Where the bytes come from. Files are read with positional reads, one
+/// chunk at a time, straight into the buffer the parser owns: resident
+/// memory stays bounded whatever the file size (an mmap would count every
+/// touched page; see DECISIONS.md D-021).
 enum Data {
-    Mmap(memmap2::Mmap),
+    File { file: std::fs::File, len: u64 },
     Owned(Vec<u8>),
 }
 
 impl Data {
-    fn bytes(&self) -> &[u8] {
+    fn len(&self) -> u64 {
         match self {
-            Data::Mmap(m) => m,
-            Data::Owned(v) => v,
+            Data::File { len, .. } => *len,
+            Data::Owned(v) => v.len() as u64,
         }
     }
+
+    /// Reads `[off, off + n)`, clamped to the end of the input.
+    fn read(&self, off: u64, n: usize) -> std::io::Result<Cow<'_, [u8]>> {
+        let end = (off + n as u64).min(self.len());
+        if off >= end {
+            return Ok(Cow::Borrowed(&[]));
+        }
+        match self {
+            Data::Owned(v) => Ok(Cow::Borrowed(&v[off as usize..end as usize])),
+            Data::File { file, .. } => {
+                let mut buf = vec![0u8; (end - off) as usize];
+                read_exact_at(file, &mut buf, off)?;
+                Ok(Cow::Owned(buf))
+            }
+        }
+    }
+}
+
+fn read_exact_at(file: &std::fs::File, mut buf: &mut [u8], mut off: u64) -> std::io::Result<()> {
+    while !buf.is_empty() {
+        #[cfg(unix)]
+        let n = std::os::unix::fs::FileExt::read_at(file, buf, off)?;
+        #[cfg(windows)]
+        let n = std::os::windows::fs::FileExt::seek_read(file, buf, off)?;
+        if n == 0 {
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
+        }
+        buf = &mut buf[n..];
+        off += n as u64;
+    }
+    Ok(())
 }
 
 pub struct EvtxSource {
@@ -62,6 +103,7 @@ pub struct EvtxSource {
     units: usize,
     settings: Arc<ParserSettings>,
     validate: bool,
+    slow: bool,
     warnings: Vec<String>,
 }
 
@@ -69,21 +111,9 @@ impl EvtxSource {
     pub fn open(path: &Path, opts: &ParseOptions) -> anyhow::Result<EvtxSource> {
         let file =
             std::fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
+        // Opened read-only: evidence is never written.
         let len = file.metadata()?.len();
-        // Read-only private mapping: evidence is never written. Empty files
-        // cannot be mapped on every platform, so they get an empty buffer.
-        let data = if len == 0 {
-            Data::Owned(Vec::new())
-        } else {
-            // SAFETY: the map is read-only. If another process truncates the
-            // file while we read it, the OS may raise SIGBUS; evidence files
-            // are expected to be stable copies (see SKILL.md step a).
-            match unsafe { memmap2::Mmap::map(&file) } {
-                Ok(m) => Data::Mmap(m),
-                Err(_) => Data::Owned(std::fs::read(path)?),
-            }
-        };
-        Self::from_data(path.to_path_buf(), data, opts)
+        Self::from_data(path.to_path_buf(), Data::File { file, len }, opts)
     }
 
     pub fn from_bytes(
@@ -95,15 +125,18 @@ impl EvtxSource {
     }
 
     fn from_data(path: PathBuf, data: Data, opts: &ParseOptions) -> anyhow::Result<EvtxSource> {
-        let bytes = data.bytes();
+        let len = data.len();
         let mut warnings = Vec::new();
-        if bytes.len() < FILE_HEADER_SIZE {
+        if len < FILE_HEADER_SIZE as u64 {
             anyhow::bail!(
-                "{}: too small to be an EVTX file ({} bytes)",
-                path.display(),
-                bytes.len()
+                "{}: too small to be an EVTX file ({len} bytes)",
+                path.display()
             );
         }
+        let sample = FILE_HEADER_SIZE + CHUNK_SIZE;
+        let (head_r, tail_r) = FileKey::sample_ranges(len, sample);
+        let head = data.read(head_r.0, (head_r.1 - head_r.0) as usize)?;
+        let bytes: &[u8] = &head;
         // A "dirty" header flag is normal for a log copied from a live system,
         // so it is not reported.
         match evtx::EvtxFileHeader::from_bytes(bytes) {
@@ -116,14 +149,20 @@ impl EvtxSource {
                 warnings.push(format!("invalid file header, scanning chunks anyway: {e}"));
             }
         }
-        let body = bytes.len() - FILE_HEADER_SIZE;
+        let body = (len - FILE_HEADER_SIZE as u64) as usize;
         let mut units = body / CHUNK_SIZE;
         let tail = body % CHUNK_SIZE;
         if tail > 0 {
             warnings.push(format!("file truncated: last chunk has {tail} of {CHUNK_SIZE} bytes, recovering what parses"));
             units += 1;
         }
-        let key = FileKey::fingerprint(bytes, FILE_HEADER_SIZE + CHUNK_SIZE);
+        let tail = match tail_r {
+            Some((a, b)) => Some(data.read(a, (b - a) as usize)?),
+            None => None,
+        };
+        let key = FileKey::from_samples(len, bytes, tail.as_deref());
+        drop(tail);
+        drop(head);
         let settings = ParserSettings::new()
             .validate_checksums(opts.validate_checksums)
             .num_threads(1);
@@ -134,22 +173,44 @@ impl EvtxSource {
             units,
             settings: Arc::new(settings),
             validate: opts.validate_checksums,
+            slow: opts.slow_decoder,
             warnings,
         })
     }
 
-    fn chunk_bytes(&self, unit: usize) -> &[u8] {
-        let b = self.data.bytes();
-        let start = FILE_HEADER_SIZE + unit * CHUNK_SIZE;
-        &b[start..(start + CHUNK_SIZE).min(b.len())]
+    fn chunk_bytes(&self, unit: usize) -> std::io::Result<Cow<'_, [u8]>> {
+        self.data
+            .read((FILE_HEADER_SIZE + unit * CHUNK_SIZE) as u64, CHUNK_SIZE)
     }
 
     fn parse_chunk(&self, unit: usize, sink: &mut dyn Sink, rep: &mut UnitReport) {
-        let raw = self.chunk_bytes(unit);
+        let raw = match self.chunk_bytes(unit) {
+            Ok(r) => r,
+            Err(e) => {
+                rep.bad_unit = true;
+                rep.note(|| format!("chunk {unit}: read error: {e}"));
+                return;
+            }
+        };
+        let raw: &[u8] = &raw;
         if raw.iter().all(|&b| b == 0) {
             return; // preallocated, never written
         }
         let partial = raw.len() < CHUNK_SIZE;
+        if !self.slow && !partial {
+            let checked = !self.validate
+                || EvtxChunkData::new(raw.to_vec(), true).is_ok_and(|c| c.validate_checksum());
+            if checked {
+                let done = PLANS.with(|c| {
+                    let mut cache = c.borrow_mut();
+                    fast::decode_chunk(raw, self.key, &mut cache, sink, &mut rep.records)
+                });
+                if done {
+                    rep.fast = true;
+                    return;
+                }
+            }
+        }
         let mut buf = Vec::with_capacity(CHUNK_SIZE);
         buf.extend_from_slice(raw);
         buf.resize(CHUNK_SIZE, 0);
@@ -269,22 +330,28 @@ impl Source for EvtxSource {
         self.units
     }
     fn byte_len(&self) -> u64 {
-        self.data.bytes().len() as u64
+        self.data.len()
     }
     fn open_warnings(&self) -> &[String] {
         &self.warnings
     }
     fn unit_record_range(&self, unit: usize) -> Option<(u64, u64)> {
-        let raw = self.chunk_bytes(unit);
+        let raw = self
+            .data
+            .read((FILE_HEADER_SIZE + unit * CHUNK_SIZE) as u64, 512)
+            .ok()?;
         if raw.len() < 512 || !raw.starts_with(CHUNK_MAGIC) {
             return None;
         }
-        EvtxChunkHeader::from_bytes(raw)
+        EvtxChunkHeader::from_bytes(&raw)
             .ok()
             .map(|h| (h.first_event_record_id, h.last_event_record_id))
     }
     fn raw_record(&self, unit: usize, record: u64) -> Option<anyhow::Result<String>> {
-        let raw = self.chunk_bytes(unit);
+        let raw = match self.chunk_bytes(unit) {
+            Ok(r) => r,
+            Err(e) => return Some(Err(e.into())),
+        };
         let mut buf = raw.to_vec();
         buf.resize(CHUNK_SIZE, 0);
         let res = catch_unwind(AssertUnwindSafe(|| -> Option<anyhow::Result<String>> {

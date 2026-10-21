@@ -53,10 +53,21 @@ checks:
   severity: medium
   sources:
   - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/Security/LogonLogoff/SpecialLogon/Sec_4672_Info_AdminLogon.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0002-Execution/T1047-Windows Management Instrumentation/ID4688-5145-WMIexec
+    execution via SMB.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/LogonLogoff/SpecialLogon/Sec_4672_Info_AdminLogon.yml
   verified: false
-  notes: Only one independent rule source was read (Hayabusa, which treats it as informational and filters
-    system and machine accounts). It is a baseline-deviation check, not a signature. Microsoft Learn was
-    unreachable from the research sandbox, so field semantics were not checked against the vendor page.
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4672: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: Only
+    one independent rule source was read (Hayabusa, which treats it as informational and filters system
+    and machine accounts). JPCERT sheets mentioning the same event ids/tools: net-user (informational).
+    || Original notes: Only one independent rule source was read (Hayabusa, which treats it as informational
+    and filters system and machine accounts). It is a baseline-deviation check, not a signature. Microsoft
+    Learn was unreachable from the research sandbox, so field semantics were not checked against the vendor
+    page.'
 - id: FH-PRV-002
   title: Sensitive privilege use (4673) by an unknown or unexpected process
   tactic: privilege-escalation
@@ -98,11 +109,20 @@ checks:
   sources:
   - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/Security/PrivilegeUse/Sec_4673_Med_PrivSvcCalled_UnknownProcUsedHighPriv.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_user_couldnt_call_priv_service_lsaregisterlogonprocess.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1112-Modify registry/ID4624,4670,4688,4674-Registry
+    permission change via WMI (DAMP).evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_user_couldnt_call_priv_service_lsaregisterlogonprocess.yml
   verified: false
-  notes: Both rules read use 4673 but test different things (process allow-list vs failed LsaRegisterLogonProcess
-    with Keywords 0x8010000000000000 = audit failure). Treat as noisy triage data, not an alert. Microsoft
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4673: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: Microsoft
     Learn was unreachable from the research sandbox, so field semantics were not checked against the vendor
-    page.
+    page. || Original notes: Both rules read use 4673 but test different things (process allow-list vs
+    failed LsaRegisterLogonProcess with Keywords 0x8010000000000000 = audit failure). Treat as noisy triage
+    data, not an alert. Microsoft Learn was unreachable from the research sandbox, so field semantics
+    were not checked against the vendor page.'
 - id: FH-PRV-003
   title: 'Privileged object operation (4674): service DACL change or SC manager ownership'
   tactic: privilege-escalation
@@ -146,11 +166,18 @@ checks:
   sources:
   - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/Security/PrivilegeUse/Sec_4674_Med_OpAttemptOnPrivObj_PossibleHiddenSvcCreationAttempt.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_scm_database_privileged_operation.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1112-Modify registry/ID4624,4670,4688,4674-Registry
+    permission change via WMI (DAMP).evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_scm_database_privileged_operation.yml
   verified: true
-  notes: Hayabusa and SigmaHQ independently use 4674 with ObjectType/AccessMask/PrivilegeList/ProcessName.
-    %%1539 is the rendered WRITE_DAC access string as used by Hayabusa; message-resource ids like %%1539
-    appear literally in EVTX EventData. Microsoft Learn was unreachable from the research sandbox, so
-    field semantics were not checked against the vendor page.
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/4674: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log. || Original notes: Hayabusa and SigmaHQ independently
+    use 4674 with ObjectType/AccessMask/PrivilegeList/ProcessName. %%1539 is the rendered WRITE_DAC access
+    string as used by Hayabusa; message-resource ids like %%1539 appear literally in EVTX EventData. Microsoft
+    Learn was unreachable from the research sandbox, so field semantics were not checked against the vendor
+    page.'
 - id: FH-PRV-004
   title: Member added to local Administrators (4732)
   tactic: privilege-escalation
@@ -188,11 +215,17 @@ checks:
   sources:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_user_added_to_local_administrators.yml
   - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/Security/AccountManagement/SecurityGroupManagement/Sec_4732_High_MemberAddedToLocalGrp_Administrators.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0003-Persistence/T1098.xxx-Account manipulation/ID4732-4733-Quick
+    added-removed user from local group.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_user_added_to_local_administrators.yml
   verified: true
-  notes: Both rules key on 4732 in Security. Matching on TargetSid S-1-5-32-544 is language-independent;
-    TargetUserName text is localised. Hayabusa notes only the SID of the added member is recorded. Microsoft
-    Learn was unreachable from the research sandbox, so field semantics were not checked against the vendor
-    page.
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/4732: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log. || Original notes: Both rules key on 4732 in
+    Security. Matching on TargetSid S-1-5-32-544 is language-independent; TargetUserName text is localised.
+    Hayabusa notes only the SID of the added member is recorded. Microsoft Learn was unreachable from
+    the research sandbox, so field semantics were not checked against the vendor page.'
 - id: FH-PRV-005
   title: Member added to privileged domain groups (4728 / 4732 / 4756)
   tactic: privilege-escalation
@@ -244,12 +277,25 @@ checks:
   - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/Security/AccountManagement/SecurityGroupManagement/Sec_4728_High_MemberAddedToGlobalGrp_DomainAdmins.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/account_management/win_security_member_added_security_enabled_global_group.yml
   - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/Security/AccountManagement/SecurityGroupManagement/Sec_4732_High_MemberAddedToLocalGrp_DomainAdmins.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0003-Persistence/T1098.xxx-Account manipulation/ID4728-Massive account
+    group membership change.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0003-Persistence/T1098.xxx-Account manipulation/ID4732-4733-Quick
+    added-removed user from local group.evtx'
   verified: false
-  notes: 4728 on Domain Admins is confirmed by Hayabusa and (as a generic 4728 rule) by SigmaHQ. No read
-    source covers 4756 / Enterprise Admins; that part is inferred from the event definitions. The group
-    name list is a starting point; also match well-known SIDs ending -512, -518, -519 on TargetSid. Microsoft
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4728: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/4732: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/4756: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: Microsoft
     Learn was unreachable from the research sandbox, so field semantics were not checked against the vendor
-    page.
+    page. JPCERT sheets mentioning the same event ids/tools: net-user (informational). || Original notes:
+    4728 on Domain Admins is confirmed by Hayabusa and (as a generic 4728 rule) by SigmaHQ. No read source
+    covers 4756 / Enterprise Admins; that part is inferred from the event definitions. The group name
+    list is a starting point; also match well-known SIDs ending -512, -518, -519 on TargetSid. Microsoft
+    Learn was unreachable from the research sandbox, so field semantics were not checked against the vendor
+    page.'
 - id: FH-PRV-006
   title: User right assigned (4704) - dangerous privilege granted
   tactic: privilege-escalation
@@ -290,11 +336,19 @@ checks:
   severity: high
   sources:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_susp_group_policy_abuse_privilege_addition.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0004-Privilege Escalation/T1134-Access Token Manipulation/ID4704-4705-User
+    righ assigned to account.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
   verified: false
-  notes: 4704 itself was not covered by any rule that was read; only the related GPO-abuse pattern (5136)
-    was. Event semantics of 4704 and the field name PrivilegeList are from analyst knowledge and need
-    confirmation against Microsoft Learn. Microsoft Learn was unreachable from the research sandbox, so
-    field semantics were not checked against the vendor page.
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4704: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: Event
+    semantics of 4704 and the field name PrivilegeList are from analyst knowledge and need confirmation
+    against Microsoft Learn. || Original notes: 4704 itself was not covered by any rule that was read;
+    only the related GPO-abuse pattern (5136) was. Event semantics of 4704 and the field name PrivilegeList
+    are from analyst knowledge and need confirmation against Microsoft Learn. Microsoft Learn was unreachable
+    from the research sandbox, so field semantics were not checked against the vendor page.'
 - id: FH-PRV-007
   title: GPO modified to push user-rights assignment (5136 gPCMachineExtensionNames)
   tactic: privilege-escalation
@@ -326,10 +380,17 @@ checks:
   severity: high
   sources:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_susp_group_policy_abuse_privilege_addition.yml
-  verified: false
-  notes: Single rule source (SigmaHQ). The two GUIDs identify the Security Settings client-side extension
-    and its tool extension. Microsoft Learn was unreachable from the research sandbox, so field semantics
-    were not checked against the vendor page.
+  - 'sample: EVTX-ATTACK-SAMPLES/Credential Access/ACL_ForcePwd_SPNAdd_User_Computer_Accounts.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_group_policy_abuse_privilege_addition.yml
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/5136: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log.  Note: flipped to true: logic equals the Sigma
+    rule for GPO user-rights abuse (5136 gPCMachineExtensionNames containing the two Security Settings
+    extension GUIDs). || Original notes: Single rule source (SigmaHQ). The two GUIDs identify the Security
+    Settings client-side extension and its tool extension. Microsoft Learn was unreachable from the research
+    sandbox, so field semantics were not checked against the vendor page.'
 - id: FH-PRV-008
   title: UAC bypass via registry hijack (eventvwr mscfile, ms-settings, sdclt) - Sysmon 13
   tactic: privilege-escalation
@@ -377,11 +438,22 @@ checks:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/registry/registry_set/registry_set_uac_bypass_sdclt.yml
   - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/registry-actions.md
   - https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack.json
+  - 'sample: EVTX-to-MITRE-Attack/TA0004-Privilege Escalation/T1068-Exploitation for Privilege Escalation/ID12-13
+    Mini_Plasma_PoC_AbortHydration_ArbitraryRegKey_EoP.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/registry/registry_set/registry_set_uac_bypass_sdclt.yml
   verified: false
-  notes: 'mscfile and sdclt key paths are confirmed by SigmaHQ and the Sysmon event-13 field semantics
-    (TargetObject, Details) by the TrustedSec Sysmon guide. The ms-settings path (fodhelper / ComputerDefaults
-    hijack) is from analyst knowledge: no registry rule for it could be fetched, so the whole check stays
-    unverified. HKCU writes appear under HKU\<SID>_Classes in TargetObject, so use contains/endswith.'
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/13: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: The
+    ms-settings path (fodhelper / ComputerDefaults hijack) is from analyst knowledge: no registry rule
+    for it could be fetched, so the whole check stays unverified. JPCERT sheets mentioning the same event
+    ids/tools: SDB-UAC-Bypass (informational). || Original notes: mscfile and sdclt key paths are confirmed
+    by SigmaHQ and the Sysmon event-13 field semantics (TargetObject, Details) by the TrustedSec Sysmon
+    guide. The ms-settings path (fodhelper / ComputerDefaults hijack) is from analyst knowledge: no registry
+    rule for it could be fetched, so the whole check stays unverified. HKCU writes appear under HKU\<SID>_Classes
+    in TargetObject, so use contains/endswith.'
 - id: FH-PRV-009
   title: UAC bypass auto-elevated binary spawning a child (fodhelper, ComputerDefaults, cmstp)
   tactic: privilege-escalation
@@ -430,10 +502,16 @@ checks:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_uac_bypass_computerdefaults.yml
   - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/process-creation.md
   - https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack.json
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/PanacheSysmon_vs_AtomicRedTeam01.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_uac_bypass_fodhelper.yml
   verified: true
-  notes: SigmaHQ supplies the parent/integrity logic; the TrustedSec guide confirms Sysmon 1 fields (ParentImage,
-    IntegrityLevel, OriginalFileName). Integrity-level values may appear as names or as S-1-16-* SIDs
-    depending on source.
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/1: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log. JPCERT sheets mentioning the same event
+    ids/tools: SDB-UAC-Bypass (informational). || Original notes: SigmaHQ supplies the parent/integrity
+    logic; the TrustedSec guide confirms Sysmon 1 fields (ParentImage, IntegrityLevel, OriginalFileName).
+    Integrity-level values may appear as names or as S-1-16-* SIDs depending on source.'
 - id: FH-PRV-010
   title: Service installed (7045) with cmd / PowerShell / script-host ImagePath
   tactic: privilege-escalation
@@ -483,10 +561,15 @@ checks:
   - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/System/Sys_7045_High_ServiceInstalled_SuspiciousServicePath.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/system/service_control_manager/win_system_hack_smbexec.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/system/service_control_manager/win_system_cobaltstrike_service_installs.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0002-Execution/T1569.002-Service execution/ID7000,7009,7045-Payload
+    deployed via service - Tchopper.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/System/Sys_7045_High_ServiceInstalled_SuspiciousServicePath.yml
   verified: true
-  notes: Hayabusa and SigmaHQ both use System 7045 with ImagePath. The same event is logged in Security
-    as 4697 if Audit Security System Extension is enabled. AccountName=LocalSystem in the third query
-    is a pivot, not a detection.
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: System/7045: MITRE CTI data-component log source,
+    rule project, real sample log. || Original notes: Hayabusa and SigmaHQ both use System 7045 with ImagePath.
+    The same event is logged in Security as 4697 if Audit Security System Extension is enabled. AccountName=LocalSystem
+    in the third query is a pivot, not a detection.'
 - id: FH-PRV-011
   title: 'getsystem-style service: named-pipe echo or rundll32 ImagePath (7045 / 4688)'
   tactic: privilege-escalation
@@ -544,10 +627,19 @@ checks:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/system/service_control_manager/win_system_meterpreter_or_cobaltstrike_getsystem_service_installation.yml
   - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/Security/DetailedTracking/ProcessCreation/Sec_4688_Med_ProcExec_MeterpreterGetSystem.yml
   - https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack.json
+  - 'sample: EVTX-to-MITRE-Attack/TA0002-Execution/T1569.002-Service execution/ID7000,7009,7045-Payload
+    deployed via service - Tchopper.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1027-Obfuscated Files or Information/ID4688-Obfuscated
+    payload transfer via service name - Tchopper.evtx'
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/service_control_manager/win_system_meterpreter_or_cobaltstrike_getsystem_service_installation.yml
   verified: true
-  notes: SigmaHQ (7045 patterns) and Hayabusa (4688 cmd.exe with a pipe) independently describe the same
-    getsystem technique across two event types. Newer Meterpreter/Cobalt Strike versions use other variants
-    (token-based), so absence proves little.
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: System/7045: MITRE CTI data-component log source,
+    rule project, real sample log; Security/4688: MITRE CTI data-component log source, Microsoft docs,
+    rule project, real sample log. || Original notes: SigmaHQ (7045 patterns) and Hayabusa (4688 cmd.exe
+    with a pipe) independently describe the same getsystem technique across two event types. Newer Meterpreter/Cobalt
+    Strike versions use other variants (token-based), so absence proves little.'
 - id: FH-PRV-012
   title: Service creation with suspicious binary path via sc.exe / New-Service (4688 / Sysmon 1)
   tactic: privilege-escalation
@@ -604,9 +696,21 @@ checks:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_susp_service_creation.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_sc_create_service.yml
   - https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack.json
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1027-Obfuscated Files or Information/ID4688-Obfuscated
+    payload transfer via service name - Tchopper.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/PanacheSysmon_vs_AtomicRedTeam01.evtx'
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_susp_service_creation.yml
   verified: false
-  notes: Only SigmaHQ rules read; Security 4688 field name for the command line is CommandLine and for
-    the image NewProcessName (use NewProcessName instead of Image in 4688 queries).
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4688: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; MW-Sysmon/Operational/1: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states. JPCERT
+    sheets mentioning the same event ids/tools: net-user (informational). || Original notes: Only SigmaHQ
+    rules read; Security 4688 field name for the command line is CommandLine and for the image NewProcessName
+    (use NewProcessName instead of Image in 4688 queries).'
 - id: FH-PRV-013
   title: Named-pipe impersonation tooling (potato / PrintSpoofer / Cobalt Strike pipes) - Sysmon 17/18
   tactic: privilege-escalation
@@ -665,11 +769,20 @@ checks:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/pipe_created/pipe_created_hktl_cobaltstrike.yml
   - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/named-pipes.md
   - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/sysmon/Sysmon_17_PipeCreated_RuleAlert.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0004-Privilege Escalation/T1068-Exploitation for Privilege Escalation/ID12-13
+    Mini_Plasma_PoC_AbortHydration_ArbitraryRegKey_EoP.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - 'sample: EVTX-ATTACK-SAMPLES/Discovery/Discovery_Remote_System_NamedPipes_Sysmon_18.evtx'
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/pipe_created/pipe_created_hktl_cobaltstrike.yml
   verified: true
-  notes: 'Event ids and fields (PipeName, Image, ProcessGuid) are confirmed by the Sysmon Community Guide
-    and Hayabusa; the literal pipe names come from SigmaHQ only and tool versions rename pipes, so treat
-    names as indicators, not coverage. The EfsPotato selection above is deliberately loose: SigmaHQ itself
-    notes it needs tuning, hunt by unexpected creating Image rather than the name. PrintSpoofer-specific
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/17: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; MW-Sysmon/Operational/18: Microsoft docs,
+    rule project, real sample log. JPCERT sheets mentioning the same event ids/tools: net-user (informational).
+    || Original notes: Event ids and fields (PipeName, Image, ProcessGuid) are confirmed by the Sysmon
+    Community Guide and Hayabusa; the literal pipe names come from SigmaHQ only and tool versions rename
+    pipes, so treat names as indicators, not coverage. The EfsPotato selection above is deliberately loose:
+    SigmaHQ itself notes it needs tuning, hunt by unexpected creating Image rather than the name. PrintSpoofer-specific
     pipe names could not be confirmed and are not listed.'
 - id: FH-PRV-014
   title: 'Access-token abuse: logon type 9 with Impersonation level (4624)'
@@ -709,10 +822,17 @@ checks:
   sources:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/account_management/win_security_access_token_abuse.yml
   - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/Security/LogonLogoff/Logon/Sec_4624_Med_Logon-Type9-NewInteractive_PossibleTokenImpersonation.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1069-Permission Groups Discovery/ID4799-4624-Local
+    admin group enumerated by SharpHound.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_access_token_abuse.yml
   verified: true
-  notes: Both rules key on LogonType 9 and ImpersonationLevel %%1833 (rendered "Impersonation"). SubjectUserName
-    equal to TargetUserName is expressed as a field comparison in Hayabusa; do it in post-processing with
-    forhunt output.
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/4624: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log. JPCERT sheets mentioning the same event ids/tools:
+    net-user (informational). || Original notes: Both rules key on LogonType 9 and ImpersonationLevel
+    %%1833 (rendered "Impersonation"). SubjectUserName equal to TargetUserName is expressed as a field
+    comparison in Hayabusa; do it in post-processing with forhunt output.'
 - id: FH-PRV-015
   title: RottenPotato-like loopback ANONYMOUS LOGON (4624 type 3)
   tactic: privilege-escalation
@@ -747,6 +867,15 @@ checks:
   severity: medium
   sources:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/account_management/win_security_susp_rottenpotato.yml
-  verified: false
-  notes: Single source (SigmaHQ). Original RottenPotato behaviour; later potatoes (Juicy, Rogue, Sweet,
-    God) vary in the logon they produce.
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1069-Permission Groups Discovery/ID4799-4624-Local
+    admin group enumerated by SharpHound.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_susp_rottenpotato.yml
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/4624: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log.  Note: flipped to true: logic equals the Sigma
+    RottenPotato rule (4624 type 3, ANONYMOUS LOGON, WorkstationName -, loopback IpAddress); all fields
+    seen in real 4624 events. JPCERT sheets mentioning the same event ids/tools: net-user (informational).
+    || Original notes: Single source (SigmaHQ). Original RottenPotato behaviour; later potatoes (Juicy,
+    Rogue, Sweet, God) vary in the logon they produce.'

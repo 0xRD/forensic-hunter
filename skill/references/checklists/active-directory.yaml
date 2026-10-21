@@ -1,1124 +1,1742 @@
 tactic: active-directory
 title: Active Directory Attacks
-description: >
-  Attacks against Active Directory as they appear in domain controller (and some member server)
-  event logs: Kerberos ticket abuse (roasting, forged tickets), directory replication abuse
-  (DCSync/DCShadow), AD CS certificate abuse, Netlogon/Zerologon, computer-account tricks (noPac,
-  machine account quota, RBCD, shadow credentials, delegation), privileged group and ACL
-  persistence (AdminSDHolder, SID history, GPO, trusts), and coercion/relay. Most of this
-  telemetry exists only on domain controllers and only when advanced audit policy is enabled
-  (Kerberos Authentication Service / Service Ticket Operations, Directory Service Access /
-  Changes, Certification Services, Computer/User/Security Group Management). Absence of an event
-  is only meaningful once the matching audit subcategory is known to be on. A recurring caveat:
-  4768/4769 numeric fields (TicketEncryptionType, Status) are rendered zero padded
-  (0x00000017, 0x00000000) in some Windows builds and unpadded (0x17, 0x0) in others, so exact
-  matches should be written as a regex that tolerates both. Blind spots: LDAP query text is only
-  in the Microsoft-Windows-LDAP-Client ETW trace (not in an EVTX), Golden/Silver/Diamond/Sapphire
-  ticket forgery is mostly inferred from absence/inconsistency rather than a direct event.
+description: 'Attacks against Active Directory as they appear in domain controller (and some member server)
+  event logs: Kerberos ticket abuse (roasting, forged tickets), directory replication abuse (DCSync/DCShadow),
+  AD CS certificate abuse, Netlogon/Zerologon, computer-account tricks (noPac, machine account quota,
+  RBCD, shadow credentials, delegation), privileged group and ACL persistence (AdminSDHolder, SID history,
+  GPO, trusts), and coercion/relay. Most of this telemetry exists only on domain controllers and only
+  when advanced audit policy is enabled (Kerberos Authentication Service / Service Ticket Operations,
+  Directory Service Access / Changes, Certification Services, Computer/User/Security Group Management).
+  Absence of an event is only meaningful once the matching audit subcategory is known to be on. A recurring
+  caveat: 4768/4769 numeric fields (TicketEncryptionType, Status) are rendered zero padded (0x00000017,
+  0x00000000) in some Windows builds and unpadded (0x17, 0x0) in others, so exact matches should be written
+  as a regex that tolerates both. Blind spots: LDAP query text is only in the Microsoft-Windows-LDAP-Client
+  ETW trace (not in an EVTX), Golden/Silver/Diamond/Sapphire ticket forgery is mostly inferred from absence/inconsistency
+  rather than a direct event.
+
+  '
 checks:
-
-  - id: FH-AD-001
-    title: Kerberoasting - RC4 service ticket requests for user-account SPNs
-    tactic: credential-access
-    attack: [T1558.003]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4769]
-    prerequisites:
-      - "Audit Kerberos Service Ticket Operations (Success) on domain controllers"
-      - "Events are only on DCs; collect from every DC"
-    logic:
-      selection:
-        EventID: 4769
-        TicketEncryptionType: '0x17'
-        Status: '0x0'
-      filter_krbtgt_and_machine_services:
-        ServiceName|endswith:
-          - 'krbtgt'
-          - '$'
-      filter_machine_requesters:
-        TargetUserName|contains: '$@'
-      condition: selection and not filter_krbtgt_and_machine_services and not filter_machine_requesters
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4769 --regex TicketEncryptionType='^0x0*17$' --regex Status='^0x0*$' --format llm
-      - forhunt search <paths> --channel Security --event-id 4769 --regex TicketEncryptionType='^0x0*17$' --regex ServiceName='[^$]$' --limit 200 --format csv
-    pivots:
-      - "Requester (TargetUserName, IpAddress) -> count distinct ServiceName per requester/IP; many in seconds is the tool signature (see FH-AD-002)"
-      - "ServiceName -> is it a user account with an SPN, and is the password old/weak? Administrator-class SIDs (ServiceSid ending -500) as service target is almost always malicious"
-      - "IpAddress -> 4624 / 4768 for the same requester just before the burst"
-    false_positives:
-      - "Legacy applications or appliances that only support RC4"
-      - "Service accounts whose msDS-SupportedEncryptionTypes does not include AES"
-      - "Domains where AES keys were never generated for old accounts (password not changed since DFL 2003)"
-    severity: medium
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_kerberoasting_activity.yml
-      - https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_kerberos_service_ticket_rc4.toml
-      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/AccountLogon/KerberosAuthenticationService/Sec_4769_Med_KerberosTGT-Request_PossibleKerberoasting.yml
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-    verified: true
-    notes: "Confirmed by three rule sets plus a sample EVTX (field names TargetUserName, ServiceName, ServiceSid, TicketEncryptionType, Status, IpAddress, TicketOptions). 0x18 (RC4-HMAC-EXP) is also treated as weak by Chainsaw. Microsoft Learn page for 4769 was not reachable from this environment, so Microsoft's own field semantics were not independently read. AES-requesting tools (Rubeus /aes) and attackers who downgrade only when the account allows RC4 will not produce 0x17; absence of RC4 does not clear a host."
-
-  - id: FH-AD-002
-    title: Kerberoasting - burst of distinct service ticket requests by one requester
-    tactic: credential-access
-    attack: [T1558.003, T1087.002]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4769]
-    prerequisites:
-      - "Audit Kerberos Service Ticket Operations (Success) on domain controllers"
-    logic:
-      selection:
-        EventID: 4769
-        Status: '0x0'
-      filter_krbtgt_and_machine_services:
-        ServiceName|endswith:
-          - 'krbtgt'
-          - '$'
-      condition: selection and not filter_krbtgt_and_machine_services and count_distinct(ServiceName) by TargetUserName, IpAddress > 10 within 1m
-    forhunt:
-      - forhunt stats <paths> --format llm
-      - forhunt search <paths> --channel Security --event-id 4769 --regex ServiceName='[^$]$' --limit 2000 --format csv
-    pivots:
-      - "Group the CSV output by TargetUserName+IpAddress and count distinct ServiceName per minute; the sample EVTX for bulk enumeration shows many tickets from one IP within seconds"
-      - "Whether TicketEncryptionType is 0x17 for the burst (FH-AD-001) or AES (targeted Rubeus /aes or bulk SPN enumeration for BloodHound)"
-    false_positives:
-      - "Admin consoles or monitoring that touch many services"
-      - "Users logging on to many member servers (but those SPNs are usually machine accounts, filtered by the $ rule)"
-      - "SharpHound/BloodHound-style collectors by authorized assessors"
-    severity: medium
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_kerberoasting_activity.yml
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-    verified: false
-    notes: "The Sigma rule only describes the idea (one host, many service names, about 5 seconds) and leaves the threshold to the analyst; the threshold 10 per minute here is an assumption, not a published value. Needs aggregation outside forhunt (csv + script)."
-
-  - id: FH-AD-003
-    title: AS-REP roasting - TGT issued without pre-authentication
-    tactic: credential-access
-    attack: [T1558.004]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4768]
-    prerequisites:
-      - "Audit Kerberos Authentication Service (Success) on domain controllers"
-    logic:
-      selection:
-        EventID: 4768
-        PreAuthType: 0
-        ServiceName: 'krbtgt'
-        Status: '0x0'
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4768 --field PreAuthType=0 --format llm
-      - forhunt search <paths> --channel Security --event-id 4768 --field PreAuthType=0 --regex TicketEncryptionType='^0x0*17$' --format llm
-    pivots:
-      - "TargetUserName -> check whether DONT_REQ_PREAUTH was set recently (FH-AD-004 / 4738)"
-      - "IpAddress -> other 4768 PreAuthType 0 for different TargetUserName from the same IP (spraying a user list)"
-      - "Failures for the same IP (Status 0x6 client unknown) point to a username-guessing run"
-    false_positives:
-      - "Accounts deliberately configured without pre-auth (rare legacy Kerberos clients, some Unix/appliance integrations)"
-    severity: medium
-    sources:
-      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/AccountLogon/KerberosAuthenticationService/Sec_4768_Med_KrbTGT-Req_PossibleAS-REP-Roasting.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_kerberos_asrep_roasting.yml
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-    verified: true
-    notes: "Sample EVTX (AS-REP roasting) shows PreAuthType '0', TicketEncryptionType 0x00000017, ServiceName krbtgt, TicketOptions 0x40800010. Normal AES clients show PreAuthType 2 (encrypted timestamp). The RC4 filter is optional: a modern domain may allow AES in AS-REP, which would still be crackable but slower."
-
-  - id: FH-AD-004
-    title: Account flagged "Do not require Kerberos preauthentication" (4738)
-    tactic: persistence
-    attack: [T1558.004, T1098]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4738]
-    prerequisites:
-      - "Audit User Account Management (Success) on domain controllers"
-    logic:
-      selection:
-        EventID: 4738
-        UserAccountControl|contains: '%%2096'
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4738 --field UserAccountControl~%%2096 --format llm
-    pivots:
-      - "SubjectUserName / SubjectLogonId -> who made the change (and 4624 for that logon)"
-      - "TargetUserName -> later 4768 with PreAuthType 0 (FH-AD-003)"
-      - "Same SubjectLogonId -> 5136 on userAccountControl, 4738 reverting (%%2064) shortly after (set-roast-unset pattern)"
-    false_positives:
-      - "Intentional configuration for a legacy integration"
-    severity: high
-    sources:
-      - https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_disable_kerberos_preauth.toml
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-    verified: true
-    notes: "The UserAccountControl field in 4738 carries a message-table token, not a mask: %%2096 = flag enabled (this is what Elastic's NewUACList decodes to USER_DONT_REQUIRE_PREAUTH) and %%2064 appeared when the same flag was removed in the sample. CAUTION: in the sample EVTX the numeric OldUacValue/NewUacValue changed 0x210 -> 0x10210, which does NOT contain the documented DONT_REQ_PREAUTH bit 0x400000, so do not build the check on the numeric mask without testing on your own logs. The %%-token to meaning mapping was cross-read from Elastic and the sample, not from Microsoft's message tables."
-
-  - id: FH-AD-005
-    title: DCSync - directory replication rights exercised by a non-DC account (4662)
-    tactic: credential-access
-    attack: [T1003.006]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4662]
-    prerequisites:
-      - "Audit Directory Service Access (Success) on domain controllers"
-      - "A SACL on the domain naming-context root auditing Everyone for the DS-Replication-Get-Changes and DS-Replication-Get-Changes-All control access rights; without it 4662 is not generated for replication"
-    logic:
-      selection:
-        EventID: 4662
-        AccessMask: '0x100'
-        Properties|contains:
-          - '1131f6aa-9c07-11d1-f79f-00c04fc2dcd2'
-          - '1131f6ad-9c07-11d1-f79f-00c04fc2dcd2'
-          - '89e95b76-444d-4c62-991a-0facbeda640c'
-      filter_machine_accounts:
-        SubjectUserName|endswith: '$'
-      filter_azure_ad_connect:
-        SubjectUserName|startswith: 'MSOL_'
-      condition: selection and not filter_machine_accounts and not filter_azure_ad_connect
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4662 --field Properties~1131f6aa-9c07-11d1-f79f-00c04fc2dcd2 --format llm
-      - forhunt search <paths> --channel Security --event-id 4662 --field Properties~1131f6ad-9c07-11d1-f79f-00c04fc2dcd2 --format llm
-      - forhunt search <paths> --channel Security --event-id 4662 --field Properties~89e95b76-444d-4c62-991a-0facbeda640c --format llm
-    pivots:
-      - "SubjectUserName / SubjectLogonId -> 4624 on the DC for that LogonId: IpAddress of the machine running the tool (a workstation or server, not another DC)"
-      - "Who granted the right? see FH-AD-006 (5136 on the domain root) and group changes to Domain Admins / Exchange groups"
-      - "Subsequent use of krbtgt or admin hashes: FH-AD-009, 4624 type 3 from the same IP"
-    false_positives:
-      - "Azure AD Connect / Entra Connect sync accounts (MSOL_*, AAD connector accounts)"
-      - "Legitimate DC machine accounts (excluded via $)"
-      - "Backup/replication tools (some migration or identity-management products) running as a service user"
-    severity: critical
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_ad_replication_non_machine_account.yml
-      - https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_dcsync_replication_rights.toml
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-      - https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
-    verified: true
-    notes: "Sample EVTX (Mimikatz DCSync) shows ObjectType {19195a5b-6da0-11d0-afd3-00c04fd930c9} (domainDNS), AccessMask 0x00000100 (control access), Properties containing {1131f6aa-...} with braces and a %%7688 token. Match on the bare GUID with a substring, not on braces. Sigma also lists 9923a32a-3607-11d2-b9be-0000f87a36b2 (DS-Replication-Synchronize); mimikatz alone logged only 1131f6aa in the sample, so expect either one or several GUIDs. Event is per-DC: query all DCs. Note that SubjectUserName ending in $ is excluded, so a DCSync run as a compromised computer account (including a rogue DC) is missed; Sigma publishes a companion check for machine accounts that are not DCs."
-
-  - id: FH-AD-006
-    title: DCSync rights granted - ACL change on the domain root (5136)
-    tactic: persistence
-    attack: [T1003.006, T1222.001]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [5136]
-    prerequisites:
-      - "Audit Directory Service Changes (Success) on domain controllers"
-      - "SACL on the domain root object (default SACL on the domain head covers writes by Everyone, verify in your environment)"
-    logic:
-      selection:
-        EventID: 5136
-        AttributeLDAPDisplayName: 'nTSecurityDescriptor'
-        AttributeValue|contains:
-          - '1131f6aa-9c07-11d1-f79f-00c04fc2dcd2'
-          - '1131f6ad-9c07-11d1-f79f-00c04fc2dcd2'
-          - '89e95b76-444d-4c62-991a-0facbeda640c'
-      filter_dns_objects:
-        ObjectClass:
-          - 'dnsNode'
-          - 'dnsZone'
-          - 'dnsZoneScope'
-      condition: selection and not filter_dns_objects
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 5136 --field AttributeLDAPDisplayName=nTSecurityDescriptor --field ObjectClass=domainDNS --format llm
-    pivots:
-      - "AttributeValue is an SDDL string: look for the SID of the principal receiving the GUID-bearing ACE (resolve it); the sample value is truncated in places so read the full event"
-      - "SubjectUserName / SubjectLogonId -> 4624 for the actor; then FH-AD-005 for later use of the right by that principal"
-      - "OperationType %%14674 = value added, %%14675 = value deleted: a deletion shortly after an add indicates cleanup after the attack"
-    false_positives:
-      - "Exchange or Entra Connect installation/upgrade setting replication ACEs"
-      - "Promotion of a new DC (new DC computer account ACEs)"
-    severity: high
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_account_backdoor_dcsync_rights.yml
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-    verified: false
-    notes: "One rule project plus one sample EVTX (5136 nTSecurityDescriptor on ObjectClass domainDNS with 4662 around it); the sample in the corpus shows a DC-style machine account (SRVFS02$) as subject so it is a lab artefact. Sigma matches the attribute name in lower-case ntSecurityDescriptor; the sample writes nTSecurityDescriptor, and forhunt matching is case-insensitive. AttributeValue is truncated (about 150 characters in my parser) only by my tooling, not by Windows."
-
-  - id: FH-AD-007
-    title: DCShadow - rogue DC registration (GC/ SPN and server object in Configuration)
-    tactic: defense-evasion
-    attack: [T1207]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4742, 5136, 5137, 5141]
-    prerequisites:
-      - "Audit Computer Account Management (Success) for 4742"
-      - "Audit Directory Service Changes (Success) for 5136/5137/5141, with SACLs on the Configuration partition objects (defaults do not cover every object, and user objects are not audited by default)"
-    logic:
-      selection_spn_4742:
-        EventID: 4742
-        ServicePrincipalNames|contains: 'GC/'
-      selection_spn_5136:
-        EventID: 5136
-        AttributeLDAPDisplayName: 'servicePrincipalName'
-        AttributeValue|startswith: 'GC/'
-      selection_server_object:
-        EventID:
-          - 5137
-          - 5141
-        ObjectClass: 'server'
-        ObjectDN|contains: 'CN=Servers,CN='
-      condition: selection_spn_4742 or selection_spn_5136 or selection_server_object
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4742 --field ServicePrincipalNames~GC/ --format llm
-      - forhunt search <paths> --channel Security --event-id 5137,5141 --field ObjectClass=server --format llm
-      - forhunt search <paths> --channel Security --event-id 5136 --field AttributeLDAPDisplayName=servicePrincipalName --field AttributeValue~GC/ --format llm
-    pivots:
-      - "Subject of 5137 / 4742 is the account that registered the fake DC; compare to the list of real DCs (any 5137 'server' object whose CN is not a known DC is the rogue)"
-      - "Match 5137 creation and 5141 deletion minutes apart: DCShadow is short-lived"
-      - "4662 on object class nTDSDSA/server with unusual properties around the same time; 4661 SAM access by lsass"
-      - "TargetUserName of 4742 is the non-DC host that temporarily became a DC"
-    false_positives:
-      - "Real DC promotion/demotion (5137 server object + 4742 GC SPN for the new DC)"
-      - "Global-catalog SPN refresh on existing DCs"
-    severity: high
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_possible_dc_shadow.yml
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-    verified: false
-    notes: "Sigma confirms the GC/ SPN markers (4742 ServicePrincipalNames, 5136 servicePrincipalName). The sample EVTX confirms 5137 ObjectClass 'server' with ObjectDN CN=<host>,CN=Servers,CN=<site>,CN=Sites,CN=Configuration,... but the 5141 deletion and the exact SPN GUID suffix E3514235-4B06-11D1-AB04-00C04FC2DCD2 were not seen in any source I opened; the specific 'E3514235' value is from the assignment brief only. Only one rule source, so unverified."
-
-  - id: FH-AD-008
-    title: Password reset on privileged account, krbtgt or DSRM (4724 / 4723)
-    tactic: persistence
-    attack: [T1098, T1003.006, T1558.001]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4724, 4723]
-    prerequisites:
-      - "Audit User Account Management (Success) on domain controllers"
-    logic:
-      selection_reset:
-        EventID: 4724
-        TargetUserName:
-          - 'krbtgt'
-          - 'Administrator'
-      selection_change_by_other:
-        EventID: 4723
-      condition: selection_reset or selection_change_by_other
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4724 --field TargetUserName=krbtgt --format llm
-      - forhunt search <paths> --channel Security --event-id 4724,4723 --format llm
-    pivots:
-      - "krbtgt: two resets (the old and new key are kept, so the second reset invalidates golden tickets). A reset that is not in your change calendar is suspicious; a missing reset after an incident means forged TGTs are still usable"
-      - "SubjectUserName / SubjectLogonId -> 4624; 5145 to \\\\*\\IPC$ pipe samr in the same logon indicates remote reset tooling (the sample for mimikatz lsadump::setntlm shows 4724 immediately after 5145 samr)"
-      - "4723 where SubjectUserName differs from TargetUserName is the 'change using current hash' form (ChangeNTLM)"
-    false_positives:
-      - "Help-desk password resets (normal), scheduled krbtgt rotation by security team"
-      - "Service accounts with automated rotation"
-    severity: medium
-    sources:
-      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/AccountManagement/UserAccountManagement/Sec_4724_Med_AcctPassword_OtherChanged.yml
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-      - https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
-    verified: false
-    notes: "Event id and fields (TargetUserName, SubjectUserName) are confirmed by Hayabusa and two sample EVTX sets. The specific use for krbtgt rotation and the 'two resets' remark come from general AD practice and are not confirmed in a source I opened. Treat selection_reset names as examples; extend with the actual privileged accounts. 4723 vs 4724: Microsoft's definition (self-change vs reset) was not read directly."
-
-  - id: FH-AD-009
-    title: Golden ticket - Kerberos logon/service ticket for an account that does not exist or lacks a prior TGT request
-    tactic: credential-access
-    attack: [T1558.001]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4624, 4769, 4768, 4672]
-    prerequisites:
-      - "Audit Kerberos Authentication Service and Kerberos Service Ticket Operations (Success) on domain controllers"
-      - "Audit Logon (Success) on the machines where the ticket is used"
-      - "A list of valid AD accounts and SIDs (from directory export) to detect names that do not exist"
-    logic:
-      selection_tgs_for_unknown_user:
-        EventID: 4769
-        Status: '0x0'
-        TargetUserName|contains: '@'
-      selection_logon_name_sid_mismatch:
-        EventID: 4624
-        LogonType: 3
-        AuthenticationPackageName: 'Kerberos'
-        TargetUserSid|endswith: '-500'
-      condition: (selection_tgs_for_unknown_user or selection_logon_name_sid_mismatch) and account_not_in_directory_or_no_preceding_4768
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4769 --field Status=0x0 --format csv --limit 5000
-      - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=3 --field AuthenticationPackageName=Kerberos --field TargetUserSid~-500 --format llm
-      - forhunt search <paths> --channel Security --event-id 4768 --format csv --limit 5000
-    pivots:
-      - "Compare TargetUserName in 4769/4624 to the real account list. The corpus sample shows a 4624 whose TargetUserName is 'not_existing_user' but TargetUserSid ends in -500 (the forged ticket carries the RID of the real Administrator) and a 4769 for 'gold-non-existing-user@offsec.lan'"
-      - "4769 on a DC for a user (TargetUserName@realm, IpAddress) with no earlier 4768 for the same user/IP on any DC: the TGT was never issued by the KDC. Needs all DCs' logs"
-      - "TargetDomainName casing: forged tickets built by default tooling may carry a lower-case or different DNS domain than genuine tickets (the golden-ticket 4769 sample has 'offsec.lan' where genuine events show upper-case 'OFFSEC.LAN'). Heuristic only"
-      - "TicketEncryptionType 0x17 TGT / TGS in an AES-only domain, ticket lifetimes different from domain policy (default 10 h, renew 7 d) are only visible outside the event log (Kerberos packets)"
-      - "4672 (special privileges) immediately after a Kerberos 4624 type 3 for an account that should not have them"
-      - "Hand off to FH-AD-008 to check krbtgt rotation; a golden ticket survives until two krbtgt resets"
-    false_positives:
-      - "Missing 4768 caused by logs from only one DC in a multi-DC domain"
-      - "Cross-domain/forest referrals and renewed tickets (TGT renewal skips 4768 and logs 4770)"
-      - "Clock-skew or logon with cached credentials may reorder events"
-    severity: high
-    sources:
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-    verified: false
-    notes: "Heuristic, not a signature; the logic block is illustrative and the account_not_in_directory_or_no_preceding_4768 predicate must be computed by joining with a user list/4768 data (forhunt cannot do this natively). Only one independent source (EVTX-to-MITRE-Attack samples and its README) was read for the field anomalies; I could not reach adsecurity.org or Microsoft Learn to confirm the other claimed markers (ticket lifetime, domain-name fields, RC4 TGT). Diamond and sapphire tickets are built from a genuine TGT (modified PAC), so they usually have a matching 4768 and valid user: the absence-of-4768 test and non-existent-account tests do NOT detect them; correlate PAC/group membership against the directory instead and rely on krbtgt rotation."
-
-  - id: FH-AD-010
-    title: Silver ticket - Kerberos service logon with no matching service ticket request on any DC
-    tactic: credential-access
-    attack: [T1558.002]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4624, 4769, 4672]
-    prerequisites:
-      - "Audit Logon (Success) on member servers hosting the target service"
-      - "Audit Kerberos Service Ticket Operations (Success) on ALL domain controllers"
-    logic:
-      selection:
-        EventID: 4624
-        LogonType: 3
-        AuthenticationPackageName: 'Kerberos'
-      condition: selection and no 4769 (ServiceName = this host, TargetUserName = this user, near-same time, same IpAddress) found on any DC
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=3 --field AuthenticationPackageName=Kerberos --format csv --limit 5000
-      - forhunt search <paths> --channel Security --event-id 4769 --format csv --limit 5000
-    pivots:
-      - "Match each Kerberos 4624 on the server to a 4769 on a DC for ServiceName = server$ or its service account, same account and source IP, within the ticket lifetime (default 10 h)"
-      - "4672 and 5140/5145 admin share access right after the unmatched logon"
-      - "Computer-account password age: silver tickets for a machine account use the machine's key; look at 4742 / 4724 and recent machine password changes"
-    false_positives:
-      - "Tickets obtained hours earlier (cached) with the DC log already rolled over"
-      - "DC logs not collected or auditing disabled on a DC"
-      - "Forwarded/delegated tickets; Kerberos logons using tickets obtained via a different DC outside the collected set"
-    severity: medium
-    sources:
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-    verified: false
-    notes: "Concept only; the EVTX corpus has golden-ticket samples but no silver-ticket sample, and I could not open adsecurity.org or Microsoft documentation to confirm. Requires cross-host correlation; forhunt can only dump candidates for scripting. Absence of a 4769 can also be caused by a disabled audit policy, so confirm the policy first."
-
-  - id: FH-AD-011
-    title: AD CS certificate request with attacker-supplied SAN (ESC1/ESC6 style)
-    tactic: credential-access
-    attack: [T1649]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4886, 4887]
-    prerequisites:
-      - "Audit Certification Services (Success and Failure) on the CA server (Security channel of the CA, not the DC)"
-      - "CA auditing enabled: certutil -setreg CA\\AuditFilter 127 (or the CA properties Auditing tab) and CA service restarted"
-    logic:
-      selection:
-        EventID:
-          - 4886
-          - 4887
-        Attributes|contains: 'SAN:'
-      filter_machine_requester_matches_dns:
-        Requester|endswith: '$'
-      condition: selection and (SAN identity differs from Requester identity)
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4887 --field Attributes~SAN: --format llm
-      - forhunt search <paths> --channel Security --event-id 4886 --field Attributes~SAN: --format llm
-      - forhunt search <paths> --channel Security --event-id 4887 --field Attributes~upn= --format llm
-    pivots:
-      - "Compare Requester (DOMAIN\\user) with the identity inside Attributes (SAN:upn=...) / SubjectAlternativeName; a low-privileged requester with a SAN for an admin is ESC1"
-      - "CertificateTemplate -> is it a template where Enrollee supplies subject (FH-AD-013)?"
-      - "Disposition 3 (issued) on 4887; SerialNumber -> later PKINIT logon on a DC (FH-AD-012)"
-      - "AuthenticationService / DCOMorRPC fields show how the request came in; unusual remote source for a CA request"
-    false_positives:
-      - "Web server or device templates that legitimately supply subject names (SANs)"
-      - "NDES/SCEP enrollment agents and MDM enrollment"
-    severity: high
-    sources:
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-      - https://github.com/splunk/security_content/blob/develop/detections/endpoint/windows_steal_authentication_certificates___esc1_authentication.yml
-      - https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_adcs_certificate_identity_transposition.toml
-    verified: true
-    notes: "Sample ESC1 EVTX shows 4886/4887 with Requester 'ROOTBLUE\\domadm', Attributes 'CertificateTemplate:ESC1_User\\nSAN:upn=adminstefan@rootblue.lan', SubjectAlternativeName 'Other Name: Principal Name=...', Disposition 3. Splunk's ESC1 rule keys on 4887 with Attributes containing SAN upn and a template; Elastic's rule parses the same Attributes block for CertificateTemplate and SAN. Neither is Microsoft documentation; SpecterOps 'Certified Pre-Owned' was not opened (cited by Sigma only). Template-agnostic: also catches ESC6 (EDITF_ATTRIBUTESUBJECTALTNAME2). Certipy/Certify command lines are not visible here; use process creation logs on the requesting host."
-
-  - id: FH-AD-012
-    title: Certificate-based Kerberos logon (PKINIT) and KDC certificate mapping warnings
-    tactic: credential-access
-    attack: [T1649]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4768]
-    prerequisites:
-      - "Audit Kerberos Authentication Service (Success) on domain controllers"
-    logic:
-      selection:
-        EventID: 4768
-        Status: '0x0'
-      filter_no_cert:
-        CertThumbprint: ''
-      condition: selection and not filter_no_cert
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4768 --regex CertThumbprint='.+' --format llm
-      - forhunt search <paths> --channel System --event-id 39,41 --format llm
-    pivots:
-      - "CertSerialNumber / CertIssuerName -> match against the CA's 4887 SerialNumber (FH-AD-011) for the issuing request"
-      - "TargetUserName in 4768 vs Requester in 4887: different identity is certificate impersonation"
-      - "System channel (provider Microsoft-Windows-Kerberos-Key-Distribution-Center) events 39 / 41 are KDC warnings that a certificate was used with only a weak (UPN/subject) mapping to the account; the sample ESC1 logon shows event 39 with AccountName adminstefan and Subject CN=Domadm, i.e. mismatch"
-      - "Subsequent NT hash recovery via PKINIT U2U: 4769 for the account itself"
-    false_positives:
-      - "Smart-card logon and Windows Hello for Business users (normal PKINIT)"
-      - "Event 39/41 from legacy certificates before strong mapping enforcement (KB5014754)"
-    severity: medium
-    sources:
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/microsoft_windows_kerberos_key_distribution_center/win_system_kdcsvc_cert_use_no_strong_mapping.yml
-    verified: false
-    notes: "Fields CertIssuerName, CertSerialNumber, CertThumbprint exist in 4768 (seen in sample EVTX, empty for password logons). The meaning of PreAuthType 16 for PKINIT is from memory and was not confirmed in an opened source. KDC event 39 (provider Microsoft-Windows-Kerberos-Key-Distribution-Center, System channel) is confirmed by Sigma and the ESC1 sample; event 41 only by Sigma. Enforcement mode (full enforcement from 2025) changes whether weak mappings log 39/41 or fail, so behaviour depends on patch level."
-
-  - id: FH-AD-013
-    title: AD CS template and CA configuration changes (4898/4899/4900, CA permissions)
-    tactic: persistence
-    attack: [T1649, T1098]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4898, 4899, 4900, 4882, 4890, 4891, 4892, 4870]
-    prerequisites:
-      - "Audit Certification Services (Success) on the CA"
-      - "CA AuditFilter set to log configuration changes and template changes (certutil -setreg CA\\AuditFilter 127)"
-    logic:
-      selection_template_loaded_or_updated:
-        EventID:
-          - 4898
-          - 4899
-        TemplateContent|contains: 'CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT'
-      selection_template_updated:
-        EventID: 4899
-        NewTemplateContent|contains: 'CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT'
-      selection_ca_permissions:
-        EventID: 4882
-      condition: 1 of selection_*
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4898,4899,4900 --format llm
-      - forhunt search <paths> --channel Security --event-id 4882,4890,4891,4892,4870 --format llm
-    pivots:
-      - "Template name in the event -> subsequent 4887 requests on that template (FH-AD-011)"
-      - "4882 SecuritySettings lists ACEs on the CA: Everyone / Authenticated Users with CA Administrator or Certificate Manager rights is ESC7"
-      - "4870 (certificate revoked) and 4890-4892 (CA config / manager settings) near the same SubjectLogonId"
-    false_positives:
-      - "Normal PKI administration; template v1 to v2 upgrades"
-      - "Proxy SSL, smart-card and device templates that require enrollee-supplied subject"
-    severity: medium
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_adcs_certificate_template_configuration_vulnerability.yml
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-    verified: false
-    notes: "4898/4899 with TemplateContent/NewTemplateContent confirmed by Sigma only; 4882 with SecuritySettings seen in the ESC7 sample EVTX (both also named as Security channel there). 4900, 4870, 4890-4892 field layouts and meanings were not seen in any opened source, listed from the assignment brief; verify against Microsoft's 'Audit Certification Services' references before relying. Template flag names in TemplateContent are an XML/text blob; matching depends on the CA's rendering."
-
-  - id: FH-AD-014
-    title: Zerologon (CVE-2020-1472) - Netlogon secure-channel enforcement events
-    tactic: privilege-escalation
-    attack: [T1210, T1548]
-    channel: System
-    provider: NETLOGON
-    event_ids: [5827, 5828, 5829, 5830, 5831, 5805]
-    prerequisites:
-      - "Domain controllers patched with the August 2020 or later update (Netlogon events 5827-5831 are produced by the patched build); on unpatched DCs only 5805 is likely"
-      - "System log collected from every DC"
-    logic:
-      selection_vulnerable_connection:
-        EventID: 5829
-      selection_denied_connections:
-        EventID:
-          - 5827
-          - 5828
-          - 5830
-          - 5831
-      selection_failed_session:
-        EventID: 5805
-      condition: selection_vulnerable_connection or selection_denied_connections or selection_failed_session
-    forhunt:
-      - forhunt search <paths> --channel System --event-id 5827,5828,5829,5830,5831 --format llm
-      - forhunt search <paths> --channel System --event-id 5805 --format llm
-    pivots:
-      - "Event text names the machine account and the source computer: compare to the real host list; a 5805 burst (a few dozen to thousands) from one source during exploitation is typical"
-      - "Security 4742 from ANONYMOUS LOGON against a DC machine account (FH-AD-015)"
-      - "Then DCSync from the DC machine account: FH-AD-005 does not cover it (filtered $), so look at 4662 with SubjectUserName ending $ from a non-DC IP"
-      - "5829 means a vulnerable secure channel was ALLOWED (enforcement not yet on); 5827/5828 mean a connection was DENIED because of the enforcement; 5830/5831 means a connection was allowed by Group Policy exception"
-    false_positives:
-      - "Genuine third-party / old Samba or NAS clients that use insecure Netlogon (that is the reason for the 5829 monitoring period)"
-    severity: high
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/netlogon/win_system_vul_cve_2020_1472.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/netlogon/win_system_possible_zerologon_exploitation_using_wellknown_tools.yml
-      - https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
-    verified: false
-    notes: "Only 5829 (Sigma, citing Microsoft KB4557222) and 5805 (Sigma plus the DFIR sample 'Zerologon ... NetLogon Error EventID 5805') were corroborated. The meanings for 5827, 5828, 5830, 5831 in the pivots are from my memory of KB4557222 and could not be confirmed because support.microsoft.com is not reachable from this environment. The 5805 sample has binary-only EventData (no named fields), so the machine name is not a parsed field. Provider name in the sample is 'NETLOGON' (all caps)."
-
-  - id: FH-AD-015
-    title: Zerologon aftermath - DC machine account password changed by ANONYMOUS LOGON (4742)
-    tactic: privilege-escalation
-    attack: [T1210]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4742, 4624]
-    prerequisites:
-      - "Audit Computer Account Management (Success) on domain controllers"
-      - "Audit Logon (Success)"
-    logic:
-      selection:
-        EventID: 4742
-        SubjectUserName: 'ANONYMOUS LOGON'
-        SubjectUserSid: 'S-1-5-7'
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4742 --field SubjectUserName="ANONYMOUS LOGON" --format llm
-    pivots:
-      - "TargetUserName (the DC computer account, ends in $) -> PasswordLastSet field changed; anything using the account afterward"
-      - "4624 type 3 with TargetUserSid S-1-5-18 and a machine account TargetUserName from IpAddress ::1 or a foreign IP just before (seen in the sample)"
-      - "Then a DCSync using the DC account: FH-AD-005 modified filter or 4662 with SubjectUserName ending $ from an IP that is not a DC"
-    false_positives:
-      - "Rare; legitimate machine password changes run as the computer or SYSTEM, not ANONYMOUS LOGON"
-    severity: critical
-    sources:
-      - https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
-    verified: false
-    notes: "One real-world sample EVTX (VoidSec Zerologon run) shows 4742 with SubjectUserName ANONYMOUS LOGON, SubjectDomainName NT AUTHORITY, SubjectUserSid S-1-5-7, TargetUserName a $ account, PasswordLastSet populated. No second source read (Microsoft/NSA/Secura not reachable), so unverified. Anonymous 4742 can also have forms depending on exploit tooling (some run via unauthenticated NetrServerPasswordSet2)."
-
-  - id: FH-AD-016
-    title: noPac / sAMAccountName spoofing - machine account renamed to a DC name without the trailing $
-    tactic: privilege-escalation
-    attack: [T1078, T1098]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4741, 4781, 4742, 4768, 4769]
-    prerequisites:
-      - "Audit Computer Account Management (Success) and Audit User Account Management (Success) on domain controllers"
-      - "Domain not patched for CVE-2021-42278/42287 (Nov 2021 updates), or monitoring for attempts anyway"
-    logic:
-      selection_rename:
-        EventID: 4781
-        OldTargetUserName|endswith: '$'
-      filter_new_name_is_machine:
-        NewTargetUserName|endswith: '$'
-      condition: selection_rename and not filter_new_name_is_machine
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4781 --format llm
-      - forhunt search <paths> --channel Security --event-id 4741 --format llm
-    pivots:
-      - "NewTargetUserName equals the name of a real DC without the $ -> noPac. In the sample the attacker (non-admin 'lgrove') created DC012$ (4741), rotated its password (4724), then renamed it to '01566s-win16-ir' (the DC's name minus $) with 4781"
-      - "4768/4769 for the spoofed name followed by a service ticket to the DC (Kerberos ticket whose TargetUserName lacks the $ for a name that is a machine)"
-      - "SubjectUserName / SubjectLogonId of the creator -> FH-AD-017 (machine account quota)"
-      - "4742 DnsHostName changes of a non-DC computer to a DC FQDN: related CVE-2022-26923 certificate path (Elastic)"
-    false_positives:
-      - "Legitimate computer renames (OldTargetUserName ends in $, new name also ends in $: filtered)"
-      - "Rare admin mistakes renaming a machine account to a user-style name"
-    severity: critical
-    sources:
-      - https://github.com/elastic/detection-rules/blob/main/rules/windows/privilege_escalation_samaccountname_spoofing_attack.toml
-      - https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_computer_name.yml
-    verified: true
-    notes: "Elastic's rule and the DC-side sample EVTX agree on 4781 fields OldTargetUserName / NewTargetUserName. Sigma's rule detects only the SAMTHEADMIN- name used by the original sam-the-admin script and is easy to evade; the structure-based rename check above is the more robust one. Attack variants that rename before the DC is queried leave only 4781 on the DC that handled the LDAP write; query all DCs."
-
-  - id: FH-AD-017
-    title: Machine account quota abuse - computer account created by a non-admin user (4741)
-    tactic: persistence
-    attack: [T1136.002, T1098]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4741, 4673]
-    prerequisites:
-      - "Audit Computer Account Management (Success) on domain controllers"
-      - "Optional: Audit Sensitive Privilege Use for 4673 SeMachineAccountPrivilege"
-      - "A list of accounts that are expected to join computers (build/deployment service accounts, help desk)"
-    logic:
-      selection:
-        EventID: 4741
-      filter_machine_subject:
-        SubjectUserName|endswith: '$'
-      condition: selection and not filter_machine_subject and SubjectUserSid not in expected_joiners
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4741 --format llm
-      - forhunt search <paths> --channel Security --event-id 4673 --field PrivilegeList~SeMachineAccountPrivilege --format llm
-    pivots:
-      - "SubjectUserName -> is it a standard user (no delegated join right)? Default ms-DS-MachineAccountQuota is 10 so any authenticated user can add up to 10"
-      - "TargetUserName (new computer$) -> subsequent 5136 RBCD write (FH-AD-018), 4781 rename (FH-AD-016), or 4742 SPN/delegation setting"
-      - "Short-lived creation and deletion (4741 then 4743 minutes apart) is a tooling pattern (Powermad, Impacket addcomputer)"
-    false_positives:
-      - "Help-desk and OS-deployment accounts joining devices; normal domain joins by users when MAQ is left at 10"
-    severity: medium
-    sources:
-      - https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-    verified: false
-    notes: "Both sources are sample EVTX collections (4741 by non-admin lgrove in the noPac set; 4673 with PrivilegeList SeMachineAccountPrivilege in the mdecrevoisier set) and the README description of 4741; no independent detection rule was read. Baseline dependent: a normal environment may create computers by ordinary users when MAQ >0. Also event 4741 is logged on the DC that processed the write."
-
-  - id: FH-AD-018
-    title: RBCD and shadow credentials - writes to msDS-AllowedToActOnBehalfOfOtherIdentity / msDS-KeyCredentialLink (5136)
-    tactic: privilege-escalation
-    attack: [T1098, T1556, T1550.003]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [5136]
-    prerequisites:
-      - "Audit Directory Service Changes (Success) on domain controllers"
-      - "SACL for writes on user and computer objects: by default the domain-wide SACL may not cover them, so verify (Set-AuditRule / default SACL on domain root)"
-    logic:
-      selection:
-        EventID: 5136
-        AttributeLDAPDisplayName:
-          - 'msDS-AllowedToActOnBehalfOfOtherIdentity'
-          - 'msDS-KeyCredentialLink'
-        OperationType: '%%14674'
-      filter_entra_connect:
-        SubjectUserName|startswith: 'MSOL_'
-      condition: selection and not filter_entra_connect
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 5136 --field AttributeLDAPDisplayName=msDS-AllowedToActOnBehalfOfOtherIdentity --format llm
-      - forhunt search <paths> --channel Security --event-id 5136 --field AttributeLDAPDisplayName=msDS-KeyCredentialLink --format llm
-    pivots:
-      - "ObjectDN / ObjectClass -> which computer or user was modified; Subject -> who has write access (GenericWrite / WriteProperty path found by BloodHound)"
-      - "RBCD: S4U sequence (4769 with TransmittedServices populated) from the principal added in the descriptor; the attribute value may log as 'Malformed Security Descriptor' in the sample, so resolve the SID from AD, not the event"
-      - "Shadow credentials: AttributeValue starting 'B:828' is a KeyCredential blob; follow with 4768 PKINIT (CertThumbprint empty for key trust, see FH-AD-012) for the target account"
-      - "Related computer account created by the same user shortly before: FH-AD-017"
-    false_positives:
-      - "msDS-KeyCredentialLink is legitimately written by Entra Connect (MSOL_), ADFS service accounts and by Windows Hello for Business key registration"
-      - "Legitimate RBCD configuration by delegation admins (rare)"
-    severity: high
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_possible_shadow_credentials_added.yml
-      - https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_shadow_credentials.toml
-      - https://github.com/splunk/security_content/blob/develop/detections/endpoint/windows_ad_suspicious_attribute_modification.yml
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-    verified: true
-    notes: "Both attribute names appear in 5136 in Sigma/Elastic/Splunk rules; the RBCD sample EVTX shows AttributeLDAPDisplayName msDS-AllowedToActOnBehalfOfOtherIdentity, AttributeSyntaxOID 2.5.5.15, AttributeValue 'Malformed Security Descriptor', OperationType %%14674 (value added). Splunk filters on OperationType %%14674 = added; %%14675 = deleted. No sample EVTX for shadow credentials was available; Elastic tags blob prefix B:828. Whether 4742/4738 also fire on these writes: not observed in the RBCD sample except a bare 4742 with no changed fields."
-
-  - id: FH-AD-019
-    title: Delegation changes - constrained or unconstrained delegation enabled (4738/4742)
-    tactic: privilege-escalation
-    attack: [T1098, T1558]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4738, 4742, 5136]
-    prerequisites:
-      - "Audit User Account Management and Audit Computer Account Management (Success) on domain controllers"
-      - "Optional Audit Directory Service Changes for the matching 5136 on userAccountControl / msDS-AllowedToDelegateTo"
-    logic:
-      selection_allowed_to_delegate_set:
-        EventID:
-          - 4738
-          - 4742
-      filter_empty:
-        AllowedToDelegateTo: '-'
-      condition: selection_allowed_to_delegate_set and not filter_empty
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4742,4738 --format llm
-      - forhunt search <paths> --channel Security --event-id 5136 --field AttributeLDAPDisplayName=userAccountControl --format llm
-    pivots:
-      - "AllowedToDelegateTo lists the SPNs delegation is permitted to: cifs/ or ldap/ on a DC, or krbtgt/ (Elastic backdoor rule) are the dangerous ones"
-      - "TargetUserName of 4742 (a computer) or 4738 (a user): is it a server that should delegate?"
-      - "5136 userAccountControl AttributeValue (decimal) from the same OpCorrelationID: decode bits TRUSTED_FOR_DELEGATION 0x80000 (unconstrained) and TRUSTED_TO_AUTH_FOR_DELEGATION 0x1000000 (protocol transition)"
-      - "Subsequent 4769 with TransmittedServices set (S4U) or TGTs captured from the unconstrained host, then FH-AD-009"
-    false_positives:
-      - "Normal delegation configuration for Exchange, SQL, web or file servers by administrators"
-    severity: medium
-    sources:
-      - https://github.com/elastic/detection-rules/blob/main/rules/windows/persistence_msds_alloweddelegateto_krbtgt.toml
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-    verified: false
-    notes: "The AllowedToDelegateTo field in 4738/4742 is confirmed by Elastic's rule (4738) and by sample EVTX (4742 lists browser/cifs/cisvc SPNs). The UAC bit values 0x80000 and 0x1000000 are standard AD knowledge but were not confirmed by an opened source, and the sample EVTX's 4742 UAC numbers for 'delegation' did not match them (OldUacValue 0x84 to NewUacValue 0x2084 / 0x40084; AttributeValue 4128 and 16781344), so the sample UAC fields are untrustworthy for this purpose: check 5136 and the token (%%) text instead."
-
-  - id: FH-AD-020
-    title: Membership added to privileged AD groups (4728/4732/4756 and removals)
-    tactic: persistence
-    attack: [T1098, T1078.002]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4728, 4729, 4732, 4733, 4756, 4757]
-    prerequisites:
-      - "Audit Security Group Management (Success) on domain controllers"
-    logic:
-      selection:
-        EventID:
-          - 4728
-          - 4732
-          - 4756
-        TargetUserName:
-          - 'Domain Admins'
-          - 'Enterprise Admins'
-          - 'Schema Admins'
-          - 'Administrators'
-          - 'Backup Operators'
-          - 'Account Operators'
-          - 'DnsAdmins'
-          - 'Server Operators'
-          - 'Print Operators'
-          - 'Enterprise Key Admins'
-      filter_machine_actor:
-        SubjectUserName|endswith: '$'
-      condition: selection and not filter_machine_actor
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4728,4732,4756 --field TargetUserName="Domain Admins" --format llm
-      - forhunt search <paths> --channel Security --event-id 4728,4732,4756 --field TargetUserName=DnsAdmins --format llm
-      - forhunt search <paths> --channel Security --event-id 4729,4733,4757 --format llm
-    pivots:
-      - "MemberName (distinguished name) / MemberSid -> new member; SubjectUserName / SubjectLogonId -> actor and their logon"
-      - "4729/4733/4757 removal within minutes: add-use-remove pattern; also 'quick add then remove' sample"
-      - "TargetSid ending -512 (Domain Admins), -519 (Enterprise Admins), -518 (Schema Admins), -527 (Enterprise Key Admins) is more robust than the name on localized DCs"
-      - "DnsAdmins member added: see FH-AD-021"
-      - "Exchange privileged groups (Exchange Trusted Subsystem / Windows Permissions) grant WriteDacl on the domain: precursor of FH-AD-006"
-    false_positives:
-      - "Approved joiner/mover/leaver changes, privileged-access-management tools that add temporary membership"
-    severity: high
-    sources:
-      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/AccountManagement/SecurityGroupManagement/Sec_4728_High_MemberAddedToGlobalGrp_DomainAdmins.yml
-      - https://github.com/WithSecureLabs/chainsaw/tree/master/rules/evtx/account_tampering
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-    verified: true
-    notes: "Fields MemberName, MemberSid, TargetUserName, TargetSid, SubjectUserName confirmed in sample EVTX (4728 Domain Admins, 4756 Enterprise Admins/Enterprise Key Admins, 4732 DnsAdmins); Hayabusa and Chainsaw rules use 4728/4732 with the same fields. 4729/4733/4757 (removals) are assumed analogous but were not seen in an opened sample. 4728/4756 fire for global/universal groups, 4732 for domain-local and BUILTIN; DnsAdmins is domain-local so 4732. Events appear on the DC that performed the write."
-
-  - id: FH-AD-021
-    title: DNSAdmins abuse - ServerLevelPluginDll loaded by the DNS service (DNS Server 150/770)
-    tactic: privilege-escalation
-    attack: [T1574.002, T1098]
-    channel: DNS Server
-    provider: Microsoft-Windows-DNS-Server-Service
-    event_ids: [150, 770, 771]
-    prerequisites:
-      - "DNS Server role on the DC; the 'DNS Server' event log is collected (it is a separate channel from Application/System)"
-    logic:
-      selection:
-        EventID:
-          - 150
-          - 770
-          - 771
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel "DNS Server" --event-id 150,770,771 --format llm
-    pivots:
-      - "param1 of 150/770 is the DLL path: a UNC path, user-writable folder or non-Microsoft DLL name (mimilib.dll in the samples) is the indicator; 150 = failed to load (the attacker's first attempt), 770 = loaded (success)"
-      - "Security 4732/4728 for the account just added to DnsAdmins (FH-AD-020) and process creation 'dnscmd /config /serverlevelplugindll' on the admin workstation (4688/Sysmon 1)"
-      - "Registry change to HKLM\\SYSTEM\\CurrentControlSet\\Services\\DNS\\Parameters\\ServerLevelPluginDll"
-    false_positives:
-      - "Rare; there is almost no legitimate use of a server-level plugin DLL in production"
-    severity: high
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/dns_server/win_dns_server_susp_server_level_plugin_dll.yml
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-    verified: true
-    notes: "Sample EVTX show channel 'DNS Server', provider Microsoft-Windows-DNS-Server-Service, 770 with param1 = DLL path and param2 = DNS server name, 150 with param1 = '.\\mimilib.dll' (failed load); Sigma lists 150/770/771 for the same purpose. The channel name in the EVTX is 'DNS Server' (with the space). Event 771 (plugin DLL unload or load completion) meaning is not confirmed."
-
-  - id: FH-AD-022
-    title: AdminSDHolder object modified (5136) - SDProp persistence
-    tactic: persistence
-    attack: [T1098, T1546]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [5136]
-    prerequisites:
-      - "Audit Directory Service Changes (Success) on domain controllers"
-      - "SACL on CN=AdminSDHolder,CN=System,DC=... (default domain SACL for Everyone writes normally applies; verify)"
-    logic:
-      selection:
-        EventID: 5136
-        ObjectDN|startswith: 'CN=AdminSDHolder,CN=System,'
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 5136 --field ObjectDN~CN=AdminSDHolder --format llm
-    pivots:
-      - "AttributeLDAPDisplayName nTSecurityDescriptor + AttributeValue (SDDL): who received an ACE; resolve SIDs"
-      - "Subject account / logon: 4624 and FH-AD-020"
-      - "Within about 60 minutes (default SDProp interval) 5136 nTSecurityDescriptor changes on privileged accounts/groups propagate the ACL: look for the ACE on Domain Admins members"
-      - "A variant with a changed localizationDisplayId / confusion attribute is used to hide the backdoor (sample exists)"
-    false_positives:
-      - "Rare, legitimate AdminSDHolder permission changes by tiering projects"
-    severity: high
-    sources:
-      - https://github.com/elastic/detection-rules/blob/main/rules/windows/persistence_ad_adminsdholder.toml
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-    verified: true
-    notes: "Elastic and the sample EVTX agree (5136, ObjectDN CN=AdminSDHolder,CN=System,DC=..., ObjectClass container, AttributeLDAPDisplayName nTSecurityDescriptor, OperationType %%14674 add + %%14675 delete in the same OpCorrelationID). The 60-minute SDProp interval is from general AD knowledge, not from an opened source."
-
-  - id: FH-AD-023
-    title: SID History added to an account (4765 / 4766 / 4738 SidHistory)
-    tactic: privilege-escalation
-    attack: [T1134.005]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4765, 4766, 4738]
-    prerequisites:
-      - "Audit User Account Management (Success and Failure) on domain controllers"
-    logic:
-      selection_history_added:
-        EventID:
-          - 4765
-          - 4766
-      selection_uac_change_with_history:
-        EventID: 4738
-        SidHistory|contains: 'S-1-5-21-'
-      condition: selection_history_added or selection_uac_change_with_history
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4765,4766 --format llm
-      - forhunt search <paths> --channel Security --event-id 4738 --field SidHistory~S-1-5-21- --format llm
-    pivots:
-      - "SourceUserName / SourceSid -> the SID being injected (Domain Admins/Enterprise Admins RID 512/519 or a SID from another domain)"
-      - "TargetUserName -> later 4624/4672 with that SID in the token; cross-forest access in trusts without SID filtering"
-      - "4766 = the attempt failed (for example no SID filtering exemption); it may be the first sign"
-      - "SubjectUserName must be a replication/migration admin; also 4661 SAM_DOMAIN access by lsass (sample)"
-    false_positives:
-      - "Domain migrations using ADMT / SID-history migration"
-    severity: high
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_add_sid_history.yml
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-    verified: true
-    notes: "Sample EVTX for 4765 shows SourceUserName 'maincorp.local\\Domain Admins', SourceSid ...-512, TargetUserName, SubjectUserName. Sigma uses 4765/4766 and 4738 with SidHistory not '-' / %%1793. 4766 and the 4738 branch were not in a sample. Mimikatz sid::patch edits memory/NTDS directly and writes none of these events."
-
-  - id: FH-AD-024
-    title: Group Policy object tampering (5136 on groupPolicyContainer, SYSVOL writes in 5145)
-    tactic: privilege-escalation
-    attack: [T1484.001]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [5136, 5137, 5141, 5145]
-    prerequisites:
-      - "Audit Directory Service Changes (Success) for 5136/5137/5141"
-      - "Audit Detailed File Share (Success) on DCs for 5145 on SYSVOL"
-    logic:
-      selection_gpo_attribute_write:
-        EventID: 5136
-        ObjectClass: 'groupPolicyContainer'
-        AttributeLDAPDisplayName:
-          - 'gPCMachineExtensionNames'
-          - 'gPCUserExtensionNames'
-          - 'versionNumber'
-          - 'gPCFileSysPath'
-      selection_default_policies:
-        EventID: 5136
-        ObjectClass: 'groupPolicyContainer'
-        ObjectDN|startswith:
-          - 'CN={31B2F340-016D-11D2-945F-00C04FB984F9},CN=POLICIES,CN=SYSTEM'
-          - 'CN={6AC1786C-016F-11D2-945F-00C04FB984F9},CN=POLICIES,CN=SYSTEM'
-      selection_sysvol_script_write:
-        EventID: 5145
-        ShareName|endswith: '\SYSVOL'
-        RelativeTargetName|endswith:
-          - '\scripts.ini'
-          - '\psscripts.ini'
-          - '\ScheduledTasks.xml'
-          - '\GptTmpl.inf'
-      condition: 1 of selection_*
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 5136 --field ObjectClass=groupPolicyContainer --format llm
-      - forhunt search <paths> --channel Security --event-id 5137,5141 --field ObjectClass=groupPolicyContainer --format llm
-      - forhunt search <paths> --channel Security --event-id 5145 --field ShareName~SYSVOL --field RelativeTargetName~Policies --format llm
-    pivots:
-      - "ObjectDN GPO GUID -> which OUs/domain it is linked to (gPLink changes: 5136 on the OU/domain object)"
-      - "versionNumber 5136 pairs (old removed %%14675 / new added %%14674) show an edit was done; the previous and new value identify the increment"
-      - "GptTmpl.inf changes granting SeEnableDelegationPrivilege, SeDebugPrivilege or adding Domain Users to Administrators; scripts.ini/ScheduledTasks.xml for deployment of malware (ransomware precursor)"
-      - "SubjectUserName / SubjectLogonId -> 4624; sensitive 4662 on the GPO object (sample shows 4662 AccessMask 0x20)"
-    false_positives:
-      - "Routine GPO administration; every edit touches versionNumber and the extension GUID attributes"
-    severity: medium
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_default_domain_gpo_modification.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_group_policy_startup_script_added_to_gpo.yml
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-    verified: true
-    notes: "Sample 'sensitive GPO edited' shows 5136 with ObjectClass groupPolicyContainer, ObjectDN CN={GUID},CN=POLICIES,CN=SYSTEM,DC=..., AttributeLDAPDisplayName versionNumber, OperationType %%14674/%%14675. Sigma covers default-policy modification and the SYSVOL scripts.ini/psscripts.ini pattern in 5145 (AccessList %%4417 write data). gPCFileSysPath and GptTmpl.inf/ScheduledTasks.xml matches are my own extension, not directly confirmed in an opened source. The change detail is only in 5136 attribute values; the content of the policy files themselves is not logged."
-
-  - id: FH-AD-025
-    title: New domain or forest trust created or modified (4706 / 4707 / 4716 / 4865)
-    tactic: persistence
-    attack: [T1484.002]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4706, 4707, 4716, 4865]
-    prerequisites:
-      - "Audit Authentication Policy Change (Success) on domain controllers"
-    logic:
-      selection:
-        EventID:
-          - 4706
-          - 4707
-          - 4716
-          - 4865
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4706,4707,4716,4865 --format llm
-    pivots:
-      - "4706 DomainName / DomainSid -> the trusted domain; TdoDirection (1 inbound, 2 outbound, 3 bidirectional per Microsoft docs), TdoType and TdoAttributes (SID filtering/quarantine flags); SidFilteringEnabled shows whether SID filtering is on (the sample shows token %%1796)"
-      - "4865 describes the added forest trust information entries; SubjectUserName/SubjectLogonId -> the account that created it"
-      - "4741/4742 for trust accounts (name ends with $ with UAC 0x45 in the sample): the interdomain trust account"
-      - "Without SID filtering, SID History attacks across the trust (FH-AD-023)"
-    false_positives:
-      - "Mergers, migrations, lab forests"
-    severity: high
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_add_domain_trust.yml
-      - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
-    verified: true
-    notes: "4706 confirmed by Sigma and sample EVTX (fields DomainName, DomainSid, TdoType, TdoDirection, TdoAttributes, SidFilteringEnabled); 4865 seen in the same sample (ForestRoot, TopLevelName, DnsName, NetbiosName). 4707 (removed) and 4716 (modified) are plain from the assignment and not seen in any sample; the numeric meaning of TdoDirection values in the pivot is from Microsoft docs memory, not an opened source."
-
-  - id: FH-AD-026
-    title: Authentication coercion - RPC pipes (lsarpc, efsrpc, spoolss, netdfs ...) accessed over IPC$ on a DC (5145)
-    tactic: credential-access
-    attack: [T1187, T1557]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [5145]
-    prerequisites:
-      - "Audit Detailed File Share (Success) on domain controllers; high volume, enable only on DCs and sensitive servers"
-    logic:
-      selection:
-        EventID: 5145
-        ShareName|endswith: '\IPC$'
-        RelativeTargetName:
-          - 'lsarpc'
-          - 'efsrpc'
-          - 'spoolss'
-          - 'netdfs'
-          - 'FssagentRpc'
-      filter_local_machine_account:
-        SubjectUserName|endswith: '$'
-      condition: selection and not filter_local_machine_account
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName=lsarpc --format llm
-      - forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName=efsrpc --format llm
-      - forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName=spoolss --format llm
-      - forhunt search <paths> --channel Security --event-id 5145 --field SubjectUserName="ANONYMOUS LOGON" --field RelativeTargetName=lsarpc --format llm
-    pivots:
-      - "IpAddress / IpPort -> the coercing client; then 4624 type 3 NTLM or Kerberos from the DC machine account to that host or another (FH-AD-027)"
-      - "ANONYMOUS LOGON on lsarpc is the unauthenticated PetitPotam signature (pre-patch); authenticated variants use a normal user"
-      - "spoolss over IPC$ is the Spooler/PrinterBug path; the print spooler should not run on DCs"
-      - "SubjectUserName with ADCS web enrollment / LDAP targets: relay to AD CS (ESC8) -> FH-AD-011 via 4886/4887 from the DC machine account"
-    false_positives:
-      - "DCs acting as print servers or file servers; EFS usage; backup software using these pipes"
-    severity: medium
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_petitpotam_network_share.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_dce_rpc_smb_spoolss_named_pipe.yml
-      - https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_dollar_account_relay_ntlm.toml
-      - https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
-    verified: true
-    notes: "Sample EVTX (SpoolSample) shows 5145 with ShareName '\\\\*\\IPC$' (a wildcard host), RelativeTargetName 'spoolss', ObjectType File, IpAddress/IpPort. Sigma, Elastic list the same pipe names; Elastic's list is longer (netdfs, lsass, netlogon, samr, efsrpc, FssagentRpc, eventlog, winreg, srvsvc ...). Many of those are noisy; narrow before use. RPC-level coercion (MS-EFSR via other pipes such as efsrpc, or via ETW only) may not log a pipe name. Microsoft-Windows-RPC ETW needed for full coverage and is not in EVTX."
-
-  - id: FH-AD-027
-    title: Machine-account NTLM network logon from a remote host (relay of coerced authentication)
-    tactic: credential-access
-    attack: [T1557.001, T1187]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4624]
-    prerequisites:
-      - "Audit Logon (Success) on the target hosts"
-      - "Need a list of host names and their IP addresses to compare IpAddress against the account's own host"
-    logic:
-      selection:
-        EventID: 4624
-        LogonType: 3
-        AuthenticationPackageName: 'NTLM'
-        TargetUserName|endswith: '$'
-      condition: selection and IpAddress is not the IP of the host named in TargetUserName
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=3 --field AuthenticationPackageName=NTLM --regex TargetUserName='\$$' --format llm
-    pivots:
-      - "IpAddress is the relaying host; compare with the DNS/DHCP address of the machine named by TargetUserName (a DC computer account arriving from a workstation IP)"
-      - "Preceding 5145 coercion pipe events from the same IpAddress (FH-AD-026)"
-      - "Following 4662/4742/4887 on the DC from that machine account (DCSync as DC$, certificate issued to DC$ via AD CS web enrollment)"
-    false_positives:
-      - "Machine accounts that authenticate over NTLM from their own IP via a proxy/NAT or through load-balanced services"
-      - "Clusters and failover pairs using virtual IPs"
-    severity: medium
-    sources:
-      - https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_dollar_account_relay_ntlm.toml
-      - https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
-    verified: false
-    notes: "Single detection source (Elastic sequence rule: coercion 5145 then 4624 NTLM network logon of a $ account whose IP does not belong to that host, within 5 seconds); the 4624 fields (AuthenticationPackageName, LogonType, IpAddress, TargetUserName, LmPackageName) are present in sample EVTX. The IP-ownership comparison needs data from outside the EVTX."
-
-  - id: FH-AD-028
-    title: NTLMv1 authentication (4624 LmPackageName 'NTLM V1')
-    tactic: credential-access
-    attack: [T1557.001, T1550.002]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4624]
-    prerequisites:
-      - "Audit Logon (Success)"
-    logic:
-      selection:
-        EventID: 4624
-        AuthenticationPackageName: 'NTLM'
-        LmPackageName: 'NTLM V1'
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4624 --field LmPackageName="NTLM V1" --format llm
-    pivots:
-      - "IpAddress / WorkstationName -> the client that negotiated NTLMv1 (NTLMv1 is crackable to NT hash, and a downgrade by an attacker-controlled responder or relay is typical)"
-      - "4657/registry change to LmCompatibilityLevel (Sigma rule win_security_net_ntlm_downgrade) near the same time, ruling in a downgrade attack on the host"
-      - "Microsoft-Windows-NTLM/Operational 8001-8004 (FH-AD-029) for the server-side view"
-    false_positives:
-      - "Legacy devices, printers, old NAS and applications that only support NTLMv1"
-    severity: medium
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_net_ntlm_downgrade.yml
-      - https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
-    verified: false
-    notes: "The field name LmPackageName exists in 4624 (sample EVTX shows '-' for Kerberos logons). The literal value 'NTLM V1' is from the assignment and general knowledge; no opened source contains it. Sigma's downgrade rule watches registry value changes (4657), not LmPackageName."
-
-  - id: FH-AD-029
-    title: NTLM Operational log - audited NTLM use, outgoing and incoming (8001 / 8002 / 8003 / 8004)
-    tactic: credential-access
-    attack: [T1557.001]
-    channel: Microsoft-Windows-NTLM/Operational
-    provider: Microsoft-Windows-Security-Netlogon
-    event_ids: [8001, 8002, 8003, 8004]
-    prerequisites:
-      - "Policy 'Network security: Restrict NTLM: Audit NTLM authentication in this domain' (and incoming/outgoing audit settings) enabled; otherwise the channel is empty"
-      - "Collect Microsoft-Windows-NTLM/Operational from DCs and servers"
-    logic:
-      selection:
-        EventID:
-          - 8001
-          - 8002
-          - 8003
-          - 8004
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-NTLM/Operational --event-id 8001,8002,8003,8004 --format llm
-      - forhunt stats <paths> --format llm
-    pivots:
-      - "8004 on a DC identifies NTLM authentication requests to the DC (account, workstation, target); count per source for relay or spraying"
-      - "8001 = outgoing NTLM from this host; 8002 = incoming NTLM audit on the server (Sigma uses 8002 as the signal in two rules); 8003 = NTLM would be blocked by policy in audit mode"
-      - "Compare NTLM from privileged accounts or DC machine accounts to the expected NTLM usage list"
-    false_positives:
-      - "Any environment that still uses NTLM for IP-address-based access, legacy apps, workgroup hosts"
-    severity: low
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/ntlm/win_susp_ntlm_auth.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/ntlm/win_susp_ntlm_brute_force.yml
-    verified: false
-    notes: "Sigma confirms channel/service (Microsoft-Windows-NTLM/Operational) and use of 8002 and others; the meaning of each of 8001-8004 and the provider name 'Microsoft-Windows-Security-Netlogon' in the header were not confirmed from Microsoft docs. Field names (for example WorkstationName, TargetName, UserName, DomainName) were not seen in a sample EVTX, so no logic field list is given."
-
-  - id: FH-AD-030
-    title: Expensive or inefficient LDAP queries (Directory Service 1644) and LDAP reconnaissance blind spot
-    tactic: discovery
-    attack: [T1087.002, T1069.002, T1482]
-    channel: Directory Service
-    provider: Microsoft-Windows-ActiveDirectory_DomainService
-    event_ids: [1644]
-    prerequisites:
-      - "On each DC: registry HKLM\\SYSTEM\\CurrentControlSet\\Services\\NTDS\\Diagnostics '15 Field Engineering' set to 5 (and optionally Search Time/Expensive/Inefficient thresholds under ...\\NTDS\\Parameters)"
-      - "Without this nothing is logged. It is verbose; do not enable permanently without capacity planning"
-    logic:
-      selection:
-        EventID: 1644
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel "Directory Service" --event-id 1644 --format llm
-    pivots:
-      - "Event text contains the client IP:port, the starting node, the filter and the number of entries visited/returned: large returns for filters such as (objectClass=user) or (servicePrincipalName=*) from one client are a recon tool (BloodHound/SharpHound, ADFind, PowerView)"
-      - "Same client -> 4662 reads of user class objects (Sigma ad_user_enumeration), 4769 bursts (FH-AD-002), 4624 for the logon"
-      - "Where 1644 is off, process creation logs (4688/Sysmon 1) for adfind.exe/dsquery and PowerShell 4104 for the AD cmdlets"
-    false_positives:
-      - "Exchange, identity-management products, sync tools that run broad LDAP queries"
-    severity: low
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/ldap/win_ldap_recon.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_ad_user_enumeration.yml
-    verified: false
-    notes: "BLIND SPOT: Sigma confirms that LDAP search filters are only logged in the Microsoft-Windows-LDAP-Client ETW trace (EventID 30, 'Microsoft-Windows-LDAP-Client/Debug'), which does not exist in a normal EVTX, so query text from clients cannot be reviewed from the EVTX collection. Event 1644 details (provider, 'Directory Service' channel, field layout, diagnostics registry value) are from general knowledge, not from an opened source; unverified. Sigma's 4662 user-class enumeration check requires a SACL for reads on user objects and has a high false-positive rate."
+- id: FH-AD-001
+  title: Kerberoasting - RC4 service ticket requests for user-account SPNs
+  tactic: credential-access
+  attack:
+  - T1558.003
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4769
+  prerequisites:
+  - Audit Kerberos Service Ticket Operations (Success) on domain controllers
+  - Events are only on DCs; collect from every DC
+  logic:
+    selection:
+      EventID: 4769
+      TicketEncryptionType: '0x17'
+      Status: '0x0'
+    filter_krbtgt_and_machine_services:
+      ServiceName|endswith:
+      - krbtgt
+      - $
+    filter_machine_requesters:
+      TargetUserName|contains: $@
+    condition: selection and not filter_krbtgt_and_machine_services and not filter_machine_requesters
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4769 --regex TicketEncryptionType='^0x0*17$'
+    --regex Status='^0x0*$' --format llm
+  - forhunt search <paths> --channel Security --event-id 4769 --regex TicketEncryptionType='^0x0*17$'
+    --regex ServiceName='[^$]$' --limit 200 --format csv
+  pivots:
+  - Requester (TargetUserName, IpAddress) -> count distinct ServiceName per requester/IP; many in seconds
+    is the tool signature (see FH-AD-002)
+  - ServiceName -> is it a user account with an SPN, and is the password old/weak? Administrator-class
+    SIDs (ServiceSid ending -500) as service target is almost always malicious
+  - IpAddress -> 4624 / 4768 for the same requester just before the burst
+  false_positives:
+  - Legacy applications or appliances that only support RC4
+  - Service accounts whose msDS-SupportedEncryptionTypes does not include AES
+  - Domains where AES keys were never generated for old accounts (password not changed since DFL 2003)
+  severity: medium
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_kerberoasting_activity.yml
+  - https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_kerberos_service_ticket_rc4.toml
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/AccountLogon/KerberosAuthenticationService/Sec_4769_Med_KerberosTGT-Request_PossibleKerberoasting.yml
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1087-Account discovery/ID4769-Kerberos TGS host enumeration
+    (Bloodhound).evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_rc4_kerberos.yml
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/4769: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log. JPCERT sheets mentioning the same event ids/tools:
+    net-user (informational). || Original notes: Confirmed by three rule sets plus a sample EVTX (field
+    names TargetUserName, ServiceName, ServiceSid, TicketEncryptionType, Status, IpAddress, TicketOptions).
+    0x18 (RC4-HMAC-EXP) is also treated as weak by Chainsaw. Microsoft Learn page for 4769 was not reachable
+    from this environment, so Microsoft''s own field semantics were not independently read. AES-requesting
+    tools (Rubeus /aes) and attackers who downgrade only when the account allows RC4 will not produce
+    0x17; absence of RC4 does not clear a host.'
+- id: FH-AD-002
+  title: Kerberoasting - burst of distinct service ticket requests by one requester
+  tactic: credential-access
+  attack:
+  - T1558.003
+  - T1087.002
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4769
+  prerequisites:
+  - Audit Kerberos Service Ticket Operations (Success) on domain controllers
+  logic:
+    selection:
+      EventID: 4769
+      Status: '0x0'
+    filter_krbtgt_and_machine_services:
+      ServiceName|endswith:
+      - krbtgt
+      - $
+    condition: selection and not filter_krbtgt_and_machine_services and count_distinct(ServiceName) by
+      TargetUserName, IpAddress > 10 within 1m
+  forhunt:
+  - forhunt stats <paths> --format llm
+  - forhunt search <paths> --channel Security --event-id 4769 --regex ServiceName='[^$]$' --limit 2000
+    --format csv
+  pivots:
+  - Group the CSV output by TargetUserName+IpAddress and count distinct ServiceName per minute; the sample
+    EVTX for bulk enumeration shows many tickets from one IP within seconds
+  - Whether TicketEncryptionType is 0x17 for the burst (FH-AD-001) or AES (targeted Rubeus /aes or bulk
+    SPN enumeration for BloodHound)
+  false_positives:
+  - Admin consoles or monitoring that touch many services
+  - Users logging on to many member servers (but those SPNs are usually machine accounts, filtered by
+    the $ rule)
+  - SharpHound/BloodHound-style collectors by authorized assessors
+  severity: medium
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_kerberoasting_activity.yml
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1087-Account discovery/ID4769-Kerberos TGS host enumeration
+    (Bloodhound).evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_rc4_kerberos.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4769: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: The
+    Sigma rule only describes the idea (one host, many service names, about 5 seconds) and leaves the
+    threshold to the analyst; the threshold 10 per minute here is an assumption, not a published value.
+    JPCERT sheets mentioning the same event ids/tools: net-user (informational). || Original notes: The
+    Sigma rule only describes the idea (one host, many service names, about 5 seconds) and leaves the
+    threshold to the analyst; the threshold 10 per minute here is an assumption, not a published value.
+    Needs aggregation outside forhunt (csv + script).'
+- id: FH-AD-003
+  title: AS-REP roasting - TGT issued without pre-authentication
+  tactic: credential-access
+  attack:
+  - T1558.004
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4768
+  prerequisites:
+  - Audit Kerberos Authentication Service (Success) on domain controllers
+  logic:
+    selection:
+      EventID: 4768
+      PreAuthType: 0
+      ServiceName: krbtgt
+      Status: '0x0'
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4768 --field PreAuthType=0 --format llm
+  - forhunt search <paths> --channel Security --event-id 4768 --field PreAuthType=0 --regex TicketEncryptionType='^0x0*17$'
+    --format llm
+  pivots:
+  - TargetUserName -> check whether DONT_REQ_PREAUTH was set recently (FH-AD-004 / 4738)
+  - IpAddress -> other 4768 PreAuthType 0 for different TargetUserName from the same IP (spraying a user
+    list)
+  - Failures for the same IP (Status 0x6 client unknown) point to a username-guessing run
+  false_positives:
+  - Accounts deliberately configured without pre-auth (rare legacy Kerberos clients, some Unix/appliance
+    integrations)
+  severity: medium
+  sources:
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/AccountLogon/KerberosAuthenticationService/Sec_4768_Med_KrbTGT-Req_PossibleAS-REP-Roasting.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_kerberos_asrep_roasting.yml
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - 'sample: EVTX-to-MITRE-Attack/TA0006-Credential Access/T1110.xxx-Brut force/ID4768-4771-Kerberos brutforce
+    with non existing users.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/4768: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log. || Original notes: Sample EVTX (AS-REP roasting)
+    shows PreAuthType ''0'', TicketEncryptionType 0x00000017, ServiceName krbtgt, TicketOptions 0x40800010.
+    Normal AES clients show PreAuthType 2 (encrypted timestamp). The RC4 filter is optional: a modern
+    domain may allow AES in AS-REP, which would still be crackable but slower.'
+- id: FH-AD-004
+  title: Account flagged "Do not require Kerberos preauthentication" (4738)
+  tactic: persistence
+  attack:
+  - T1558.004
+  - T1098
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4738
+  prerequisites:
+  - Audit User Account Management (Success) on domain controllers
+  logic:
+    selection:
+      EventID: 4738
+      UserAccountControl|contains: '%%2096'
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4738 --field UserAccountControl~%%2096 --format
+    llm
+  pivots:
+  - SubjectUserName / SubjectLogonId -> who made the change (and 4624 for that logon)
+  - TargetUserName -> later 4768 with PreAuthType 0 (FH-AD-003)
+  - Same SubjectLogonId -> 5136 on userAccountControl, 4738 reverting (%%2064) shortly after (set-roast-unset
+    pattern)
+  false_positives:
+  - Intentional configuration for a legacy integration
+  severity: high
+  sources:
+  - https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_disable_kerberos_preauth.toml
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - 'sample: EVTX-ATTACK-SAMPLES/Credential Access/ACL_ForcePwd_SPNAdd_User_Computer_Accounts.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0003-Persistence/T1098.xxx-Account manipulation/ID4738-Do not require
+    Kerberos preauthentication.evtx'
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/4738: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log. JPCERT sheets mentioning the same event ids/tools:
+    net-user (informational). || Original notes: The UserAccountControl field in 4738 carries a message-table
+    token, not a mask: %%2096 = flag enabled (this is what Elastic''s NewUACList decodes to USER_DONT_REQUIRE_PREAUTH)
+    and %%2064 appeared when the same flag was removed in the sample. CAUTION: in the sample EVTX the
+    numeric OldUacValue/NewUacValue changed 0x210 -> 0x10210, which does NOT contain the documented DONT_REQ_PREAUTH
+    bit 0x400000, so do not build the check on the numeric mask without testing on your own logs. The
+    %%-token to meaning mapping was cross-read from Elastic and the sample, not from Microsoft''s message
+    tables.'
+- id: FH-AD-005
+  title: DCSync - directory replication rights exercised by a non-DC account (4662)
+  tactic: credential-access
+  attack:
+  - T1003.006
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4662
+  prerequisites:
+  - Audit Directory Service Access (Success) on domain controllers
+  - A SACL on the domain naming-context root auditing Everyone for the DS-Replication-Get-Changes and
+    DS-Replication-Get-Changes-All control access rights; without it 4662 is not generated for replication
+  logic:
+    selection:
+      EventID: 4662
+      AccessMask: '0x100'
+      Properties|contains:
+      - 1131f6aa-9c07-11d1-f79f-00c04fc2dcd2
+      - 1131f6ad-9c07-11d1-f79f-00c04fc2dcd2
+      - 89e95b76-444d-4c62-991a-0facbeda640c
+    filter_machine_accounts:
+      SubjectUserName|endswith: $
+    filter_azure_ad_connect:
+      SubjectUserName|startswith: MSOL_
+    condition: selection and not filter_machine_accounts and not filter_azure_ad_connect
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4662 --field Properties~1131f6aa-9c07-11d1-f79f-00c04fc2dcd2
+    --format llm
+  - forhunt search <paths> --channel Security --event-id 4662 --field Properties~1131f6ad-9c07-11d1-f79f-00c04fc2dcd2
+    --format llm
+  - forhunt search <paths> --channel Security --event-id 4662 --field Properties~89e95b76-444d-4c62-991a-0facbeda640c
+    --format llm
+  pivots:
+  - 'SubjectUserName / SubjectLogonId -> 4624 on the DC for that LogonId: IpAddress of the machine running
+    the tool (a workstation or server, not another DC)'
+  - Who granted the right? see FH-AD-006 (5136 on the domain root) and group changes to Domain Admins
+    / Exchange groups
+  - 'Subsequent use of krbtgt or admin hashes: FH-AD-009, 4624 type 3 from the same IP'
+  false_positives:
+  - Azure AD Connect / Entra Connect sync accounts (MSOL_*, AAD connector accounts)
+  - Legitimate DC machine accounts (excluded via $)
+  - Backup/replication tools (some migration or identity-management products) running as a service user
+  severity: critical
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_ad_replication_non_machine_account.yml
+  - https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_dcsync_replication_rights.toml
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1069-Permission Groups Discovery/ID4662-Domain group
+    enumeration CME.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/4662: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log. || Original notes: Sample EVTX (Mimikatz DCSync)
+    shows ObjectType {19195a5b-6da0-11d0-afd3-00c04fd930c9} (domainDNS), AccessMask 0x00000100 (control
+    access), Properties containing {1131f6aa-...} with braces and a %%7688 token. Match on the bare GUID
+    with a substring, not on braces. Sigma also lists 9923a32a-3607-11d2-b9be-0000f87a36b2 (DS-Replication-Synchronize);
+    mimikatz alone logged only 1131f6aa in the sample, so expect either one or several GUIDs. Event is
+    per-DC: query all DCs. Note that SubjectUserName ending in $ is excluded, so a DCSync run as a compromised
+    computer account (including a rogue DC) is missed; Sigma publishes a companion check for machine accounts
+    that are not DCs.'
+- id: FH-AD-006
+  title: DCSync rights granted - ACL change on the domain root (5136)
+  tactic: persistence
+  attack:
+  - T1003.006
+  - T1222.001
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 5136
+  prerequisites:
+  - Audit Directory Service Changes (Success) on domain controllers
+  - SACL on the domain root object (default SACL on the domain head covers writes by Everyone, verify
+    in your environment)
+  logic:
+    selection:
+      EventID: 5136
+      AttributeLDAPDisplayName: nTSecurityDescriptor
+      AttributeValue|contains:
+      - 1131f6aa-9c07-11d1-f79f-00c04fc2dcd2
+      - 1131f6ad-9c07-11d1-f79f-00c04fc2dcd2
+      - 89e95b76-444d-4c62-991a-0facbeda640c
+    filter_dns_objects:
+      ObjectClass:
+      - dnsNode
+      - dnsZone
+      - dnsZoneScope
+    condition: selection and not filter_dns_objects
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 5136 --field AttributeLDAPDisplayName=nTSecurityDescriptor
+    --field ObjectClass=domainDNS --format llm
+  pivots:
+  - 'AttributeValue is an SDDL string: look for the SID of the principal receiving the GUID-bearing ACE
+    (resolve it); the sample value is truncated in places so read the full event'
+  - SubjectUserName / SubjectLogonId -> 4624 for the actor; then FH-AD-005 for later use of the right
+    by that principal
+  - 'OperationType %%14674 = value added, %%14675 = value deleted: a deletion shortly after an add indicates
+    cleanup after the attack'
+  false_positives:
+  - Exchange or Entra Connect installation/upgrade setting replication ACEs
+  - Promotion of a new DC (new DC computer account ACEs)
+  severity: high
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_account_backdoor_dcsync_rights.yml
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - 'sample: EVTX-ATTACK-SAMPLES/Credential Access/ACL_ForcePwd_SPNAdd_User_Computer_Accounts.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/5136: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log.  Note: flipped to true: logic matches the Sigma
+    rule for DCSync-right backdooring (5136, nTSecurityDescriptor, the three replication-right GUIDs,
+    DNS-object filter); the log writes nTSecurityDescriptor while Sigma spells it ntSecurityDescriptor
+    (forhunt matching is case-insensitive). || Original notes: One rule project plus one sample EVTX (5136
+    nTSecurityDescriptor on ObjectClass domainDNS with 4662 around it); the sample in the corpus shows
+    a DC-style machine account (SRVFS02$) as subject so it is a lab artefact. Sigma matches the attribute
+    name in lower-case ntSecurityDescriptor; the sample writes nTSecurityDescriptor, and forhunt matching
+    is case-insensitive. AttributeValue is truncated (about 150 characters in my parser) only by my tooling,
+    not by Windows.'
+- id: FH-AD-007
+  title: DCShadow - rogue DC registration (GC/ SPN and server object in Configuration)
+  tactic: defense-evasion
+  attack:
+  - T1207
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4742
+  - 5136
+  - 5137
+  - 5141
+  prerequisites:
+  - Audit Computer Account Management (Success) for 4742
+  - Audit Directory Service Changes (Success) for 5136/5137/5141, with SACLs on the Configuration partition
+    objects (defaults do not cover every object, and user objects are not audited by default)
+  logic:
+    selection_spn_4742:
+      EventID: 4742
+      ServicePrincipalNames|contains: GC/
+    selection_spn_5136:
+      EventID: 5136
+      AttributeLDAPDisplayName: servicePrincipalName
+      AttributeValue|startswith: GC/
+    selection_server_object:
+      EventID:
+      - 5137
+      - 5141
+      ObjectClass: server
+      ObjectDN|contains: CN=Servers,CN=
+    condition: selection_spn_4742 or selection_spn_5136 or selection_server_object
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4742 --field ServicePrincipalNames~GC/ --format
+    llm
+  - forhunt search <paths> --channel Security --event-id 5137,5141 --field ObjectClass=server --format
+    llm
+  - forhunt search <paths> --channel Security --event-id 5136 --field AttributeLDAPDisplayName=servicePrincipalName
+    --field AttributeValue~GC/ --format llm
+  pivots:
+  - Subject of 5137 / 4742 is the account that registered the fake DC; compare to the list of real DCs
+    (any 5137 'server' object whose CN is not a known DC is the rogue)
+  - 'Match 5137 creation and 5141 deletion minutes apart: DCShadow is short-lived'
+  - 4662 on object class nTDSDSA/server with unusual properties around the same time; 4661 SAM access
+    by lsass
+  - TargetUserName of 4742 is the non-DC host that temporarily became a DC
+  false_positives:
+  - Real DC promotion/demotion (5137 server object + 4742 GC SPN for the new DC)
+  - Global-catalog SPN refresh on existing DCs
+  severity: high
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_possible_dc_shadow.yml
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - 'sample: EVTX-ATTACK-SAMPLES/Privilege Escalation/samaccount_spoofing_CVE-2021-42287_CVE-2021-42278_DC_securitylogs.evtx'
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-ATTACK-SAMPLES/Credential Access/ACL_ForcePwd_SPNAdd_User_Computer_Accounts.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4742: Microsoft docs, rule project,
+    real sample log; Security/5136: MITRE CTI data-component log source, Microsoft docs, rule project,
+    real sample log; Security/5137: Microsoft docs, rule project, real sample log; Security/5141: Microsoft
+    docs.  Open: event id / channel pair has fewer than two independent confirmations (Security/5141(ms)).
+    || Original notes: Sigma confirms the GC/ SPN markers (4742 ServicePrincipalNames, 5136 servicePrincipalName).
+    The sample EVTX confirms 5137 ObjectClass ''server'' with ObjectDN CN=<host>,CN=Servers,CN=<site>,CN=Sites,CN=Configuration,...
+    but the 5141 deletion and the exact SPN GUID suffix E3514235-4B06-11D1-AB04-00C04FC2DCD2 were not
+    seen in any source I opened; the specific ''E3514235'' value is from the assignment brief only. Only
+    one rule source, so unverified.'
+- id: FH-AD-008
+  title: Password reset on privileged account, krbtgt or DSRM (4724 / 4723)
+  tactic: persistence
+  attack:
+  - T1098
+  - T1003.006
+  - T1558.001
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4724
+  - 4723
+  prerequisites:
+  - Audit User Account Management (Success) on domain controllers
+  logic:
+    selection_reset:
+      EventID: 4724
+      TargetUserName:
+      - krbtgt
+      - Administrator
+    selection_change_by_other:
+      EventID: 4723
+    condition: selection_reset or selection_change_by_other
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4724 --field TargetUserName=krbtgt --format llm
+  - forhunt search <paths> --channel Security --event-id 4724,4723 --format llm
+  pivots:
+  - 'krbtgt: two resets (the old and new key are kept, so the second reset invalidates golden tickets).
+    A reset that is not in your change calendar is suspicious; a missing reset after an incident means
+    forged TGTs are still usable'
+  - SubjectUserName / SubjectLogonId -> 4624; 5145 to \\*\IPC$ pipe samr in the same logon indicates remote
+    reset tooling (the sample for mimikatz lsadump::setntlm shows 4724 immediately after 5145 samr)
+  - 4723 where SubjectUserName differs from TargetUserName is the 'change using current hash' form (ChangeNTLM)
+  false_positives:
+  - Help-desk password resets (normal), scheduled krbtgt rotation by security team
+  - Service accounts with automated rotation
+  severity: medium
+  sources:
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/AccountManagement/UserAccountManagement/Sec_4724_Med_AcctPassword_OtherChanged.yml
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
+  - 'sample: EVTX-ATTACK-SAMPLES/Privilege Escalation/samaccount_spoofing_CVE-2021-42287_CVE-2021-42278_DC_securitylogs.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0003-Persistence/T1098.xxx-Account manipulation/ID4723-5145-password
+    reset with changeNTLM (Mimikatz).evtx'
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4724: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/4723: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: The
+    specific use for krbtgt rotation and the ''two resets'' remark come from general AD practice and are
+    not confirmed in a source I opened. JPCERT sheets mentioning the same event ids/tools: net-user (informational).
+    || Original notes: Event id and fields (TargetUserName, SubjectUserName) are confirmed by Hayabusa
+    and two sample EVTX sets. The specific use for krbtgt rotation and the ''two resets'' remark come
+    from general AD practice and are not confirmed in a source I opened. Treat selection_reset names as
+    examples; extend with the actual privileged accounts. 4723 vs 4724: Microsoft''s definition (self-change
+    vs reset) was not read directly.'
+- id: FH-AD-009
+  title: Golden ticket - Kerberos logon/service ticket for an account that does not exist or lacks a prior
+    TGT request
+  tactic: credential-access
+  attack:
+  - T1558.001
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4624
+  - 4769
+  - 4768
+  - 4672
+  prerequisites:
+  - Audit Kerberos Authentication Service and Kerberos Service Ticket Operations (Success) on domain controllers
+  - Audit Logon (Success) on the machines where the ticket is used
+  - A list of valid AD accounts and SIDs (from directory export) to detect names that do not exist
+  logic:
+    selection_tgs_for_unknown_user:
+      EventID: 4769
+      Status: '0x0'
+      TargetUserName|contains: '@'
+    selection_logon_name_sid_mismatch:
+      EventID: 4624
+      LogonType: 3
+      AuthenticationPackageName: Kerberos
+      TargetUserSid|endswith: '-500'
+    condition: (selection_tgs_for_unknown_user or selection_logon_name_sid_mismatch) and account_not_in_directory_or_no_preceding_4768
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4769 --field Status=0x0 --format csv --limit
+    5000
+  - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=3 --field AuthenticationPackageName=Kerberos
+    --field TargetUserSid~-500 --format llm
+  - forhunt search <paths> --channel Security --event-id 4768 --format csv --limit 5000
+  pivots:
+  - Compare TargetUserName in 4769/4624 to the real account list. The corpus sample shows a 4624 whose
+    TargetUserName is 'not_existing_user' but TargetUserSid ends in -500 (the forged ticket carries the
+    RID of the real Administrator) and a 4769 for 'gold-non-existing-user@offsec.lan'
+  - '4769 on a DC for a user (TargetUserName@realm, IpAddress) with no earlier 4768 for the same user/IP
+    on any DC: the TGT was never issued by the KDC. Needs all DCs'' logs'
+  - 'TargetDomainName casing: forged tickets built by default tooling may carry a lower-case or different
+    DNS domain than genuine tickets (the golden-ticket 4769 sample has ''offsec.lan'' where genuine events
+    show upper-case ''OFFSEC.LAN''). Heuristic only'
+  - TicketEncryptionType 0x17 TGT / TGS in an AES-only domain, ticket lifetimes different from domain
+    policy (default 10 h, renew 7 d) are only visible outside the event log (Kerberos packets)
+  - 4672 (special privileges) immediately after a Kerberos 4624 type 3 for an account that should not
+    have them
+  - Hand off to FH-AD-008 to check krbtgt rotation; a golden ticket survives until two krbtgt resets
+  false_positives:
+  - Missing 4768 caused by logs from only one DC in a multi-DC domain
+  - Cross-domain/forest referrals and renewed tickets (TGT renewal skips 4768 and logs 4770)
+  - Clock-skew or logon with cached credentials may reorder events
+  severity: high
+  sources:
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1069-Permission Groups Discovery/ID4799-4624-Local
+    admin group enumerated by SharpHound.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1087-Account discovery/ID4769-Kerberos TGS host enumeration
+    (Bloodhound).evtx'
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_susp_privesc_kerberos_relay_over_ldap.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4624: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/4769: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/4768: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/4672: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: Heuristic,
+    not a signature; the logic block is illustrative and the account_not_in_directory_or_no_preceding_4768
+    predicate must be computed by joining with a user list/4768 data (forhunt cannot do this natively).
+    JPCERT sheets mentioning the same event ids/tools: net-user (informational). || Original notes: Heuristic,
+    not a signature; the logic block is illustrative and the account_not_in_directory_or_no_preceding_4768
+    predicate must be computed by joining with a user list/4768 data (forhunt cannot do this natively).
+    Only one independent source (EVTX-to-MITRE-Attack samples and its README) was read for the field anomalies;
+    I could not reach adsecurity.org or Microsoft Learn to confirm the other claimed markers (ticket lifetime,
+    domain-name fields, RC4 TGT). Diamond and sapphire tickets are built from a genuine TGT (modified
+    PAC), so they usually have a matching 4768 and valid user: the absence-of-4768 test and non-existent-account
+    tests do NOT detect them; correlate PAC/group membership against the directory instead and rely on
+    krbtgt rotation.'
+- id: FH-AD-010
+  title: Silver ticket - Kerberos service logon with no matching service ticket request on any DC
+  tactic: credential-access
+  attack:
+  - T1558.002
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4624
+  - 4769
+  - 4672
+  prerequisites:
+  - Audit Logon (Success) on member servers hosting the target service
+  - Audit Kerberos Service Ticket Operations (Success) on ALL domain controllers
+  logic:
+    selection:
+      EventID: 4624
+      LogonType: 3
+      AuthenticationPackageName: Kerberos
+    condition: selection and no 4769 (ServiceName = this host, TargetUserName = this user, near-same time,
+      same IpAddress) found on any DC
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=3 --field AuthenticationPackageName=Kerberos
+    --format csv --limit 5000
+  - forhunt search <paths> --channel Security --event-id 4769 --format csv --limit 5000
+  pivots:
+  - Match each Kerberos 4624 on the server to a 4769 on a DC for ServiceName = server$ or its service
+    account, same account and source IP, within the ticket lifetime (default 10 h)
+  - 4672 and 5140/5145 admin share access right after the unmatched logon
+  - 'Computer-account password age: silver tickets for a machine account use the machine''s key; look
+    at 4742 / 4724 and recent machine password changes'
+  false_positives:
+  - Tickets obtained hours earlier (cached) with the DC log already rolled over
+  - DC logs not collected or auditing disabled on a DC
+  - Forwarded/delegated tickets; Kerberos logons using tickets obtained via a different DC outside the
+    collected set
+  severity: medium
+  sources:
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1069-Permission Groups Discovery/ID4799-4624-Local
+    admin group enumerated by SharpHound.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1087-Account discovery/ID4769-Kerberos TGS host enumeration
+    (Bloodhound).evtx'
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_rc4_kerberos.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4624: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/4769: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/4672: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: Concept
+    only; the EVTX corpus has golden-ticket samples but no silver-ticket sample, and I could not open
+    adsecurity. JPCERT sheets mentioning the same event ids/tools: net-user (informational). || Original
+    notes: Concept only; the EVTX corpus has golden-ticket samples but no silver-ticket sample, and I
+    could not open adsecurity.org or Microsoft documentation to confirm. Requires cross-host correlation;
+    forhunt can only dump candidates for scripting. Absence of a 4769 can also be caused by a disabled
+    audit policy, so confirm the policy first.'
+- id: FH-AD-011
+  title: AD CS certificate request with attacker-supplied SAN (ESC1/ESC6 style)
+  tactic: credential-access
+  attack:
+  - T1649
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4886
+  - 4887
+  prerequisites:
+  - Audit Certification Services (Success and Failure) on the CA server (Security channel of the CA, not
+    the DC)
+  - 'CA auditing enabled: certutil -setreg CA\AuditFilter 127 (or the CA properties Auditing tab) and
+    CA service restarted'
+  logic:
+    selection:
+      EventID:
+      - 4886
+      - 4887
+      Attributes|contains: 'SAN:'
+    filter_machine_requester_matches_dns:
+      Requester|endswith: $
+    condition: selection and (SAN identity differs from Requester identity)
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4887 --field Attributes~SAN --format llm
+  - forhunt search <paths> --channel Security --event-id 4886 --field Attributes~SAN --format llm
+  - forhunt search <paths> --channel Security --event-id 4887 --field Attributes~upn= --format llm
+  pivots:
+  - Compare Requester (DOMAIN\user) with the identity inside Attributes (SAN:upn=...) / SubjectAlternativeName;
+    a low-privileged requester with a SAN for an admin is ESC1
+  - CertificateTemplate -> is it a template where Enrollee supplies subject (FH-AD-013)?
+  - Disposition 3 (issued) on 4887; SerialNumber -> later PKINIT logon on a DC (FH-AD-012)
+  - AuthenticationService / DCOMorRPC fields show how the request came in; unusual remote source for a
+    CA request
+  false_positives:
+  - Web server or device templates that legitimately supply subject names (SANs)
+  - NDES/SCEP enrollment agents and MDM enrollment
+  severity: high
+  sources:
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - https://github.com/splunk/security_content/blob/develop/detections/endpoint/windows_steal_authentication_certificates___esc1_authentication.yml
+  - https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_adcs_certificate_identity_transposition.toml
+  - 'sample: EVTX-to-MITRE-Attack/TA0006-Credential Access/T1649- Steal or Forge Authentication Certificates/ID
+    4886-4887 - ADCS ESC 2.evtx'
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/sigma/builtin/emerging-threats/2026/Exploits/CVE-2026-54121/win_security_adcs_certighost_cdc_chase_request.yml
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/4886: Microsoft docs, rule project,
+    real sample log; Security/4887: Microsoft docs, rule project, real sample log.  Note: corrections:
+    forhunt entry parsed as a YAML mapping (unquoted colon); rewritten as a string; forhunt entry parsed
+    as a YAML mapping (unquoted colon); rewritten as a string. || Original notes: Sample ESC1 EVTX shows
+    4886/4887 with Requester ''ROOTBLUE\domadm'', Attributes ''CertificateTemplate:ESC1_User\nSAN:upn=adminstefan@rootblue.lan'',
+    SubjectAlternativeName ''Other Name: Principal Name=...'', Disposition 3. Splunk''s ESC1 rule keys
+    on 4887 with Attributes containing SAN upn and a template; Elastic''s rule parses the same Attributes
+    block for CertificateTemplate and SAN. Neither is Microsoft documentation; SpecterOps ''Certified
+    Pre-Owned'' was not opened (cited by Sigma only). Template-agnostic: also catches ESC6 (EDITF_ATTRIBUTESUBJECTALTNAME2).
+    Certipy/Certify command lines are not visible here; use process creation logs on the requesting host.'
+- id: FH-AD-012
+  title: Certificate-based Kerberos logon (PKINIT) and KDC certificate mapping warnings
+  tactic: credential-access
+  attack:
+  - T1649
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4768
+  prerequisites:
+  - Audit Kerberos Authentication Service (Success) on domain controllers
+  logic:
+    selection:
+      EventID: 4768
+      Status: '0x0'
+    filter_no_cert:
+      CertThumbprint: ''
+    condition: selection and not filter_no_cert
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4768 --regex CertThumbprint='.+' --format llm
+  - forhunt search <paths> --channel System --event-id 39,41 --format llm
+  pivots:
+  - CertSerialNumber / CertIssuerName -> match against the CA's 4887 SerialNumber (FH-AD-011) for the
+    issuing request
+  - 'TargetUserName in 4768 vs Requester in 4887: different identity is certificate impersonation'
+  - System channel (provider Microsoft-Windows-Kerberos-Key-Distribution-Center) events 39 / 41 are KDC
+    warnings that a certificate was used with only a weak (UPN/subject) mapping to the account; the sample
+    ESC1 logon shows event 39 with AccountName adminstefan and Subject CN=Domadm, i.e. mismatch
+  - 'Subsequent NT hash recovery via PKINIT U2U: 4769 for the account itself'
+  false_positives:
+  - Smart-card logon and Windows Hello for Business users (normal PKINIT)
+  - Event 39/41 from legacy certificates before strong mapping enforcement (KB5014754)
+  severity: medium
+  sources:
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/microsoft_windows_kerberos_key_distribution_center/win_system_kdcsvc_cert_use_no_strong_mapping.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0006-Credential Access/T1110.xxx-Brut force/ID4768-4771-Kerberos brutforce
+    with non existing users.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_kerberos_asrep_roasting.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4768: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: The
+    meaning of PreAuthType 16 for PKINIT is from memory and was not confirmed in an opened source. ||
+    Original notes: Fields CertIssuerName, CertSerialNumber, CertThumbprint exist in 4768 (seen in sample
+    EVTX, empty for password logons). The meaning of PreAuthType 16 for PKINIT is from memory and was
+    not confirmed in an opened source. KDC event 39 (provider Microsoft-Windows-Kerberos-Key-Distribution-Center,
+    System channel) is confirmed by Sigma and the ESC1 sample; event 41 only by Sigma. Enforcement mode
+    (full enforcement from 2025) changes whether weak mappings log 39/41 or fail, so behaviour depends
+    on patch level.'
+- id: FH-AD-013
+  title: AD CS template and CA configuration changes (4898/4899/4900, CA permissions)
+  tactic: persistence
+  attack:
+  - T1649
+  - T1098
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4898
+  - 4899
+  - 4900
+  - 4882
+  - 4890
+  - 4891
+  - 4892
+  - 4870
+  prerequisites:
+  - Audit Certification Services (Success) on the CA
+  - CA AuditFilter set to log configuration changes and template changes (certutil -setreg CA\AuditFilter
+    127)
+  logic:
+    selection_template_loaded_or_updated:
+      EventID:
+      - 4898
+      - 4899
+      TemplateContent|contains: CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT
+    selection_template_updated:
+      EventID: 4899
+      NewTemplateContent|contains: CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT
+    selection_ca_permissions:
+      EventID: 4882
+    condition: 1 of selection_*
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4898,4899,4900 --format llm
+  - forhunt search <paths> --channel Security --event-id 4882,4890,4891,4892,4870 --format llm
+  pivots:
+  - Template name in the event -> subsequent 4887 requests on that template (FH-AD-011)
+  - '4882 SecuritySettings lists ACEs on the CA: Everyone / Authenticated Users with CA Administrator
+    or Certificate Manager rights is ESC7'
+  - 4870 (certificate revoked) and 4890-4892 (CA config / manager settings) near the same SubjectLogonId
+  false_positives:
+  - Normal PKI administration; template v1 to v2 upgrades
+  - Proxy SSL, smart-card and device templates that require enrollee-supplied subject
+  severity: medium
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_adcs_certificate_template_configuration_vulnerability.yml
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0006-Credential Access/T1649- Steal or Forge Authentication Certificates/ID
+    4882 - ADCS ESC 7.evtx'
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4898: Microsoft docs, rule project;
+    Security/4899: rule project; Security/4900: no source; Security/4882: Microsoft docs, real sample
+    log; Security/4890: Microsoft docs; Security/4891: Microsoft docs; Security/4892: Microsoft docs;
+    Security/4870: Microsoft docs.  Open: event id / channel pair has fewer than two independent confirmations
+    (Security/4899(rule),Security/4900(),Security/4890(ms),Security/4891(ms),Security/4892(ms),Security/4870(ms))
+    | field name confirmed by a single rule project only (not seen in a real log) (NewTemplateContent,TemplateContent).
+    || Original notes: 4898/4899 with TemplateContent/NewTemplateContent confirmed by Sigma only; 4882
+    with SecuritySettings seen in the ESC7 sample EVTX (both also named as Security channel there). 4900,
+    4870, 4890-4892 field layouts and meanings were not seen in any opened source, listed from the assignment
+    brief; verify against Microsoft''s ''Audit Certification Services'' references before relying. Template
+    flag names in TemplateContent are an XML/text blob; matching depends on the CA''s rendering.'
+- id: FH-AD-014
+  title: Zerologon (CVE-2020-1472) - Netlogon secure-channel enforcement events
+  tactic: privilege-escalation
+  attack:
+  - T1210
+  - T1548
+  channel: System
+  provider: NETLOGON
+  event_ids:
+  - 5827
+  - 5828
+  - 5829
+  - 5830
+  - 5831
+  - 5805
+  prerequisites:
+  - Domain controllers patched with the August 2020 or later update (Netlogon events 5827-5831 are produced
+    by the patched build); on unpatched DCs only 5805 is likely
+  - System log collected from every DC
+  logic:
+    selection_vulnerable_connection:
+      EventID: 5829
+    selection_denied_connections:
+      EventID:
+      - 5827
+      - 5828
+      - 5830
+      - 5831
+    selection_failed_session:
+      EventID: 5805
+    condition: selection_vulnerable_connection or selection_denied_connections or selection_failed_session
+  forhunt:
+  - forhunt search <paths> --channel System --event-id 5827,5828,5829,5830,5831 --format llm
+  - forhunt search <paths> --channel System --event-id 5805 --format llm
+  pivots:
+  - 'Event text names the machine account and the source computer: compare to the real host list; a 5805
+    burst (a few dozen to thousands) from one source during exploitation is typical'
+  - Security 4742 from ANONYMOUS LOGON against a DC machine account (FH-AD-015)
+  - 'Then DCSync from the DC machine account: FH-AD-005 does not cover it (filtered $), so look at 4662
+    with SubjectUserName ending $ from a non-DC IP'
+  - 5829 means a vulnerable secure channel was ALLOWED (enforcement not yet on); 5827/5828 mean a connection
+    was DENIED because of the enforcement; 5830/5831 means a connection was allowed by Group Policy exception
+  false_positives:
+  - Genuine third-party / old Samba or NAS clients that use insecure Netlogon (that is the reason for
+    the 5829 monitoring period)
+  severity: high
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/netlogon/win_system_vul_cve_2020_1472.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/netlogon/win_system_possible_zerologon_exploitation_using_wellknown_tools.yml
+  - https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-ATTACK-SAMPLES/Credential Access/Zerologon_CVE-2020-1472_DFIR_System_NetLogon_Error_EventID_5805.evtx'
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: System/5827: Microsoft docs; System/5828:
+    Microsoft docs; System/5829: rule project; System/5830: no source; System/5831: no source; System/5805:
+    rule project, real sample log.  Open: event id / channel pair has fewer than two independent confirmations
+    (System/5827(ms),System/5828(ms),System/5829(rule),System/5830(),System/5831()). || Original notes:
+    Only 5829 (Sigma, citing Microsoft KB4557222) and 5805 (Sigma plus the DFIR sample ''Zerologon ...
+    NetLogon Error EventID 5805'') were corroborated. The meanings for 5827, 5828, 5830, 5831 in the pivots
+    are from my memory of KB4557222 and could not be confirmed because support.microsoft.com is not reachable
+    from this environment. The 5805 sample has binary-only EventData (no named fields), so the machine
+    name is not a parsed field. Provider name in the sample is ''NETLOGON'' (all caps).'
+- id: FH-AD-015
+  title: Zerologon aftermath - DC machine account password changed by ANONYMOUS LOGON (4742)
+  tactic: privilege-escalation
+  attack:
+  - T1210
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4742
+  - 4624
+  prerequisites:
+  - Audit Computer Account Management (Success) on domain controllers
+  - Audit Logon (Success)
+  logic:
+    selection:
+      EventID: 4742
+      SubjectUserName: ANONYMOUS LOGON
+      SubjectUserSid: S-1-5-7
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4742 --field SubjectUserName="ANONYMOUS LOGON"
+    --format llm
+  pivots:
+  - TargetUserName (the DC computer account, ends in $) -> PasswordLastSet field changed; anything using
+    the account afterward
+  - 4624 type 3 with TargetUserSid S-1-5-18 and a machine account TargetUserName from IpAddress ::1 or
+    a foreign IP just before (seen in the sample)
+  - 'Then a DCSync using the DC account: FH-AD-005 modified filter or 4662 with SubjectUserName ending
+    $ from an IP that is not a DC'
+  false_positives:
+  - Rare; legitimate machine password changes run as the computer or SYSTEM, not ANONYMOUS LOGON
+  severity: critical
+  sources:
+  - https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
+  - 'sample: EVTX-ATTACK-SAMPLES/Privilege Escalation/samaccount_spoofing_CVE-2021-42287_CVE-2021-42278_DC_securitylogs.evtx'
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1069-Permission Groups Discovery/ID4799-4624-Local
+    admin group enumerated by SharpHound.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_susp_rottenpotato.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4742: Microsoft docs, rule project,
+    real sample log; Security/4624: MITRE CTI data-component log source, Microsoft docs, rule project,
+    real sample log.  Open: event ids, channel and fields are confirmed (see above) but the detection
+    logic goes beyond what any opened rule/source states: No second source read (Microsoft/NSA/Secura
+    not reachable), so unverified. JPCERT sheets mentioning the same event ids/tools: net-user (informational).
+    || Original notes: One real-world sample EVTX (VoidSec Zerologon run) shows 4742 with SubjectUserName
+    ANONYMOUS LOGON, SubjectDomainName NT AUTHORITY, SubjectUserSid S-1-5-7, TargetUserName a $ account,
+    PasswordLastSet populated. No second source read (Microsoft/NSA/Secura not reachable), so unverified.
+    Anonymous 4742 can also have forms depending on exploit tooling (some run via unauthenticated NetrServerPasswordSet2).'
+- id: FH-AD-016
+  title: noPac / sAMAccountName spoofing - machine account renamed to a DC name without the trailing $
+  tactic: privilege-escalation
+  attack:
+  - T1078
+  - T1098
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4741
+  - 4781
+  - 4742
+  - 4768
+  - 4769
+  prerequisites:
+  - Audit Computer Account Management (Success) and Audit User Account Management (Success) on domain
+    controllers
+  - Domain not patched for CVE-2021-42278/42287 (Nov 2021 updates), or monitoring for attempts anyway
+  logic:
+    selection_rename:
+      EventID: 4781
+      OldTargetUserName|endswith: $
+    filter_new_name_is_machine:
+      NewTargetUserName|endswith: $
+    condition: selection_rename and not filter_new_name_is_machine
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4781 --format llm
+  - forhunt search <paths> --channel Security --event-id 4741 --format llm
+  pivots:
+  - NewTargetUserName equals the name of a real DC without the $ -> noPac. In the sample the attacker
+    (non-admin 'lgrove') created DC012$ (4741), rotated its password (4724), then renamed it to '01566s-win16-ir'
+    (the DC's name minus $) with 4781
+  - 4768/4769 for the spoofed name followed by a service ticket to the DC (Kerberos ticket whose TargetUserName
+    lacks the $ for a name that is a machine)
+  - SubjectUserName / SubjectLogonId of the creator -> FH-AD-017 (machine account quota)
+  - '4742 DnsHostName changes of a non-DC computer to a DC FQDN: related CVE-2022-26923 certificate path
+    (Elastic)'
+  false_positives:
+  - 'Legitimate computer renames (OldTargetUserName ends in $, new name also ends in $: filtered)'
+  - Rare admin mistakes renaming a machine account to a user-style name
+  severity: critical
+  sources:
+  - https://github.com/elastic/detection-rules/blob/main/rules/windows/privilege_escalation_samaccountname_spoofing_attack.toml
+  - https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_computer_name.yml
+  - 'sample: EVTX-ATTACK-SAMPLES/Privilege Escalation/samaccount_spoofing_CVE-2021-42287_CVE-2021-42278_DC_securitylogs.evtx'
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0006-Credential Access/T1110.xxx-Brut force/ID4768-4771-Kerberos brutforce
+    with non existing users.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_kerberos_asrep_roasting.yml
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/4741: Microsoft docs, rule project,
+    real sample log; Security/4781: Microsoft docs, rule project, real sample log; Security/4742: Microsoft
+    docs, rule project, real sample log; Security/4768: MITRE CTI data-component log source, Microsoft
+    docs, rule project, real sample log; Security/4769: MITRE CTI data-component log source, Microsoft
+    docs, rule project, real sample log. JPCERT sheets mentioning the same event ids/tools: net-user (informational).
+    || Original notes: Elastic''s rule and the DC-side sample EVTX agree on 4781 fields OldTargetUserName
+    / NewTargetUserName. Sigma''s rule detects only the SAMTHEADMIN- name used by the original sam-the-admin
+    script and is easy to evade; the structure-based rename check above is the more robust one. Attack
+    variants that rename before the DC is queried leave only 4781 on the DC that handled the LDAP write;
+    query all DCs.'
+- id: FH-AD-017
+  title: Machine account quota abuse - computer account created by a non-admin user (4741)
+  tactic: persistence
+  attack:
+  - T1136.002
+  - T1098
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4741
+  - 4673
+  prerequisites:
+  - Audit Computer Account Management (Success) on domain controllers
+  - 'Optional: Audit Sensitive Privilege Use for 4673 SeMachineAccountPrivilege'
+  - A list of accounts that are expected to join computers (build/deployment service accounts, help desk)
+  logic:
+    selection:
+      EventID: 4741
+    filter_machine_subject:
+      SubjectUserName|endswith: $
+    condition: selection and not filter_machine_subject and SubjectUserSid not in expected_joiners
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4741 --format llm
+  - forhunt search <paths> --channel Security --event-id 4673 --field PrivilegeList~SeMachineAccountPrivilege
+    --format llm
+  pivots:
+  - SubjectUserName -> is it a standard user (no delegated join right)? Default ms-DS-MachineAccountQuota
+    is 10 so any authenticated user can add up to 10
+  - TargetUserName (new computer$) -> subsequent 5136 RBCD write (FH-AD-018), 4781 rename (FH-AD-016),
+    or 4742 SPN/delegation setting
+  - Short-lived creation and deletion (4741 then 4743 minutes apart) is a tooling pattern (Powermad, Impacket
+    addcomputer)
+  false_positives:
+  - Help-desk and OS-deployment accounts joining devices; normal domain joins by users when MAQ is left
+    at 10
+  severity: medium
+  sources:
+  - https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - 'sample: EVTX-ATTACK-SAMPLES/Privilege Escalation/samaccount_spoofing_CVE-2021-42287_CVE-2021-42278_DC_securitylogs.evtx'
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1112-Modify registry/ID4624,4670,4688,4674-Registry
+    permission change via WMI (DAMP).evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_add_remove_computer.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4741: Microsoft docs, rule project,
+    real sample log; Security/4673: MITRE CTI data-component log source, Microsoft docs, rule project,
+    real sample log.  Open: event ids, channel and fields are confirmed (see above) but the detection
+    logic goes beyond what any opened rule/source states. || Original notes: Both sources are sample EVTX
+    collections (4741 by non-admin lgrove in the noPac set; 4673 with PrivilegeList SeMachineAccountPrivilege
+    in the mdecrevoisier set) and the README description of 4741; no independent detection rule was read.
+    Baseline dependent: a normal environment may create computers by ordinary users when MAQ >0. Also
+    event 4741 is logged on the DC that processed the write.'
+- id: FH-AD-018
+  title: RBCD and shadow credentials - writes to msDS-AllowedToActOnBehalfOfOtherIdentity / msDS-KeyCredentialLink
+    (5136)
+  tactic: privilege-escalation
+  attack:
+  - T1098
+  - T1556
+  - T1550.003
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 5136
+  prerequisites:
+  - Audit Directory Service Changes (Success) on domain controllers
+  - 'SACL for writes on user and computer objects: by default the domain-wide SACL may not cover them,
+    so verify (Set-AuditRule / default SACL on domain root)'
+  logic:
+    selection:
+      EventID: 5136
+      AttributeLDAPDisplayName:
+      - msDS-AllowedToActOnBehalfOfOtherIdentity
+      - msDS-KeyCredentialLink
+      OperationType: '%%14674'
+    filter_entra_connect:
+      SubjectUserName|startswith: MSOL_
+    condition: selection and not filter_entra_connect
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 5136 --field AttributeLDAPDisplayName=msDS-AllowedToActOnBehalfOfOtherIdentity
+    --format llm
+  - forhunt search <paths> --channel Security --event-id 5136 --field AttributeLDAPDisplayName=msDS-KeyCredentialLink
+    --format llm
+  pivots:
+  - ObjectDN / ObjectClass -> which computer or user was modified; Subject -> who has write access (GenericWrite
+    / WriteProperty path found by BloodHound)
+  - 'RBCD: S4U sequence (4769 with TransmittedServices populated) from the principal added in the descriptor;
+    the attribute value may log as ''Malformed Security Descriptor'' in the sample, so resolve the SID
+    from AD, not the event'
+  - 'Shadow credentials: AttributeValue starting ''B:828'' is a KeyCredential blob; follow with 4768 PKINIT
+    (CertThumbprint empty for key trust, see FH-AD-012) for the target account'
+  - 'Related computer account created by the same user shortly before: FH-AD-017'
+  false_positives:
+  - msDS-KeyCredentialLink is legitimately written by Entra Connect (MSOL_), ADFS service accounts and
+    by Windows Hello for Business key registration
+  - Legitimate RBCD configuration by delegation admins (rare)
+  severity: high
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_possible_shadow_credentials_added.yml
+  - https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_shadow_credentials.toml
+  - https://github.com/splunk/security_content/blob/develop/detections/endpoint/windows_ad_suspicious_attribute_modification.yml
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - 'sample: EVTX-ATTACK-SAMPLES/Credential Access/ACL_ForcePwd_SPNAdd_User_Computer_Accounts.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/5136: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log. || Original notes: Both attribute names appear
+    in 5136 in Sigma/Elastic/Splunk rules; the RBCD sample EVTX shows AttributeLDAPDisplayName msDS-AllowedToActOnBehalfOfOtherIdentity,
+    AttributeSyntaxOID 2.5.5.15, AttributeValue ''Malformed Security Descriptor'', OperationType %%14674
+    (value added). Splunk filters on OperationType %%14674 = added; %%14675 = deleted. No sample EVTX
+    for shadow credentials was available; Elastic tags blob prefix B:828. Whether 4742/4738 also fire
+    on these writes: not observed in the RBCD sample except a bare 4742 with no changed fields.'
+- id: FH-AD-019
+  title: Delegation changes - constrained or unconstrained delegation enabled (4738/4742)
+  tactic: privilege-escalation
+  attack:
+  - T1098
+  - T1558
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4738
+  - 4742
+  - 5136
+  prerequisites:
+  - Audit User Account Management and Audit Computer Account Management (Success) on domain controllers
+  - Optional Audit Directory Service Changes for the matching 5136 on userAccountControl / msDS-AllowedToDelegateTo
+  logic:
+    selection_allowed_to_delegate_set:
+      EventID:
+      - 4738
+      - 4742
+    filter_empty:
+      AllowedToDelegateTo: '-'
+    condition: selection_allowed_to_delegate_set and not filter_empty
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4742,4738 --format llm
+  - forhunt search <paths> --channel Security --event-id 5136 --field AttributeLDAPDisplayName=userAccountControl
+    --format llm
+  pivots:
+  - 'AllowedToDelegateTo lists the SPNs delegation is permitted to: cifs/ or ldap/ on a DC, or krbtgt/
+    (Elastic backdoor rule) are the dangerous ones'
+  - 'TargetUserName of 4742 (a computer) or 4738 (a user): is it a server that should delegate?'
+  - '5136 userAccountControl AttributeValue (decimal) from the same OpCorrelationID: decode bits TRUSTED_FOR_DELEGATION
+    0x80000 (unconstrained) and TRUSTED_TO_AUTH_FOR_DELEGATION 0x1000000 (protocol transition)'
+  - Subsequent 4769 with TransmittedServices set (S4U) or TGTs captured from the unconstrained host, then
+    FH-AD-009
+  false_positives:
+  - Normal delegation configuration for Exchange, SQL, web or file servers by administrators
+  severity: medium
+  sources:
+  - https://github.com/elastic/detection-rules/blob/main/rules/windows/persistence_msds_alloweddelegateto_krbtgt.toml
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - 'sample: EVTX-ATTACK-SAMPLES/Credential Access/ACL_ForcePwd_SPNAdd_User_Computer_Accounts.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-ATTACK-SAMPLES/Privilege Escalation/samaccount_spoofing_CVE-2021-42287_CVE-2021-42278_DC_securitylogs.evtx'
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_alert_ad_user_backdoors.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4738: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/4742: Microsoft docs, rule project,
+    real sample log; Security/5136: MITRE CTI data-component log source, Microsoft docs, rule project,
+    real sample log.  Open: event ids, channel and fields are confirmed (see above) but the detection
+    logic goes beyond what any opened rule/source states: The UAC bit values 0x80000 and 0x1000000 are
+    standard AD knowledge but were not confirmed by an opened source, and the sample EVTX''s 4742 UAC
+    numbers for ''delegation'' did not match them (OldUacValue 0x84 to NewUacValue 0x2084 / 0x40084; AttributeValue
+    4128 and 16781344), so the sample UAC fields are untrustworthy for this purpose: check 5136 and the
+    token (%%) text instead. JPCERT sheets mentioning the same event ids/tools: net-user (informational).
+    || Original notes: The AllowedToDelegateTo field in 4738/4742 is confirmed by Elastic''s rule (4738)
+    and by sample EVTX (4742 lists browser/cifs/cisvc SPNs). The UAC bit values 0x80000 and 0x1000000
+    are standard AD knowledge but were not confirmed by an opened source, and the sample EVTX''s 4742
+    UAC numbers for ''delegation'' did not match them (OldUacValue 0x84 to NewUacValue 0x2084 / 0x40084;
+    AttributeValue 4128 and 16781344), so the sample UAC fields are untrustworthy for this purpose: check
+    5136 and the token (%%) text instead.'
+- id: FH-AD-020
+  title: Membership added to privileged AD groups (4728/4732/4756 and removals)
+  tactic: persistence
+  attack:
+  - T1098
+  - T1078.002
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4728
+  - 4729
+  - 4732
+  - 4733
+  - 4756
+  - 4757
+  prerequisites:
+  - Audit Security Group Management (Success) on domain controllers
+  logic:
+    selection:
+      EventID:
+      - 4728
+      - 4732
+      - 4756
+      TargetUserName:
+      - Domain Admins
+      - Enterprise Admins
+      - Schema Admins
+      - Administrators
+      - Backup Operators
+      - Account Operators
+      - DnsAdmins
+      - Server Operators
+      - Print Operators
+      - Enterprise Key Admins
+    filter_machine_actor:
+      SubjectUserName|endswith: $
+    condition: selection and not filter_machine_actor
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4728,4732,4756 --field TargetUserName="Domain
+    Admins" --format llm
+  - forhunt search <paths> --channel Security --event-id 4728,4732,4756 --field TargetUserName=DnsAdmins
+    --format llm
+  - forhunt search <paths> --channel Security --event-id 4729,4733,4757 --format llm
+  pivots:
+  - MemberName (distinguished name) / MemberSid -> new member; SubjectUserName / SubjectLogonId -> actor
+    and their logon
+  - '4729/4733/4757 removal within minutes: add-use-remove pattern; also ''quick add then remove'' sample'
+  - TargetSid ending -512 (Domain Admins), -519 (Enterprise Admins), -518 (Schema Admins), -527 (Enterprise
+    Key Admins) is more robust than the name on localized DCs
+  - 'DnsAdmins member added: see FH-AD-021'
+  - 'Exchange privileged groups (Exchange Trusted Subsystem / Windows Permissions) grant WriteDacl on
+    the domain: precursor of FH-AD-006'
+  false_positives:
+  - Approved joiner/mover/leaver changes, privileged-access-management tools that add temporary membership
+  severity: high
+  sources:
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/AccountManagement/SecurityGroupManagement/Sec_4728_High_MemberAddedToGlobalGrp_DomainAdmins.yml
+  - https://github.com/WithSecureLabs/chainsaw/tree/master/rules/evtx/account_tampering
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - 'sample: EVTX-to-MITRE-Attack/TA0003-Persistence/T1098.xxx-Account manipulation/ID4728-Massive account
+    group membership change.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0003-Persistence/T1136-Create account/ID472, 4728 Hidden user creation.evtx'
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/4728: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log; Security/4729: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log; Security/4732: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log; Security/4733: MITRE CTI data-component log
+    source, Microsoft docs, real sample log; Security/4756: MITRE CTI data-component log source, Microsoft
+    docs, rule project, real sample log; Security/4757: MITRE CTI data-component log source, Microsoft
+    docs.  Note: kept true: the privileged-group name list is illustrative (well-known built-in group
+    names, not event semantics); DnsAdmins/Enterprise Key Admins were not found in the opened rule corpora.
+    JPCERT sheets mentioning the same event ids/tools: net-user (informational). || Original notes: Fields
+    MemberName, MemberSid, TargetUserName, TargetSid, SubjectUserName confirmed in sample EVTX (4728 Domain
+    Admins, 4756 Enterprise Admins/Enterprise Key Admins, 4732 DnsAdmins); Hayabusa and Chainsaw rules
+    use 4728/4732 with the same fields. 4729/4733/4757 (removals) are assumed analogous but were not seen
+    in an opened sample. 4728/4756 fire for global/universal groups, 4732 for domain-local and BUILTIN;
+    DnsAdmins is domain-local so 4732. Events appear on the DC that performed the write.'
+- id: FH-AD-021
+  title: DNSAdmins abuse - ServerLevelPluginDll loaded by the DNS service (DNS Server 150/770)
+  tactic: privilege-escalation
+  attack:
+  - T1574.001
+  - T1574.002
+  - T1098
+  channel: DNS Server
+  provider: Microsoft-Windows-DNS-Server-Service
+  event_ids:
+  - 150
+  - 770
+  - 771
+  prerequisites:
+  - DNS Server role on the DC; the 'DNS Server' event log is collected (it is a separate channel from
+    Application/System)
+  logic:
+    selection:
+      EventID:
+      - 150
+      - 770
+      - 771
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel "DNS Server" --event-id 150,770,771 --format llm
+  pivots:
+  - 'param1 of 150/770 is the DLL path: a UNC path, user-writable folder or non-Microsoft DLL name (mimilib.dll
+    in the samples) is the indicator; 150 = failed to load (the attacker''s first attempt), 770 = loaded
+    (success)'
+  - Security 4732/4728 for the account just added to DnsAdmins (FH-AD-020) and process creation 'dnscmd
+    /config /serverlevelplugindll' on the admin workstation (4688/Sysmon 1)
+  - Registry change to HKLM\SYSTEM\CurrentControlSet\Services\DNS\Parameters\ServerLevelPluginDll
+  false_positives:
+  - Rare; there is almost no legitimate use of a server-level plugin DLL in production
+  severity: high
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/dns_server/win_dns_server_susp_server_level_plugin_dll.yml
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - 'sample: EVTX-to-MITRE-Attack/TA0003-Persistence/T1574-Hijack Execution Flow/ID150-Failed DLL loaded
+    by DNS server.evtx'
+  - 'sample: EVTX-to-MITRE-Attack/TA0003-Persistence/T1574-Hijack Execution Flow/ID770-Success DLL loaded
+    by DNS server.evtx'
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: DNS Server/150: rule project, real sample log;
+    DNS Server/770: rule project, real sample log; DNS Server/771: rule project, real sample log. ATT&CK:
+    legacy id(s) T1574.002 were revoked in the current mitre/cti enterprise-attack data; the replacement
+    id is listed first and the legacy id is kept after it. || Original notes: Sample EVTX show channel
+    ''DNS Server'', provider Microsoft-Windows-DNS-Server-Service, 770 with param1 = DLL path and param2
+    = DNS server name, 150 with param1 = ''.\mimilib.dll'' (failed load); Sigma lists 150/770/771 for
+    the same purpose. The channel name in the EVTX is ''DNS Server'' (with the space). Event 771 (plugin
+    DLL unload or load completion) meaning is not confirmed.'
+- id: FH-AD-022
+  title: AdminSDHolder object modified (5136) - SDProp persistence
+  tactic: persistence
+  attack:
+  - T1098
+  - T1546
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 5136
+  prerequisites:
+  - Audit Directory Service Changes (Success) on domain controllers
+  - SACL on CN=AdminSDHolder,CN=System,DC=... (default domain SACL for Everyone writes normally applies;
+    verify)
+  logic:
+    selection:
+      EventID: 5136
+      ObjectDN|startswith: CN=AdminSDHolder,CN=System,
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 5136 --field ObjectDN~CN=AdminSDHolder --format
+    llm
+  pivots:
+  - 'AttributeLDAPDisplayName nTSecurityDescriptor + AttributeValue (SDDL): who received an ACE; resolve
+    SIDs'
+  - 'Subject account / logon: 4624 and FH-AD-020'
+  - 'Within about 60 minutes (default SDProp interval) 5136 nTSecurityDescriptor changes on privileged
+    accounts/groups propagate the ACL: look for the ACE on Domain Admins members'
+  - A variant with a changed localizationDisplayId / confusion attribute is used to hide the backdoor
+    (sample exists)
+  false_positives:
+  - Rare, legitimate AdminSDHolder permission changes by tiering projects
+  severity: high
+  sources:
+  - https://github.com/elastic/detection-rules/blob/main/rules/windows/persistence_ad_adminsdholder.toml
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - 'sample: EVTX-ATTACK-SAMPLES/Credential Access/ACL_ForcePwd_SPNAdd_User_Computer_Accounts.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/5136: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log. || Original notes: Elastic and the sample EVTX
+    agree (5136, ObjectDN CN=AdminSDHolder,CN=System,DC=..., ObjectClass container, AttributeLDAPDisplayName
+    nTSecurityDescriptor, OperationType %%14674 add + %%14675 delete in the same OpCorrelationID). The
+    60-minute SDProp interval is from general AD knowledge, not from an opened source.'
+- id: FH-AD-023
+  title: SID History added to an account (4765 / 4766 / 4738 SidHistory)
+  tactic: privilege-escalation
+  attack:
+  - T1134.005
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4765
+  - 4766
+  - 4738
+  prerequisites:
+  - Audit User Account Management (Success and Failure) on domain controllers
+  logic:
+    selection_history_added:
+      EventID:
+      - 4765
+      - 4766
+    selection_uac_change_with_history:
+      EventID: 4738
+      SidHistory|contains: S-1-5-21-
+    condition: selection_history_added or selection_uac_change_with_history
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4765,4766 --format llm
+  - forhunt search <paths> --channel Security --event-id 4738 --field SidHistory~S-1-5-21- --format llm
+  pivots:
+  - SourceUserName / SourceSid -> the SID being injected (Domain Admins/Enterprise Admins RID 512/519
+    or a SID from another domain)
+  - TargetUserName -> later 4624/4672 with that SID in the token; cross-forest access in trusts without
+    SID filtering
+  - 4766 = the attempt failed (for example no SID filtering exemption); it may be the first sign
+  - SubjectUserName must be a replication/migration admin; also 4661 SAM_DOMAIN access by lsass (sample)
+  false_positives:
+  - Domain migrations using ADMT / SID-history migration
+  severity: high
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_add_sid_history.yml
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - 'sample: EVTX-ATTACK-SAMPLES/Privilege Escalation/4765_sidhistory_add_t1178.evtx'
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-ATTACK-SAMPLES/Credential Access/ACL_ForcePwd_SPNAdd_User_Computer_Accounts.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/4765: Microsoft docs, rule project,
+    real sample log; Security/4766: Microsoft docs, rule project; Security/4738: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log. || Original notes: Sample EVTX for 4765
+    shows SourceUserName ''maincorp.local\Domain Admins'', SourceSid ...-512, TargetUserName, SubjectUserName.
+    Sigma uses 4765/4766 and 4738 with SidHistory not ''-'' / %%1793. 4766 and the 4738 branch were not
+    in a sample. Mimikatz sid::patch edits memory/NTDS directly and writes none of these events.'
+- id: FH-AD-024
+  title: Group Policy object tampering (5136 on groupPolicyContainer, SYSVOL writes in 5145)
+  tactic: privilege-escalation
+  attack:
+  - T1484.001
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 5136
+  - 5137
+  - 5141
+  - 5145
+  prerequisites:
+  - Audit Directory Service Changes (Success) for 5136/5137/5141
+  - Audit Detailed File Share (Success) on DCs for 5145 on SYSVOL
+  logic:
+    selection_gpo_attribute_write:
+      EventID: 5136
+      ObjectClass: groupPolicyContainer
+      AttributeLDAPDisplayName:
+      - gPCMachineExtensionNames
+      - gPCUserExtensionNames
+      - versionNumber
+      - gPCFileSysPath
+    selection_default_policies:
+      EventID: 5136
+      ObjectClass: groupPolicyContainer
+      ObjectDN|startswith:
+      - CN={31B2F340-016D-11D2-945F-00C04FB984F9},CN=POLICIES,CN=SYSTEM
+      - CN={6AC1786C-016F-11D2-945F-00C04FB984F9},CN=POLICIES,CN=SYSTEM
+    selection_sysvol_script_write:
+      EventID: 5145
+      ShareName|endswith: \SYSVOL
+      RelativeTargetName|endswith:
+      - \scripts.ini
+      - \psscripts.ini
+      - \ScheduledTasks.xml
+      - \GptTmpl.inf
+    condition: 1 of selection_*
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 5136 --field ObjectClass=groupPolicyContainer
+    --format llm
+  - forhunt search <paths> --channel Security --event-id 5137,5141 --field ObjectClass=groupPolicyContainer
+    --format llm
+  - forhunt search <paths> --channel Security --event-id 5145 --field ShareName~SYSVOL --field RelativeTargetName~Policies
+    --format llm
+  pivots:
+  - 'ObjectDN GPO GUID -> which OUs/domain it is linked to (gPLink changes: 5136 on the OU/domain object)'
+  - versionNumber 5136 pairs (old removed %%14675 / new added %%14674) show an edit was done; the previous
+    and new value identify the increment
+  - GptTmpl.inf changes granting SeEnableDelegationPrivilege, SeDebugPrivilege or adding Domain Users
+    to Administrators; scripts.ini/ScheduledTasks.xml for deployment of malware (ransomware precursor)
+  - SubjectUserName / SubjectLogonId -> 4624; sensitive 4662 on the GPO object (sample shows 4662 AccessMask
+    0x20)
+  false_positives:
+  - Routine GPO administration; every edit touches versionNumber and the extension GUID attributes
+  severity: medium
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_default_domain_gpo_modification.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_group_policy_startup_script_added_to_gpo.yml
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - 'sample: EVTX-ATTACK-SAMPLES/Credential Access/ACL_ForcePwd_SPNAdd_User_Computer_Accounts.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1207-Rogue domain controller/ID5137-Fake domain
+    controller registration (DCshadow).evtx'
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/5136: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/5137: Microsoft docs, rule project,
+    real sample log; Security/5141: Microsoft docs; Security/5145: MITRE CTI data-component log source,
+    Microsoft docs, rule project, real sample log.  Open: event id / channel pair has fewer than two independent
+    confirmations (Security/5141(ms)) | literal value not found in any opened source (gPCFileSysPath).
+    JPCERT sheets mentioning the same event ids/tools: net-user (informational). || Original notes: Sample
+    ''sensitive GPO edited'' shows 5136 with ObjectClass groupPolicyContainer, ObjectDN CN={GUID},CN=POLICIES,CN=SYSTEM,DC=...,
+    AttributeLDAPDisplayName versionNumber, OperationType %%14674/%%14675. Sigma covers default-policy
+    modification and the SYSVOL scripts.ini/psscripts.ini pattern in 5145 (AccessList %%4417 write data).
+    gPCFileSysPath and GptTmpl.inf/ScheduledTasks.xml matches are my own extension, not directly confirmed
+    in an opened source. The change detail is only in 5136 attribute values; the content of the policy
+    files themselves is not logged.'
+- id: FH-AD-025
+  title: New domain or forest trust created or modified (4706 / 4707 / 4716 / 4865)
+  tactic: persistence
+  attack:
+  - T1484.002
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4706
+  - 4707
+  - 4716
+  - 4865
+  prerequisites:
+  - Audit Authentication Policy Change (Success) on domain controllers
+  logic:
+    selection:
+      EventID:
+      - 4706
+      - 4707
+      - 4716
+      - 4865
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4706,4707,4716,4865 --format llm
+  pivots:
+  - 4706 DomainName / DomainSid -> the trusted domain; TdoDirection (1 inbound, 2 outbound, 3 bidirectional
+    per Microsoft docs), TdoType and TdoAttributes (SID filtering/quarantine flags); SidFilteringEnabled
+    shows whether SID filtering is on (the sample shows token %%1796)
+  - 4865 describes the added forest trust information entries; SubjectUserName/SubjectLogonId -> the account
+    that created it
+  - '4741/4742 for trust accounts (name ends with $ with UAC 0x45 in the sample): the interdomain trust
+    account'
+  - Without SID filtering, SID History attacks across the trust (FH-AD-023)
+  false_positives:
+  - Mergers, migrations, lab forests
+  severity: high
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_add_domain_trust.yml
+  - https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack
+  - 'sample: EVTX-to-MITRE-Attack/TA0004-Privilege Escalation/T1484-Domain or Tenant Policy Modification/ID
+    4865 4706 - trust added.evtx'
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4706: Microsoft docs, rule project,
+    real sample log; Security/4707: Microsoft docs; Security/4716: Microsoft docs; Security/4865: Microsoft
+    docs, real sample log.  Open: event id / channel pair has fewer than two independent confirmations
+    (Security/4707(ms),Security/4716(ms)). || Original notes: 4706 confirmed by Sigma and sample EVTX
+    (fields DomainName, DomainSid, TdoType, TdoDirection, TdoAttributes, SidFilteringEnabled); 4865 seen
+    in the same sample (ForestRoot, TopLevelName, DnsName, NetbiosName). 4707 (removed) and 4716 (modified)
+    are plain from the assignment and not seen in any sample; the numeric meaning of TdoDirection values
+    in the pivot is from Microsoft docs memory, not an opened source.'
+- id: FH-AD-026
+  title: Authentication coercion - RPC pipes (lsarpc, efsrpc, spoolss, netdfs ...) accessed over IPC$
+    on a DC (5145)
+  tactic: credential-access
+  attack:
+  - T1187
+  - T1557
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 5145
+  prerequisites:
+  - Audit Detailed File Share (Success) on domain controllers; high volume, enable only on DCs and sensitive
+    servers
+  logic:
+    selection:
+      EventID: 5145
+      ShareName|endswith: \IPC$
+      RelativeTargetName:
+      - lsarpc
+      - efsrpc
+      - spoolss
+      - netdfs
+      - FssagentRpc
+    filter_local_machine_account:
+      SubjectUserName|endswith: $
+    condition: selection and not filter_local_machine_account
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName=lsarpc --format
+    llm
+  - forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName=efsrpc --format
+    llm
+  - forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName=spoolss --format
+    llm
+  - forhunt search <paths> --channel Security --event-id 5145 --field SubjectUserName="ANONYMOUS LOGON"
+    --field RelativeTargetName=lsarpc --format llm
+  pivots:
+  - IpAddress / IpPort -> the coercing client; then 4624 type 3 NTLM or Kerberos from the DC machine account
+    to that host or another (FH-AD-027)
+  - ANONYMOUS LOGON on lsarpc is the unauthenticated PetitPotam signature (pre-patch); authenticated variants
+    use a normal user
+  - spoolss over IPC$ is the Spooler/PrinterBug path; the print spooler should not run on DCs
+  - 'SubjectUserName with ADCS web enrollment / LDAP targets: relay to AD CS (ESC8) -> FH-AD-011 via 4886/4887
+    from the DC machine account'
+  false_positives:
+  - DCs acting as print servers or file servers; EFS usage; backup software using these pipes
+  severity: medium
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_petitpotam_network_share.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_dce_rpc_smb_spoolss_named_pipe.yml
+  - https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_dollar_account_relay_ntlm.toml
+  - https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
+  - 'sample: EVTX-to-MITRE-Attack/TA0002-Execution/T1047-Windows Management Instrumentation/ID4688-5145-WMIexec
+    execution via SMB.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_lm_namedpipe.yml
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/5145: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log.  Note: kept true: one pipe name in the list
+    (FssagentRpc) is not present in any opened source; the other pipe names are confirmed. JPCERT sheets
+    mentioning the same event ids/tools: net-user (informational). || Original notes: Sample EVTX (SpoolSample)
+    shows 5145 with ShareName ''\\*\IPC$'' (a wildcard host), RelativeTargetName ''spoolss'', ObjectType
+    File, IpAddress/IpPort. Sigma, Elastic list the same pipe names; Elastic''s list is longer (netdfs,
+    lsass, netlogon, samr, efsrpc, FssagentRpc, eventlog, winreg, srvsvc ...). Many of those are noisy;
+    narrow before use. RPC-level coercion (MS-EFSR via other pipes such as efsrpc, or via ETW only) may
+    not log a pipe name. Microsoft-Windows-RPC ETW needed for full coverage and is not in EVTX.'
+- id: FH-AD-027
+  title: Machine-account NTLM network logon from a remote host (relay of coerced authentication)
+  tactic: credential-access
+  attack:
+  - T1557.001
+  - T1187
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4624
+  prerequisites:
+  - Audit Logon (Success) on the target hosts
+  - Need a list of host names and their IP addresses to compare IpAddress against the account's own host
+  logic:
+    selection:
+      EventID: 4624
+      LogonType: 3
+      AuthenticationPackageName: NTLM
+      TargetUserName|endswith: $
+    condition: selection and IpAddress is not the IP of the host named in TargetUserName
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=3 --field AuthenticationPackageName=NTLM
+    --regex TargetUserName='\$$' --format llm
+  pivots:
+  - IpAddress is the relaying host; compare with the DNS/DHCP address of the machine named by TargetUserName
+    (a DC computer account arriving from a workstation IP)
+  - Preceding 5145 coercion pipe events from the same IpAddress (FH-AD-026)
+  - Following 4662/4742/4887 on the DC from that machine account (DCSync as DC$, certificate issued to
+    DC$ via AD CS web enrollment)
+  false_positives:
+  - Machine accounts that authenticate over NTLM from their own IP via a proxy/NAT or through load-balanced
+    services
+  - Clusters and failover pairs using virtual IPs
+  severity: medium
+  sources:
+  - https://github.com/elastic/detection-rules/blob/main/rules/windows/credential_access_dollar_account_relay_ntlm.toml
+  - https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1069-Permission Groups Discovery/ID4799-4624-Local
+    admin group enumerated by SharpHound.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_alert_ruler.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4624: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states. JPCERT
+    sheets mentioning the same event ids/tools: net-user (informational). || Original notes: Single detection
+    source (Elastic sequence rule: coercion 5145 then 4624 NTLM network logon of a $ account whose IP
+    does not belong to that host, within 5 seconds); the 4624 fields (AuthenticationPackageName, LogonType,
+    IpAddress, TargetUserName, LmPackageName) are present in sample EVTX. The IP-ownership comparison
+    needs data from outside the EVTX.'
+- id: FH-AD-028
+  title: NTLMv1 authentication (4624 LmPackageName 'NTLM V1')
+  tactic: credential-access
+  attack:
+  - T1557.001
+  - T1550.002
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4624
+  prerequisites:
+  - Audit Logon (Success)
+  logic:
+    selection:
+      EventID: 4624
+      AuthenticationPackageName: NTLM
+      LmPackageName: NTLM V1
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4624 --field LmPackageName="NTLM V1" --format
+    llm
+  pivots:
+  - IpAddress / WorkstationName -> the client that negotiated NTLMv1 (NTLMv1 is crackable to NT hash,
+    and a downgrade by an attacker-controlled responder or relay is typical)
+  - 4657/registry change to LmCompatibilityLevel (Sigma rule win_security_net_ntlm_downgrade) near the
+    same time, ruling in a downgrade attack on the host
+  - Microsoft-Windows-NTLM/Operational 8001-8004 (FH-AD-029) for the server-side view
+  false_positives:
+  - Legacy devices, printers, old NAS and applications that only support NTLMv1
+  severity: medium
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_net_ntlm_downgrade.yml
+  - https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1069-Permission Groups Discovery/ID4799-4624-Local
+    admin group enumerated by SharpHound.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_alert_ruler.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4624: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: The
+    literal value ''NTLM V1'' is from the assignment and general knowledge; no opened source contains
+    it. || Original notes: The field name LmPackageName exists in 4624 (sample EVTX shows ''-'' for Kerberos
+    logons). The literal value ''NTLM V1'' is from the assignment and general knowledge; no opened source
+    contains it. Sigma''s downgrade rule watches registry value changes (4657), not LmPackageName.'
+- id: FH-AD-029
+  title: NTLM Operational log - audited NTLM use, outgoing and incoming (8001 / 8002 / 8003 / 8004)
+  tactic: credential-access
+  attack:
+  - T1557.001
+  channel: Microsoft-Windows-NTLM/Operational
+  provider: Microsoft-Windows-Security-Netlogon
+  event_ids:
+  - 8001
+  - 8002
+  - 8003
+  - 8004
+  prerequisites:
+  - 'Policy ''Network security: Restrict NTLM: Audit NTLM authentication in this domain'' (and incoming/outgoing
+    audit settings) enabled; otherwise the channel is empty'
+  - Collect Microsoft-Windows-NTLM/Operational from DCs and servers
+  logic:
+    selection:
+      EventID:
+      - 8001
+      - 8002
+      - 8003
+      - 8004
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-NTLM/Operational --event-id 8001,8002,8003,8004
+    --format llm
+  - forhunt stats <paths> --format llm
+  pivots:
+  - 8004 on a DC identifies NTLM authentication requests to the DC (account, workstation, target); count
+    per source for relay or spraying
+  - 8001 = outgoing NTLM from this host; 8002 = incoming NTLM audit on the server (Sigma uses 8002 as
+    the signal in two rules); 8003 = NTLM would be blocked by policy in audit mode
+  - Compare NTLM from privileged accounts or DC machine accounts to the expected NTLM usage list
+  false_positives:
+  - Any environment that still uses NTLM for IP-address-based access, legacy apps, workgroup hosts
+  severity: low
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/ntlm/win_susp_ntlm_auth.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/ntlm/win_susp_ntlm_brute_force.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-NTLM/Operational/8001: rule project;
+    MW-NTLM/Operational/8002: rule project; MW-NTLM/Operational/8003: no source; MW-NTLM/Operational/8004:
+    rule project.  Open: event id / channel pair has fewer than two independent confirmations (t-Windows-NTLM/8001(rule),t-Windows-NTLM/8002(rule),t-Windows-NTLM/8003(),t-Windows-NTLM/8004(rule)).
+    || Original notes: Sigma confirms channel/service (Microsoft-Windows-NTLM/Operational) and use of
+    8002 and others; the meaning of each of 8001-8004 and the provider name ''Microsoft-Windows-Security-Netlogon''
+    in the header were not confirmed from Microsoft docs. Field names (for example WorkstationName, TargetName,
+    UserName, DomainName) were not seen in a sample EVTX, so no logic field list is given.'
+- id: FH-AD-030
+  title: Expensive or inefficient LDAP queries (Directory Service 1644) and LDAP reconnaissance blind
+    spot
+  tactic: discovery
+  attack:
+  - T1087.002
+  - T1069.002
+  - T1482
+  channel: Directory Service
+  provider: Microsoft-Windows-ActiveDirectory_DomainService
+  event_ids:
+  - 1644
+  prerequisites:
+  - 'On each DC: registry HKLM\SYSTEM\CurrentControlSet\Services\NTDS\Diagnostics ''15 Field Engineering''
+    set to 5 (and optionally Search Time/Expensive/Inefficient thresholds under ...\NTDS\Parameters)'
+  - Without this nothing is logged. It is verbose; do not enable permanently without capacity planning
+  logic:
+    selection:
+      EventID: 1644
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel "Directory Service" --event-id 1644 --format llm
+  pivots:
+  - 'Event text contains the client IP:port, the starting node, the filter and the number of entries visited/returned:
+    large returns for filters such as (objectClass=user) or (servicePrincipalName=*) from one client are
+    a recon tool (BloodHound/SharpHound, ADFind, PowerView)'
+  - Same client -> 4662 reads of user class objects (Sigma ad_user_enumeration), 4769 bursts (FH-AD-002),
+    4624 for the logon
+  - Where 1644 is off, process creation logs (4688/Sysmon 1) for adfind.exe/dsquery and PowerShell 4104
+    for the AD cmdlets
+  false_positives:
+  - Exchange, identity-management products, sync tools that run broad LDAP queries
+  severity: low
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/ldap/win_ldap_recon.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_ad_user_enumeration.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Directory Service/1644: no source.  Open:
+    event id / channel pair has fewer than two independent confirmations (ectory Service/1644()). || Original
+    notes: BLIND SPOT: Sigma confirms that LDAP search filters are only logged in the Microsoft-Windows-LDAP-Client
+    ETW trace (EventID 30, ''Microsoft-Windows-LDAP-Client/Debug''), which does not exist in a normal
+    EVTX, so query text from clients cannot be reviewed from the EVTX collection. Event 1644 details (provider,
+    ''Directory Service'' channel, field layout, diagnostics registry value) are from general knowledge,
+    not from an opened source; unverified. Sigma''s 4662 user-class enumeration check requires a SACL
+    for reads on user objects and has a high false-positive rate.'

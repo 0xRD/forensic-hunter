@@ -94,6 +94,7 @@ impl Ctx {
         }
         let opts = ParseOptions {
             validate_checksums: self.common.checksums,
+            slow_decoder: self.common.slow_decoder,
         };
         let opened: Vec<_> = self.pool.install(|| {
             exp.files
@@ -234,6 +235,8 @@ pub struct Totals {
     pub bad_records: u64,
     pub bad_units: u64,
     pub matched: u64,
+    pub fast_units: u64,
+    pub units: u64,
     pub errors: Vec<String>,
 }
 
@@ -243,6 +246,10 @@ impl Totals {
         self.bad_records += rep.bad_records;
         if rep.bad_unit {
             self.bad_units += 1;
+        }
+        self.units += 1;
+        if rep.fast {
+            self.fast_units += 1;
         }
         for e in &rep.errors {
             if self.errors.len() < 20 {
@@ -283,6 +290,13 @@ impl Totals {
                 mb / secs,
                 self.records as f64 / secs
             );
+            if std::env::var_os("FORHUNT_DEBUG").is_some() {
+                let _ = writeln!(
+                    e,
+                    "forhunt: debug: {} of {} chunks on the fast path",
+                    self.fast_units, self.units
+                );
+            }
         }
         if ctx.common.strict && self.corrupt() {
             return Err(fail(

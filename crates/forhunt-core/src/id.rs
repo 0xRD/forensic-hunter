@@ -14,13 +14,27 @@ pub struct FileKey(pub u32);
 impl FileKey {
     /// Fingerprints `data` by sampling a few fixed regions.
     pub fn fingerprint(data: &[u8], sample: usize) -> FileKey {
-        let mut h = blake3::Hasher::new();
-        h.update(&(data.len() as u64).to_le_bytes());
         let n = data.len();
-        h.update(&data[..n.min(sample)]);
-        if n > sample {
-            let tail = n.saturating_sub(sample).max(sample);
-            h.update(&data[tail..]);
+        let (head, tail) = Self::sample_ranges(n as u64, sample);
+        let tail = tail.map(|(a, b)| &data[a as usize..b as usize]);
+        Self::from_samples(n as u64, &data[head.0 as usize..head.1 as usize], tail)
+    }
+
+    /// Byte ranges sampled by [`FileKey::fingerprint`] for a file of `len` bytes.
+    pub fn sample_ranges(len: u64, sample: usize) -> ((u64, u64), Option<(u64, u64)>) {
+        let s = sample as u64;
+        let head = (0, len.min(s));
+        let tail = (len > s).then(|| (len.saturating_sub(s).max(s), len));
+        (head, tail)
+    }
+
+    /// The key from pre-read samples (see [`FileKey::sample_ranges`]).
+    pub fn from_samples(len: u64, head: &[u8], tail: Option<&[u8]>) -> FileKey {
+        let mut h = blake3::Hasher::new();
+        h.update(&len.to_le_bytes());
+        h.update(head);
+        if let Some(t) = tail {
+            h.update(t);
         }
         let out = h.finalize();
         let b = out.as_bytes();

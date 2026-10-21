@@ -18,6 +18,8 @@ pub struct UnitReport {
     pub records: u64,
     pub bad_records: u64,
     pub bad_unit: bool,
+    /// Decoded on the fast path (diagnostics).
+    pub fast: bool,
     /// First error messages, capped, for diagnostics.
     pub errors: Vec<String>,
 }
@@ -63,6 +65,8 @@ impl<F: FnMut(&EventView<'_>)> Sink for F {
 pub struct ParseOptions {
     /// Verify chunk and record checksums; a mismatch makes the unit bad.
     pub validate_checksums: bool,
+    /// Force the JSON decoding path (differential testing, debugging).
+    pub slow_decoder: bool,
 }
 
 pub trait Source: Send + Sync {

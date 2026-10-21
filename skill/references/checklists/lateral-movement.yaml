@@ -1,829 +1,1174 @@
 tactic: lateral-movement
 title: Lateral Movement
-description: >
-  Lateral movement in Windows event logs is mostly a pairing problem: an authentication
-  event on the target (Security 4624 network, remote-interactive or new-credentials logon),
-  followed by a remote-execution artefact (service install 7045/4697, scheduled task 4698 and
-  TaskScheduler 106/200, WMI/WinRM/DCOM child processes, 5145 named-pipe writes over IPC$ or
-  writes to ADMIN$/C$). Check both ends: the destination host records most artefacts, the source
-  host records 4648 explicit-credential use, outbound Sysmon 3 and RDP client events. Several
-  heuristics widely quoted in the community (for example "NTLM logon with KeyLength 0 means
-  pass-the-hash") do not hold in every lab, so they are marked verified false with the
-  contradicting evidence in notes. RDP-specific session telemetry lives in remote-access.yaml,
-  brute force and external logons in initial-access.yaml. Source URLs under github.com are files read from
-  shallow clones of the named projects; see references/sources/lateral-remote-initial.md for what
-  was and was not reachable.
+description: 'Lateral movement in Windows event logs is mostly a pairing problem: an authentication event
+  on the target (Security 4624 network, remote-interactive or new-credentials logon), followed by a remote-execution
+  artefact (service install 7045/4697, scheduled task 4698 and TaskScheduler 106/200, WMI/WinRM/DCOM child
+  processes, 5145 named-pipe writes over IPC$ or writes to ADMIN$/C$). Check both ends: the destination
+  host records most artefacts, the source host records 4648 explicit-credential use, outbound Sysmon 3
+  and RDP client events. Several heuristics widely quoted in the community (for example "NTLM logon with
+  KeyLength 0 means pass-the-hash") do not hold in every lab, so they are marked verified false with the
+  contradicting evidence in notes. RDP-specific session telemetry lives in remote-access.yaml, brute force
+  and external logons in initial-access.yaml. Source URLs under github.com are files read from shallow
+  clones of the named projects; see references/sources/lateral-remote-initial.md for what was and was
+  not reachable.
+
+  '
 checks:
-  - id: FH-LAT-001
-    title: PsExec service installed on target (PSEXESVC)
-    tactic: lateral-movement
-    attack: [T1569.002, T1021.002]
-    channel: System
-    provider: Service Control Manager
-    event_ids: [7045]
-    prerequisites:
-      - "System log retained (7045 is logged by default)"
-    logic:
-      selection:
-        EventID: 7045
-        Provider: 'Service Control Manager'
-      selection_name:
-        ServiceName: 'PSEXESVC'
-      selection_image:
-        ImagePath|endswith: '\PSEXESVC.exe'
-      condition: selection and (selection_name or selection_image)
-    forhunt:
-      - forhunt search <paths> --channel System --event-id 7045 --field ServiceName=PSEXESVC --format llm
-      - forhunt search <paths> --channel System --event-id 7045 --field ImagePath~PSEXESVC --format llm
-    pivots:
-      - "Security 4624 LogonType 3 on the same host a few seconds earlier: IpAddress is the PsExec source"
-      - "Security 5145 ShareName ADMIN$ with RelativeTargetName PSEXESVC.exe (the binary copy) and IPC$ pipes ending -stdin/-stdout/-stderr"
-      - "Sysmon 1 / Security 4688 with ParentImage C:\\Windows\\PSEXESVC.exe to see what was run"
-      - "Source host: Sysmon 13 HKU\\<SID>\\Software\\Sysinternals\\PsExec\\EulaAccepted, Prefetch PSEXEC.EXE"
-    false_positives:
-      - "Authorised administrators or deployment tooling that still use PsExec"
-    severity: high
-    sources:
-      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/PsExec.htm
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/service_control_manager/win_system_service_install_sysinternals_psexec.yml
-      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/service_installation/sysinternals_psexec.yml
-      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/System/Sys_7045_Med_LateralMovement-PSEXEC.yml
-    verified: true
-    notes: "The service name can be changed with PsExec -r, and clones use other names; see FH-LAT-002. 4697 (Security) is the same action when Audit Security System Extension is on."
-
-  - id: FH-LAT-002
-    title: PsExec clones and Impacket-style remote service install (random names, known clone names)
-    tactic: lateral-movement
-    attack: [T1569.002, T1543.003]
-    channel: System
-    provider: Service Control Manager
-    event_ids: [7045, 4697]
-    prerequisites:
-      - "System log retained (7045)"
-      - "Audit Security System Extension (Success) for the Security 4697 variant"
-    logic:
-      selection_7045:
-        EventID: 7045
-        Provider: 'Service Control Manager'
-      clone_names:
-        ServiceName|startswith: 'PAExec-'
-      clone_names2:
-        ServiceName:
-          - 'RemComSvc'
-          - 'csexecsvc'
-      random_impacket_like:
-        ImagePath|re: '^%systemroot%\\[a-zA-Z]{8}\.exe$'
-        ServiceName|re: '^([a-zA-Z]{4}|[a-zA-Z]{8}|[a-zA-Z]{16})$'
-      condition: selection_7045 and (clone_names or clone_names2 or random_impacket_like)
-    forhunt:
-      - forhunt search <paths> --channel System --event-id 7045 --regex ImagePath='^%systemroot%\\[a-zA-Z]{8}\.exe$' --format llm
-      - forhunt search <paths> --channel System --event-id 7045 --field ServiceName~PAExec --format llm
-      - forhunt search <paths> --channel Security --event-id 4697 --regex ServiceFileName='^%systemroot%\\[a-zA-Z]{8}\.exe$' --format llm
-    pivots:
-      - "Same time window: 5145 on IPC$ with RelativeTargetName RemCom_stdin/RemCom_stdout/RemCom_stderr (Impacket psexec.py)"
-      - "4624 LogonType 3 with LogonProcessName NtLmSsp from the same IpAddress"
-      - "Dropped executable in %SystemRoot% (Sysmon 11 TargetFilename, MFT)"
-    false_positives:
-      - "Software installers that create 8-letter random service binaries are uncommon but possible; check the file hash and signer"
-    severity: high
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_metasploit_or_impacket_smb_psexec_service_install.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/service_control_manager/win_system_service_install_paexec.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/service_control_manager/win_system_service_install_remcom.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/service_control_manager/win_system_service_install_csexecsvc.yml
-      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/service_installation/csexec.yml
-    verified: false
-    notes: "Random-name pattern is from a single Sigma rule written from one lab; Impacket versions differ and the name length/format is tunable by the operator. Treat a hit as a lead, not proof. In System 7045 the field is ImagePath; in Security 4697 it is ServiceFileName."
-
-  - id: FH-LAT-003
-    title: Named-pipe traffic of PsExec and clones over IPC$ (stdin/stdout/stderr pipes)
-    tactic: lateral-movement
-    attack: [T1569.002, T1021.002]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [5145]
-    prerequisites:
-      - "Advanced Audit Policy: Object Access > Audit Detailed File Share (Success), on the target"
-    logic:
-      selection:
-        EventID: 5145
-        ShareName|endswith: 'IPC$'
-      pipe_names:
-        RelativeTargetName|endswith:
-          - '-stdin'
-          - '-stdout'
-          - '-stderr'
-      impacket_pipes:
-        RelativeTargetName|contains:
-          - 'RemCom_stdin'
-          - 'RemCom_stdout'
-          - 'RemCom_stderr'
-      condition: selection and (pipe_names or impacket_pipes)
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName~-stdin --format llm
-      - forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName~RemCom_std --format llm
-    pivots:
-      - "IpAddress of the 5145 = the host the commands came from; look at that host as the next hop in the chain"
-      - "For genuine PsExec the pipe is named PSEXESVC-<SourceHost>-<SourcePID>-stdin etc., which leaks the source hostname and PID"
-      - "Matching 7045 on the same target (FH-LAT-001 / FH-LAT-002)"
-    false_positives:
-      - "Legitimate PsExec by administrators; RemCom-based management tools"
-    severity: high
-    sources:
-      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/PsExec.htm
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_psexec.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_impacket_psexec.yml
-    verified: true
-    notes: "JPCERT lab output shows 5145 with the PSEXESVC-<host>-<pid>-stdin style relative names; Sigma uses the same field names (ShareName, RelativeTargetName). ShareName is rendered as \\\\*\\IPC$ in the event."
-
-  - id: FH-LAT-004
-    title: Remote service control over the svcctl pipe (sc.exe \\host, smbexec, PsExec)
-    tactic: lateral-movement
-    attack: [T1021.002, T1569.002, T1543.003]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [5145]
-    prerequisites:
-      - "Audit Detailed File Share (Success) on the target"
-    logic:
-      selection:
-        EventID: 5145
-        ShareName|endswith: 'IPC$'
-        RelativeTargetName: 'svcctl'
-        AccessList|contains: 'WriteData'
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName=svcctl --format llm
-    pivots:
-      - "System 7045 / Security 4697 within seconds on the same host: which service was created and which binary it points at"
-      - "IpAddress and SubjectUserName of the 5145 give the origin and account"
-      - "Administrative hosts (patch, monitoring) will dominate: build an allow-list of source IPs first"
-    false_positives:
-      - "Management servers, vulnerability scanners and SCCM that talk svcctl remotely"
-    severity: medium
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_svcctl_remote_service.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_lm_namedpipe.yml
-    verified: false
-    notes: "Only Sigma documents this pattern (originating from a Menasec blog I could not open). Semantics are plausible but unconfirmed by a second source."
-
-  - id: FH-LAT-005
-    title: Remote scheduled task creation over the atsvc pipe (atexec, schtasks /s)
-    tactic: lateral-movement
-    attack: [T1053.005, T1021.002]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [5145]
-    prerequisites:
-      - "Audit Detailed File Share (Success) on the target"
-    logic:
-      selection:
-        EventID: 5145
-        ShareName|endswith: 'IPC$'
-        RelativeTargetName: 'atsvc'
-        AccessList|contains: 'WriteData'
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName=atsvc --format llm
-    pivots:
-      - "Security 4698 (TaskName, TaskContent) within the same minute (FH-LAT-006)"
-      - "Microsoft-Windows-TaskScheduler/Operational 106 then 200/201 for the same task"
-      - "Impacket atexec leaves a cmd.exe /C ... > %windir%\\Temp\\<random>.tmp 2>&1 child of the Task Scheduler service"
-    false_positives:
-      - "Remote schtasks used by legitimate admins and some management suites"
-    severity: medium
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_atsvc_task.yml
-    verified: false
-    notes: "Single-source (Sigma). JPCERT's schtasks sheet shows 445/tcp usage but its destination-host events were 4624/4648 and TaskScheduler 106/200/201, not a named-pipe 5145 record."
-
-  - id: FH-LAT-006
-    title: Remote scheduled task - 4698 plus network logon from the same source
-    tactic: lateral-movement
-    attack: [T1053.005]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4698, 4624]
-    prerequisites:
-      - "Audit Other Object Access Events (Success) for 4698"
-      - "Audit Logon (Success) for 4624"
-      - "Microsoft-Windows-TaskScheduler/Operational enabled (disabled by default on many builds) for 106/200/201"
-    logic:
-      task_created:
-        EventID: 4698
-      network_logon:
-        EventID: 4624
-        LogonType: 3
-      condition: network_logon followed by task_created on same Computer within 60s where task_created.SubjectLogonId = network_logon.TargetLogonId
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4698 --format llm
-      - forhunt search <paths> --channel Microsoft-Windows-TaskScheduler/Operational --event-id 106,200,201 --format llm
-    pivots:
-      - "TaskContent: Command / Arguments / Principals UserId (S-1-5-18 means it will run as SYSTEM); tasks launching cmd, powershell or from Temp/ProgramData are high value"
-      - "4624 IpAddress for the creating logon (SubjectLogonId of the 4698 equals TargetLogonId of the 4624) identifies the source host"
-      - "Short-lived tasks: 4698 then 4699 (deleted) within seconds is typical of atexec/schtasks one-shot execution"
-    false_positives:
-      - "Software deployment, backup agents and monitoring tools that register tasks remotely"
-    severity: medium
-    sources:
-      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/schtasks.htm
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_scheduled_task_creation.yml
-      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/ObjectAccess/OtherObjectAccessEvents/Sec_4698_Info_TaskCreated.yml
-      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/persistence/T1053.005%20-%20Scheduled%20Task%20was%20Created.yml
-    verified: true
-    notes: "JPCERT confirms TaskScheduler 106/200/201 and a type 3 NTLM 4624 (KeyLength 128) on the target for remote schtasks; 4698 field names TaskName/TaskContent confirmed by Sigma and a Hayabusa sample. JPCERT's lab did not include 4698 (audit not enabled), so the 4698 + 4624 join itself is an analyst heuristic."
-
-  - id: FH-LAT-007
-    title: WMI remote execution - WmiPrvSE.exe spawning command interpreters
-    tactic: lateral-movement
-    attack: [T1047]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4688]
-    prerequisites:
-      - "Audit Process Creation (Success) and Include command line in process creation events (4688), or Sysmon installed with a config that logs event 1"
-    logic:
-      selection:
-        EventID: 4688
-        ParentProcessName|endswith: '\WmiPrvSE.exe'
-      filter_image:
-        NewProcessName|endswith:
-          - '\WmiPrvSE.exe'
-          - '\WerFault.exe'
-      filter_system:
-        SubjectUserSid: 'S-1-5-18'
-      condition: selection and not filter_image and not filter_system
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4688 --field ParentProcessName~WmiPrvSE --format llm
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~WmiPrvSE --format llm
-    pivots:
-      - "4624 LogonType 3 (Kerberos or NTLM) from the same IpAddress seconds earlier; JPCERT also saw a LogonType 5 (Advapi, service) logon for the WMI host process itself"
-      - "WMI-Activity/Operational 5857 (provider started, HostProcess wmiprvse.exe) and 5860/5861 for persistent subscriptions"
-      - "Command line containing cmd.exe /Q /c ... \\\\127.0.0.1\\ADMIN$\\__<epoch> means Impacket wmiexec (FH-LAT-008)"
-    false_positives:
-      - "Monitoring, inventory and management agents that run commands through WMI"
-    severity: high
-    sources:
-      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/wmic.htm
-      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/wmiexec-vbs.htm
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_wmiprvse_spawning_process.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_susp_wmi_login.yml
-    verified: true
-    notes: "In 4688 the parent is only present as ParentProcessName on Windows 10 / Server 2016+ with the corresponding audit; on older systems use Sysmon 1 (ParentImage). JPCERT sheets for wmic and wmiexec.vbs confirm WmiPrvSE.exe as the parent on the destination host."
-
-  - id: FH-LAT-008
-    title: Impacket exec family - cmd /Q /c with output redirected to \\127.0.0.1\ADMIN$ or C$
-    tactic: lateral-movement
-    attack: [T1047, T1021.003, T1021.002, T1569.002, T1053.005]
-    channel: Microsoft-Windows-Sysmon/Operational
-    provider: Microsoft-Windows-Sysmon
-    event_ids: [1, 4688, 11]
-    prerequisites:
-      - "Sysmon installed with a config that logs event 1 (and event 11 for the output file), or 4688 with command line auditing"
-    logic:
-      selection:
-        CommandLine|contains|all:
-          - 'cmd.exe'
-          - '/Q'
-          - '/c'
-          - '\\127.0.0.1\'
-          - '&1'
-      selection_parent:
-        ParentImage|endswith:
-          - '\WmiPrvSE.exe'
-          - '\mmc.exe'
-          - '\explorer.exe'
-          - '\services.exe'
-      selection_file:
-        TargetFilename|re: '(\\Windows\\|^[A-Z]:\\)__1\d{9}\.\d{1,7}$'
-      condition: (selection and selection_parent) or selection_file
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~127.0.0.1 --field 'CommandLine~ADMIN$' --format llm
-      - forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~127.0.0.1 --field 'CommandLine~ADMIN$' --format llm
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 11 --regex TargetFilename='__1\d{9}\.\d+$' --format llm
-    pivots:
-      - "Parent identifies the variant: WmiPrvSE.exe = wmiexec, mmc.exe = dcomexec MMC20, explorer.exe = dcomexec ShellWindows/ShellBrowserWindow, services.exe = smbexec"
-      - "atexec variant: parent svchost.exe -k netsvcs (Win10) running cmd.exe /C ... > C:\\Windows\\Temp\\<random>.tmp 2>&1"
-      - "The numeric part of the __<epoch>.<fraction> file name is the operator session start time"
-      - "Network side: 4624 LogonType 3 and 5140/5145 for ADMIN$ from the source IpAddress"
-    false_positives:
-      - "Rare; only unusual admin scripts that redirect to a loopback admin share"
-    severity: critical
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_hktl_impacket_lateral_movement.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_wmiexec_default_filename.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_writing_local_admin_share.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_hktl_wmiexec_default_powershell.yml
-    verified: false
-    notes: "Behaviour matches the Impacket example scripts as documented in Sigma comments; only Sigma documents it here and newer Impacket releases or forks (e.g. NetExec, custom builds) can change the redirect target or file name. Absence of a hit is not evidence of absence."
-
-  - id: FH-LAT-009
-    title: PowerShell remoting / WinRM - wsmprovhost.exe host process and its children
-    tactic: lateral-movement
-    attack: [T1021.006]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4688]
-    prerequisites:
-      - "Audit Process Creation with command line, or Sysmon event 1"
-    logic:
-      selection_host:
-        NewProcessName|endswith: '\wsmprovhost.exe'
-      selection_children:
-        ParentProcessName|endswith: '\wsmprovhost.exe'
-      condition: selection_host or selection_children
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4688 --field NewProcessName~wsmprovhost --format llm
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~wsmprovhost --format llm
-    pivots:
-      - "Microsoft-Windows-WinRM/Operational 169 (user authenticated) and 81/82/134 (CreateShell) in the same minute (FH-RMT-012)"
-      - "4624 LogonType 3 from the connecting IpAddress; JPCERT saw Kerberos with KeyLength 0 for WinRM logons in a domain"
-      - "PowerShell 4104 / 4103 on the target for what was executed"
-      - "Clients using Evil-WinRM present as ruby.exe on the source host"
-    false_positives:
-      - "Normal PowerShell remoting by administrators, Exchange management, and monitoring"
-    severity: medium
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_winrm_remote_powershell_session_process.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_winrm_susp_child_process.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_hktl_evil_winrm.yml
-      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/WinRM.htm
-    verified: false
-    notes: "wsmprovhost.exe as the host process is documented by Sigma only; JPCERT's WinRM/WinRS sheets (older Windows) show WmiPrvSE.exe/WinRM operational events rather than wsmprovhost, so that part could not be independently confirmed."
-
-  - id: FH-LAT-010
-    title: Inbound WinRM connections via Windows Filtering Platform (5156 to 5985/5986)
-    tactic: lateral-movement
-    attack: [T1021.006]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [5156]
-    prerequisites:
-      - "Audit Filtering Platform Connection (Success) - very high volume, rarely enabled"
-    logic:
-      selection:
-        EventID: 5156
-        DestPort:
-          - 5985
-          - 5986
-        LayerRTID: 44
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 5156 --field DestPort=5985 --format llm
-      - forhunt search <paths> --channel Security --event-id 5156 --field DestPort=5986 --format llm
-    pivots:
-      - "SourceAddress gives the connecting host; compare with 4624 type 3 and WinRM/Operational"
-    false_positives:
-      - "Any legitimate WinRM client; also the host connecting to itself via loopback"
-    severity: low
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_remote_powershell_session.yml
-      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/WinRM.htm
-    verified: false
-    notes: "JPCERT lists Security 5156 among destination-host events for WinRM but I did not confirm the LayerRTID value; 44 is from Sigma only. Skip when WFP auditing is off (check forhunt stats for any 5156)."
-
-  - id: FH-LAT-011
-    title: DCOM lateral movement - MMC20.Application, ShellWindows/ShellBrowserWindow, Excel/Office DCOM
-    tactic: lateral-movement
-    attack: [T1021.003]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4688]
-    prerequisites:
-      - "Process creation auditing with command line, or Sysmon event 1"
-    logic:
-      selection_mmc:
-        ParentProcessName|endswith: '\svchost.exe'
-        NewProcessName|endswith: '\mmc.exe'
-        CommandLine|contains: '-Embedding'
-      selection_mmc_child:
-        ParentProcessName|endswith: '\mmc.exe'
-        NewProcessName|endswith:
-          - '\cmd.exe'
-          - '\powershell.exe'
-      selection_excel:
-        ParentProcessName|endswith: '\excel.exe'
-        NewProcessName|endswith:
-          - '\foxprow.exe'
-          - '\schdplus.exe'
-          - '\winproj.exe'
-      condition: selection_mmc or selection_mmc_child or selection_excel
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4688 --field NewProcessName~mmc.exe --field CommandLine~Embedding --format llm
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~mmc.exe --format llm
-    pivots:
-      - "4624 LogonType 3 from the controlling host immediately before; DCOM uses RPC 135 plus a high port (Sysmon 3 / 5156)"
-      - "ShellWindows / ShellBrowserWindow: a command interpreter whose parent is explorer.exe started by DCOM, often cmd.exe /Q /c ... ADMIN$ (FH-LAT-008)"
-      - "dllhost.exe spawning unusual children is another DCOM host to inspect"
-    false_positives:
-      - "mmc.exe -Embedding is also used by legitimate COM activation of management snap-ins"
-    severity: medium
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_mmc_mmc20_lateral_movement.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_office_excel_dcom_lateral_movement.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_hktl_impacket_lateral_movement.yml
-      - https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json
-    verified: false
-    notes: "DCOM leaves little native logging; these process-tree patterns are from Sigma only. JPCERT's sheets do not cover DCOM. Treat as hypotheses to confirm with network and process evidence."
-
-  - id: FH-LAT-012
-    title: Pass-the-hash heuristic - NTLM network logon with null subject SID and KeyLength 0
-    tactic: lateral-movement
-    attack: [T1550.002]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4624]
-    prerequisites:
-      - "Audit Logon (Success)"
-    logic:
-      selection:
-        EventID: 4624
-        LogonType: 3
-        LogonProcessName: 'NtLmSsp'
-        AuthenticationPackageName: 'NTLM'
-        SubjectUserSid: 'S-1-0-0'
-        KeyLength: 0
-      filter_anonymous:
-        TargetUserName: 'ANONYMOUS LOGON'
-      condition: selection and not filter_anonymous
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=3 --field LogonProcessName=NtLmSsp --field KeyLength=0 --format llm
-    pivots:
-      - "TargetUserName and IpAddress: is a local or domain admin authenticating from a workstation that never did before?"
-      - "4672 (special privileges) with the same TargetLogonId on the target"
-      - "Credential theft on the source: Sysmon 10 to lsass.exe, 4688 for mimikatz-like tools (see credential-access checklist)"
-      - "Compare with Kerberos logons for the same account/host pair; PtH forces NTLM where Kerberos would be normal"
-    false_positives:
-      - "Old clients and applications using NTLMv1 or no session security, file-share browsing by IP address"
-      - "Many legitimate NTLM network logons also report KeyLength 0"
-    severity: low
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_pass_the_hash_2.yml
-      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/RemoteLogin-Mimikatz.htm
-      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/RemoteLogin-WCE.htm
-      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/PsExec.htm
-    verified: false
-    notes: "CONTRADICTED IN PART: JPCERT lab runs of Mimikatz pass-the-hash and WCE remote login recorded 4624 type 3 NtLmSsp with KeyLength 128, not 0, and even plain PsExec with a password shows NTLM/128. The KeyLength 0 heuristic (Sigma, citing Microsoft/NSA-era guidance I could not open) depends on NTLM version and client; use it only to rank NTLM logons, never as proof. Better signal: NTLM used where Kerberos is expected plus the credential-theft evidence on the source."
-
-  - id: FH-LAT-013
-    title: Logon type 9 NewCredentials with seclogo (runas /netonly, Mimikatz sekurlsa::pth, overpass-the-hash)
-    tactic: lateral-movement
-    attack: [T1550.002, T1550.003, T1078]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4624]
-    prerequisites:
-      - "Audit Logon (Success)"
-    logic:
-      selection:
-        EventID: 4624
-        LogonType: 9
-        LogonProcessName: 'seclogo'
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=9 --format llm
-      - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=9 --field LogonProcessName=seclogo --format llm
-    pivots:
-      - "ProcessName of the logon (the process that called LogonUser) and the TargetUserName: runas /netonly shows the alternate identity here, while SubjectUserName stays the real user"
-      - "ImpersonationLevel Impersonation with SubjectUserName equal to TargetUserName hints at token duplication tooling (Cobalt Strike make_token style)"
-      - "Outbound activity right after: 4648 on the same host, then 4624 type 3 on a remote host using that identity"
-      - "Sysmon 10 against lsass.exe shortly before, for sekurlsa::pth style activity"
-    false_positives:
-      - "Admins using runas /netonly, some automation, backup and monitoring tools"
-    severity: medium
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_overpass_the_hash.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_pass_the_hash_2.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_susp_logon_newcredentials.yml
-      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/LogonLogoff/Logon/Sec_4624_Info_Logon-Type-9-NewInteractive.yml
-      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/LogonLogoff/Logon/Sec_4624_Med_Logon-Type9-NewInteractive_PossibleTokenImpersonation.yml
-    verified: true
-    notes: "Event and field semantics (LogonType 9, LogonProcessName seclogo, Negotiate) agree across Sigma and Hayabusa. What a hit MEANS (attack vs benign runas /netonly) is context-dependent; the event is logged on the machine where the credentials are used, not on the target of the network connection."
-
-  - id: FH-LAT-014
-    title: Explicit-credential logons (4648) toward remote servers
-    tactic: lateral-movement
-    attack: [T1550.002, T1021, T1078]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4648]
-    prerequisites:
-      - "Audit Logon (Success) - 4648 is generated by the Logon subcategory"
-    logic:
-      selection:
-        EventID: 4648
-      filter_local_target:
-        TargetServerName: 'localhost'
-      filter_machine:
-        SubjectUserName|endswith: '$'
-      condition: selection and not filter_local_target and not filter_machine
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4648 --format llm
-      - forhunt search <paths> --channel Security --event-id 4648 --field ProcessName~powershell --format llm
-      - forhunt search <paths> --channel Security --event-id 4648 --field ProcessName~wmic --format llm
-    pivots:
-      - "SubjectUserName (who ran the tool) versus TargetUserName (credentials used) - a mismatch is the signal"
-      - "TargetServerName / TargetInfo = the remote host; look for 4624 type 3 on that host at the same second"
-      - "ProcessName: cmd, powershell, wmic, winrs, schtasks, net, reg, mstsc each map to a lateral technique"
-      - "Many different TargetServerName values from one source in a short window indicates sweeping"
-    false_positives:
-      - "Scheduled tasks, runas, services starting with stored credentials, RDP client use (mstsc), browsers"
-    severity: low
-    sources:
-      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/schtasks.htm
-      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/mstsc.htm
-      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/wmiexec-vbs.htm
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_logon_explicit_credentials.yml
-      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/LogonLogoff/Logon/Sec_4648_Info_ExplicitLogon.yml
-    verified: true
-    notes: "JPCERT shows 4648 on the source host for schtasks and mstsc and on the target for wmiexec.vbs; Sigma pins the field names ProcessName, TargetServerName, SubjectUserName, TargetUserName. Very noisy on servers: baseline first."
-
-  - id: FH-LAT-015
-    title: Overpass-the-hash - RC4 TGT request from a host whose account normally uses AES
-    tactic: lateral-movement
-    attack: [T1550.002, T1550.003]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4768, 4769]
-    prerequisites:
-      - "Audit Kerberos Authentication Service and Kerberos Service Ticket Operations (Success) on domain controllers"
-      - "A baseline showing the account and its workstation normally negotiate AES (0x11/0x12)"
-    logic:
-      selection:
-        EventID: 4768
-        TicketEncryptionType: '0x17'
-        Status: '0x0'
-      filter_machine:
-        TargetUserName|endswith: '$'
-      condition: selection and not filter_machine and TargetUserName has prior 4768 with TicketEncryptionType in (0x11, 0x12) from the same IpAddress
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4768 --field TicketEncryptionType=0x17 --format llm
-      - forhunt search <paths> --channel Security --event-id 4769 --field TicketEncryptionType=0x17 --format llm
-    pivots:
-      - "IpAddress of the 4768: the workstation that used the NTLM hash as an RC4 key"
-      - "Following 4769 (service tickets) and 4624 type 3 on target servers from the same account"
-      - "Client-side: 4624 type 9 seclogo (FH-LAT-013) on the host that performed the pass"
-    false_positives:
-      - "Legacy systems, accounts with only RC4 keys, services configured for RC4, cross-forest trusts using RC4"
-    severity: medium
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_overpass_the_hash.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_rc4_kerberos.yml
-      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/AccountLogon/KerberosAuthenticationService/Sec_4768_Info_KrbTGT-Req.yml
-      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/RemoteLogin-Mimikatz.htm
-    verified: false
-    notes: "Event and field names (TicketEncryptionType 0x17) are confirmed; the overpass-the-hash interpretation and the need for a baseline are analyst heuristics. Newer domain functional levels and the RC4 deprecation work reduce legitimate RC4 so it should get more reliable over time; the 'hash used as RC4 key' claim was not independently verified here."
-
-  - id: FH-LAT-016
-    title: Pass-the-ticket tooling - Kerberos traffic to KDC from a non-LSASS process
-    tactic: lateral-movement
-    attack: [T1550.003]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [5156, 4611]
-    prerequisites:
-      - "Audit Filtering Platform Connection (Success) for 5156 (high volume)"
-      - "Audit Security System Extension for 4611 (trusted logon process registered)"
-    logic:
-      selection:
-        EventID: 5156
-        DestPort: 88
-      filter_lsass:
-        Application|endswith: '\Windows\System32\lsass.exe'
-      condition: selection and not filter_lsass
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 5156 --field DestPort=88 --format llm
-      - forhunt search <paths> --channel Security --event-id 4611 --format llm
-    pivots:
-      - "Application field names the binary (Rubeus-like tools run as arbitrary executables)"
-      - "4611 LogonProcessName values that are not standard (Winlogon, User32, Kerberos, NtLmSsp, Advapi, seclogo) on a workstation"
-      - "Subsequent 4769 / 4624 type 3 using Kerberos from that host"
-    false_positives:
-      - "Browsers with integrated authentication and some Java servers contacting a KDC directly"
-    severity: low
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_outbound_kerberos_connection.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_register_new_logon_process_by_rubeus.yml
-    verified: false
-    notes: "Sigma only. Pass-the-ticket produces no unique native event; it is mostly inferred from Kerberos events that lack the expected preceding TGT (4768) or come from unexpected hosts. Forged-ticket artefacts belong to credential-access.yaml."
-
-  - id: FH-LAT-017
-    title: Administrative share access from remote hosts (5140 on ADMIN$, C$, IPC$)
-    tactic: lateral-movement
-    attack: [T1021.002, T1570]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [5140]
-    prerequisites:
-      - "Audit File Share (Success) on the target"
-    logic:
-      selection:
-        EventID: 5140
-        ShareName:
-          - '\\*\ADMIN$'
-          - '\\*\C$'
-      filter_machine:
-        SubjectUserName|endswith: '$'
-      condition: selection and not filter_machine
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 5140 --field 'ShareName~ADMIN$' --format llm
-      - forhunt search <paths> --channel Security --event-id 5140 --field 'ShareName~C$' --format llm
-    pivots:
-      - "IpAddress / IpPort: the source; correlate with 4624 type 3 sharing the SubjectLogonId"
-      - "5145 on the same share for what was touched (FH-LAT-018)"
-      - "One source touching ADMIN$ on many hosts in minutes (check across hosts with forhunt timeline) suggests automated spreading"
-    false_positives:
-      - "Backup, AV management, patching, SCCM and admin workstations"
-    severity: medium
-    sources:
-      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/PsExec.htm
-      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/net-use.htm
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_admin_share_access.yml
-      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/ObjectAccess/FileShare/Sec_5140_Info_NetShareAccess.yml
-    verified: true
-    notes: "ShareName is logged with a leading \\\\*\\ (for example \\\\*\\ADMIN$); Sigma matches on Admin$ case-insensitively. 5140 is logged once per session/logon-to-share, not per file."
-
-  - id: FH-LAT-018
-    title: File drops to admin shares (5145 write access to ADMIN$/C$ of executables and scripts)
-    tactic: lateral-movement
-    attack: [T1570, T1021.002]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [5145]
-    prerequisites:
-      - "Audit Detailed File Share (Success) on the target; this is high volume, scope it to servers and sensitive hosts"
-    logic:
-      selection:
-        EventID: 5145
-        ShareName|endswith:
-          - 'ADMIN$'
-          - 'C$'
-        AccessList|contains: 'WriteData'
-      selection_ext:
-        RelativeTargetName|endswith:
-          - '.exe'
-          - '.dll'
-          - '.bat'
-          - '.ps1'
-          - '.vbs'
-          - '.msi'
-      filter_machine:
-        SubjectUserName|endswith: '$'
-      condition: selection and selection_ext and not filter_machine
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 5145 --field 'ShareName~ADMIN$' --field AccessList~WriteData --format llm
-      - forhunt search <paths> --channel Security --event-id 5145 --field 'ShareName~C$' --field RelativeTargetName~.exe --format llm
-    pivots:
-      - "RelativeTargetName is the dropped file; hash it from the host (MFT, Sysmon 11) and see whether a service/task executes it within seconds"
-      - "Followed by 7045 (service) or 4698 (task) pointing at the same file"
-      - "IpAddress / SubjectUserName for the copying source"
-    false_positives:
-      - "Software deployment and patch tools writing to ADMIN$"
-    severity: high
-    sources:
-      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/PsExec.htm
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_smb_file_creation_admin_shares.yml
-      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/ObjectAccess/DetailedFileShare/Sec_5145_Info_NetShareFileAccess.yml
-    verified: true
-    notes: "JPCERT shows PsExec's PSEXESVC.exe copy as 5145 on ADMIN$ with RelativeTargetName PSEXESVC.exe; Sigma uses AccessMask 0x2 (WriteData) on C$. Share and file names in 5145 are per-access, so expect many events per file copy."
-
-  - id: FH-LAT-019
-    title: RDP session hijacking with tscon.exe
-    tactic: lateral-movement
-    attack: [T1563.002]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4688]
-    prerequisites:
-      - "Process creation auditing with command line, or Sysmon event 1 (needed to see tscon run as SYSTEM)"
-    logic:
-      selection:
-        NewProcessName|endswith: '\tscon.exe'
-      selection_system:
-        SubjectUserSid: 'S-1-5-18'
-      condition: selection and selection_system
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4688 --field NewProcessName~tscon.exe --format llm
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~tscon.exe --format llm
-    pivots:
-      - "CommandLine <session id> /dest:<rdp-tcp#N>: which session was hijacked"
-      - "LocalSessionManager 25 (reconnect) and Security 4778 without a matching authentication (no 1149 / 4624 type 10) in that window"
-      - "Service creation (7045 / sc.exe) running cmd /k tscon ... as the way to get SYSTEM"
-    false_positives:
-      - "Administrators legitimately switching sessions on RDS hosts"
-    severity: high
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_tscon_rdp_session_hijacking.yml
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_tscon_localsystem.yml
-      - https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json
-    verified: false
-    notes: "Sigma-only logic; the SYSTEM-context requirement reflects the documented technique (no password needed when run as SYSTEM). Sysmon 1 gives User and IntegrityLevel; 4688 gives SubjectUserSid/TokenElevationType."
-
-  - id: FH-LAT-020
-    title: Impacket smbexec service pattern (BTOBTO / batch file with __output redirection)
-    tactic: lateral-movement
-    attack: [T1021.002, T1569.002]
-    channel: System
-    provider: Service Control Manager
-    event_ids: [7045, 4697]
-    prerequisites:
-      - "System log (7045); Security System Extension auditing for 4697"
-    logic:
-      selection:
-        EventID: 7045
-        Provider: 'Service Control Manager'
-      name:
-        ServiceName|contains: 'BTOBTO'
-      image:
-        ImagePath|contains:
-          - '.bat & del '
-          - '__output 2^>^&1 >'
-      condition: selection and (name or image)
-    forhunt:
-      - forhunt search <paths> --channel System --event-id 7045 --field ImagePath~__output --format llm
-      - forhunt search <paths> --channel System --event-id 7045 --field ServiceName~BTOBTO --format llm
-    pivots:
-      - "Each executed command creates and deletes a service with an ImagePath that echoes the command into a .bat and runs it; expect many 7045 events in a row"
-      - "Parent services.exe running cmd.exe /Q /c echo ... (FH-LAT-008)"
-      - "4624 type 3 and 5145 on C$ or ADMIN$ for the __output file"
-    false_positives:
-      - "Essentially none for the ImagePath pattern; the service name is attacker-configurable"
-    severity: high
-    sources:
-      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/service_control_manager/win_system_hack_smbexec.yml
-      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/service_installation/smbexec.yml
-    verified: true
-    notes: "Two separate rule sets (Sigma and Chainsaw) use the same ImagePath fragments, but both derive from the Impacket source, so independence is limited to the log-field semantics (EventID 7045, ServiceName, ImagePath), which JPCERT's PsExec sheet also confirms for 7045. Newer Impacket lets the operator rename the service."
-
-  - id: FH-LAT-021
-    title: WMI-Activity provider activity on target (5857/5860/5861) alongside remote logon
-    tactic: lateral-movement
-    attack: [T1047]
-    channel: Microsoft-Windows-WMI-Activity/Operational
-    provider: Microsoft-Windows-WMI-Activity
-    event_ids: [5857, 5860, 5861]
-    prerequisites:
-      - "Microsoft-Windows-WMI-Activity/Operational log present (enabled by default on modern Windows)"
-    logic:
-      selection:
-        EventID: 5857
-        HostProcess: 'wmiprvse.exe'
-      condition: selection and ProviderName in (Win32_Process provider, CommandLineEventConsumer, ActiveScriptEventConsumer) within 60s after a 4624 LogonType 3
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-WMI-Activity/Operational --event-id 5857,5860,5861 --format llm
-    pivots:
-      - "ProviderName and ProviderPath in 5857 show which WMI provider DLL was loaded (for example cimwin32.dll for Win32_Process.Create, wbemcons.dll for event consumers)"
-      - "5860/5861 are temporary/permanent event consumer registrations - persistence rather than one-shot execution"
-      - "WmiPrvSE children (FH-LAT-007)"
-    false_positives:
-      - "5857 fires for any WMI provider load: management software and Windows itself cause constant noise"
-    severity: low
-    sources:
-      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/wmic.htm
-      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/wmiexec-vbs.htm
-      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/WMI-Activity_Op/WMI_5857_Info_ProviderStarted.yml
-      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/WMI-Activity_Op/WMI_5861_Med_FilterToConsumerBinding_CmdExec.yml
-    verified: true
-    notes: "JPCERT lists WMI-Activity 5857 on the destination host for WMI-based tools and Hayabusa's sample shows the ProviderName / HostProcess / ProviderPath UserData fields. Which provider maps to which technique (cimwin32.dll for Win32_Process) is common knowledge but not cited in the sources read."
-
-  - id: FH-LAT-022
-    title: Privileged network logon on a non-server host (4624 type 3 followed by 4672 with the same logon id)
-    tactic: lateral-movement
-    attack: [T1021.002, T1078]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4624, 4672]
-    prerequisites:
-      - "Audit Logon and Audit Special Logon (Success)"
-      - "Baseline of which admin accounts legitimately log on to which hosts"
-    logic:
-      network:
-        EventID: 4624
-        LogonType: 3
-      filter_local:
-        IpAddress:
-          - '-'
-          - '127.0.0.1'
-          - '::1'
-      filter_machine:
-        TargetUserName|endswith: '$'
-      privileged:
-        EventID: 4672
-      condition: network and privileged with privileged.SubjectLogonId = network.TargetLogonId, excluding filter_local and filter_machine
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=3 --format llm
-      - forhunt search <paths> --channel Security --event-id 4672 --format llm
-    pivots:
-      - "IpAddress and WorkstationName of the 4624: the pivot host"
-      - "Count distinct Computer values per (TargetUserName, IpAddress) across the log set - one account hitting many hosts in minutes is spreading"
-      - "Next artefacts on that host: 7045/4697, 4698, 5145 writes, WmiPrvSE or wsmprovhost children"
-    false_positives:
-      - "Domain admins and service accounts used by management servers"
-    severity: informational
-    sources:
-      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/PsExec.htm
-      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/wmic.htm
-      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/lateral_movement/network_logon.yml
-      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/LogonLogoff/SpecialLogon/Sec_4672_Info_AdminLogon.yml
-    verified: true
-    notes: "JPCERT shows 4624 type 3 and 4672 on the destination for PsExec, WMI and others; Chainsaw uses type 3 with non-local IpAddress. The join on logon id is standard (Microsoft documents SubjectLogonId in 4672 as the same session) but I could not open that page. This is a triage filter, not a detection."
+- id: FH-LAT-001
+  title: PsExec service installed on target (PSEXESVC)
+  tactic: lateral-movement
+  attack:
+  - T1569.002
+  - T1021.002
+  channel: System
+  provider: Service Control Manager
+  event_ids:
+  - 7045
+  prerequisites:
+  - System log retained (7045 is logged by default)
+  logic:
+    selection:
+      EventID: 7045
+      Provider: Service Control Manager
+    selection_name:
+      ServiceName: PSEXESVC
+    selection_image:
+      ImagePath|endswith: \PSEXESVC.exe
+    condition: selection and (selection_name or selection_image)
+  forhunt:
+  - forhunt search <paths> --channel System --event-id 7045 --field ServiceName=PSEXESVC --format llm
+  - forhunt search <paths> --channel System --event-id 7045 --field ImagePath~PSEXESVC --format llm
+  pivots:
+  - 'Security 4624 LogonType 3 on the same host a few seconds earlier: IpAddress is the PsExec source'
+  - Security 5145 ShareName ADMIN$ with RelativeTargetName PSEXESVC.exe (the binary copy) and IPC$ pipes
+    ending -stdin/-stdout/-stderr
+  - Sysmon 1 / Security 4688 with ParentImage C:\Windows\PSEXESVC.exe to see what was run
+  - 'Source host: Sysmon 13 HKU\<SID>\Software\Sysinternals\PsExec\EulaAccepted, Prefetch PSEXEC.EXE'
+  false_positives:
+  - Authorised administrators or deployment tooling that still use PsExec
+  severity: high
+  sources:
+  - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/PsExec.htm
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/service_control_manager/win_system_service_install_sysinternals_psexec.yml
+  - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/service_installation/sysinternals_psexec.yml
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/System/Sys_7045_Med_LateralMovement-PSEXEC.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0002-Execution/T1569.002-Service execution/ID7000,7009,7045-Payload
+    deployed via service - Tchopper.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: System/7045: MITRE CTI data-component log source,
+    rule project, real sample log. JPCERT sheets mentioning the same event ids/tools: PsExec (informational).
+    || Original notes: The service name can be changed with PsExec -r, and clones use other names; see
+    FH-LAT-002. 4697 (Security) is the same action when Audit Security System Extension is on.'
+- id: FH-LAT-002
+  title: PsExec clones and Impacket-style remote service install (random names, known clone names)
+  tactic: lateral-movement
+  attack:
+  - T1569.002
+  - T1543.003
+  channel: System
+  provider: Service Control Manager
+  event_ids:
+  - 7045
+  - 4697
+  prerequisites:
+  - System log retained (7045)
+  - Audit Security System Extension (Success) for the Security 4697 variant
+  logic:
+    selection_7045:
+      EventID: 7045
+      Provider: Service Control Manager
+    clone_names:
+      ServiceName|startswith: PAExec-
+    clone_names2:
+      ServiceName:
+      - RemComSvc
+      - csexecsvc
+    random_impacket_like:
+      ImagePath|re: ^%systemroot%\\[a-zA-Z]{8}\.exe$
+      ServiceName|re: ^([a-zA-Z]{4}|[a-zA-Z]{8}|[a-zA-Z]{16})$
+    condition: selection_7045 and (clone_names or clone_names2 or random_impacket_like)
+  forhunt:
+  - forhunt search <paths> --channel System --event-id 7045 --regex ImagePath='^%systemroot%\\[a-zA-Z]{8}\.exe$'
+    --format llm
+  - forhunt search <paths> --channel System --event-id 7045 --field ServiceName~PAExec --format llm
+  - forhunt search <paths> --channel Security --event-id 4697 --regex ServiceFileName='^%systemroot%\\[a-zA-Z]{8}\.exe$'
+    --format llm
+  pivots:
+  - 'Same time window: 5145 on IPC$ with RelativeTargetName RemCom_stdin/RemCom_stdout/RemCom_stderr (Impacket
+    psexec.py)'
+  - 4624 LogonType 3 with LogonProcessName NtLmSsp from the same IpAddress
+  - Dropped executable in %SystemRoot% (Sysmon 11 TargetFilename, MFT)
+  false_positives:
+  - Software installers that create 8-letter random service binaries are uncommon but possible; check
+    the file hash and signer
+  severity: high
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_metasploit_or_impacket_smb_psexec_service_install.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/service_control_manager/win_system_service_install_paexec.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/service_control_manager/win_system_service_install_remcom.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/service_control_manager/win_system_service_install_csexecsvc.yml
+  - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/service_installation/csexec.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0002-Execution/T1569.002-Service execution/ID7000,7009,7045-Payload
+    deployed via service - Tchopper.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - 'sample: EVTX-to-MITRE-Attack/TA0008-Lateral Movement/T1021.002-SMB Windows Admin Shares/ID4688,4697,5140-5145
+    PSexec remote execution + admin share.evtx'
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: System/7045: MITRE CTI data-component log
+    source, rule project, real sample log; Security/4697: MITRE CTI data-component log source, Microsoft
+    docs, rule project, real sample log.  Open: literal value not found in any opened source (^([a-zA-Z]{4}|[a-zA-Z]{8}|[a-zA-Z]{16})$).
+    JPCERT sheets mentioning the same event ids/tools: PsExec (informational). || Original notes: Random-name
+    pattern is from a single Sigma rule written from one lab; Impacket versions differ and the name length/format
+    is tunable by the operator. Treat a hit as a lead, not proof. In System 7045 the field is ImagePath;
+    in Security 4697 it is ServiceFileName.'
+- id: FH-LAT-003
+  title: Named-pipe traffic of PsExec and clones over IPC$ (stdin/stdout/stderr pipes)
+  tactic: lateral-movement
+  attack:
+  - T1569.002
+  - T1021.002
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 5145
+  prerequisites:
+  - 'Advanced Audit Policy: Object Access > Audit Detailed File Share (Success), on the target'
+  logic:
+    selection:
+      EventID: 5145
+      ShareName|endswith: IPC$
+    pipe_names:
+      RelativeTargetName|endswith:
+      - -stdin
+      - -stdout
+      - -stderr
+    impacket_pipes:
+      RelativeTargetName|contains:
+      - RemCom_stdin
+      - RemCom_stdout
+      - RemCom_stderr
+    condition: selection and (pipe_names or impacket_pipes)
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName~-stdin --format
+    llm
+  - forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName~RemCom_std --format
+    llm
+  pivots:
+  - IpAddress of the 5145 = the host the commands came from; look at that host as the next hop in the
+    chain
+  - For genuine PsExec the pipe is named PSEXESVC-<SourceHost>-<SourcePID>-stdin etc., which leaks the
+    source hostname and PID
+  - Matching 7045 on the same target (FH-LAT-001 / FH-LAT-002)
+  false_positives:
+  - Legitimate PsExec by administrators; RemCom-based management tools
+  severity: high
+  sources:
+  - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/PsExec.htm
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_psexec.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_impacket_psexec.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0002-Execution/T1047-Windows Management Instrumentation/ID4688-5145-WMIexec
+    execution via SMB.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/5145: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log. JPCERT sheets mentioning the same event ids/tools:
+    PsExec (informational). || Original notes: JPCERT lab output shows 5145 with the PSEXESVC-<host>-<pid>-stdin
+    style relative names; Sigma uses the same field names (ShareName, RelativeTargetName). ShareName is
+    rendered as \\*\IPC$ in the event.'
+- id: FH-LAT-004
+  title: Remote service control over the svcctl pipe (sc.exe \\host, smbexec, PsExec)
+  tactic: lateral-movement
+  attack:
+  - T1021.002
+  - T1569.002
+  - T1543.003
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 5145
+  prerequisites:
+  - Audit Detailed File Share (Success) on the target
+  logic:
+    selection:
+      EventID: 5145
+      ShareName|endswith: IPC$
+      RelativeTargetName: svcctl
+      AccessList|contains: '%%4417'
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName=svcctl --format
+    llm
+  pivots:
+  - 'System 7045 / Security 4697 within seconds on the same host: which service was created and which
+    binary it points at'
+  - IpAddress and SubjectUserName of the 5145 give the origin and account
+  - 'Administrative hosts (patch, monitoring) will dominate: build an allow-list of source IPs first'
+  false_positives:
+  - Management servers, vulnerability scanners and SCCM that talk svcctl remotely
+  severity: medium
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_svcctl_remote_service.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_lm_namedpipe.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0002-Execution/T1047-Windows Management Instrumentation/ID4688-5145-WMIexec
+    execution via SMB.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/5145: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log.  Note: flipped to true: 5145 with RelativeTargetName
+    svcctl on \\*\IPC$ and write access matches the Sigma rule; real logs show svcctl 5145 events with
+    AccessList tokens %%4417 (the original value WriteData never appears in raw EVTX and was corrected)
+    | corrections: AccessList in 5145 holds message tokens (%%4417 = WriteData or AddFile), not the word
+    WriteData; value fixed (sample: 60 events with %%4417, 0 with WriteData). JPCERT sheets mentioning
+    the same event ids/tools: PsExec (informational). || Original notes: Only Sigma documents this pattern
+    (originating from a Menasec blog I could not open). Semantics are plausible but unconfirmed by a second
+    source.'
+- id: FH-LAT-005
+  title: Remote scheduled task creation over the atsvc pipe (atexec, schtasks /s)
+  tactic: lateral-movement
+  attack:
+  - T1053.005
+  - T1021.002
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 5145
+  prerequisites:
+  - Audit Detailed File Share (Success) on the target
+  logic:
+    selection:
+      EventID: 5145
+      ShareName|endswith: IPC$
+      RelativeTargetName: atsvc
+      AccessList|contains: '%%4417'
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName=atsvc --format
+    llm
+  pivots:
+  - Security 4698 (TaskName, TaskContent) within the same minute (FH-LAT-006)
+  - Microsoft-Windows-TaskScheduler/Operational 106 then 200/201 for the same task
+  - Impacket atexec leaves a cmd.exe /C ... > %windir%\Temp\<random>.tmp 2>&1 child of the Task Scheduler
+    service
+  false_positives:
+  - Remote schtasks used by legitimate admins and some management suites
+  severity: medium
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_atsvc_task.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0002-Execution/T1047-Windows Management Instrumentation/ID4688-5145-WMIexec
+    execution via SMB.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_lm_namedpipe.yml
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/5145: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log.  Note: flipped to true: 5145 with RelativeTargetName
+    atsvc on \\*\IPC$ and write access matches the Sigma rule; real logs contain an atsvc 5145 event and
+    AccessList is tokenised (%%4417), so WriteData was corrected | corrections: AccessList in 5145 holds
+    message tokens (%%4417 = WriteData or AddFile), not the word WriteData; value fixed (sample: 60 events
+    with %%4417, 0 with WriteData). || Original notes: Single-source (Sigma). JPCERT''s schtasks sheet
+    shows 445/tcp usage but its destination-host events were 4624/4648 and TaskScheduler 106/200/201,
+    not a named-pipe 5145 record.'
+- id: FH-LAT-006
+  title: Remote scheduled task - 4698 plus network logon from the same source
+  tactic: lateral-movement
+  attack:
+  - T1053.005
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4698
+  - 4624
+  prerequisites:
+  - Audit Other Object Access Events (Success) for 4698
+  - Audit Logon (Success) for 4624
+  - Microsoft-Windows-TaskScheduler/Operational enabled (disabled by default on many builds) for 106/200/201
+  logic:
+    task_created:
+      EventID: 4698
+    network_logon:
+      EventID: 4624
+      LogonType: 3
+    condition: network_logon followed by task_created on same Computer within 60s where task_created.SubjectLogonId
+      = network_logon.TargetLogonId
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4698 --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-TaskScheduler/Operational --event-id 106,200,201
+    --format llm
+  pivots:
+  - 'TaskContent: Command / Arguments / Principals UserId (S-1-5-18 means it will run as SYSTEM); tasks
+    launching cmd, powershell or from Temp/ProgramData are high value'
+  - 4624 IpAddress for the creating logon (SubjectLogonId of the 4698 equals TargetLogonId of the 4624)
+    identifies the source host
+  - 'Short-lived tasks: 4698 then 4699 (deleted) within seconds is typical of atexec/schtasks one-shot
+    execution'
+  false_positives:
+  - Software deployment, backup agents and monitoring tools that register tasks remotely
+  severity: medium
+  sources:
+  - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/schtasks.htm
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_scheduled_task_creation.yml
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/ObjectAccess/OtherObjectAccessEvents/Sec_4698_Info_TaskCreated.yml
+  - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/persistence/T1053.005%20-%20Scheduled%20Task%20was%20Created.yml
+  - 'sample: EVTX-ATTACK-SAMPLES/Execution/temp_scheduled_task_4698_4699.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1069-Permission Groups Discovery/ID4799-4624-Local
+    admin group enumerated by SharpHound.evtx'
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_alert_ruler.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4698: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/4624: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: the 4698 + 4624 join (same SubjectLogonId/TargetLogonId
+    within 60 s) is an analyst-designed correlation; JPCERT did not capture 4698 and no rule defines the
+    join. Only the individual event/field facts are confirmed. || Original notes: JPCERT confirms TaskScheduler
+    106/200/201 and a type 3 NTLM 4624 (KeyLength 128) on the target for remote schtasks; 4698 field names
+    TaskName/TaskContent confirmed by Sigma and a Hayabusa sample. JPCERT''s lab did not include 4698
+    (audit not enabled), so the 4698 + 4624 join itself is an analyst heuristic.'
+- id: FH-LAT-007
+  title: WMI remote execution - WmiPrvSE.exe spawning command interpreters
+  tactic: lateral-movement
+  attack:
+  - T1047
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4688
+  prerequisites:
+  - Audit Process Creation (Success) and Include command line in process creation events (4688), or Sysmon
+    installed with a config that logs event 1
+  logic:
+    selection:
+      EventID: 4688
+      ParentProcessName|endswith: \WmiPrvSE.exe
+    filter_image:
+      NewProcessName|endswith:
+      - \WmiPrvSE.exe
+      - \WerFault.exe
+    filter_system:
+      SubjectUserSid: S-1-5-18
+    condition: selection and not filter_image and not filter_system
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4688 --field ParentProcessName~WmiPrvSE --format
+    llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~WmiPrvSE
+    --format llm
+  pivots:
+  - 4624 LogonType 3 (Kerberos or NTLM) from the same IpAddress seconds earlier; JPCERT also saw a LogonType
+    5 (Advapi, service) logon for the WMI host process itself
+  - WMI-Activity/Operational 5857 (provider started, HostProcess wmiprvse.exe) and 5860/5861 for persistent
+    subscriptions
+  - Command line containing cmd.exe /Q /c ... \\127.0.0.1\ADMIN$\__<epoch> means Impacket wmiexec (FH-LAT-008)
+  false_positives:
+  - Monitoring, inventory and management agents that run commands through WMI
+  severity: high
+  sources:
+  - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/wmic.htm
+  - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/wmiexec-vbs.htm
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_wmiprvse_spawning_process.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_susp_wmi_login.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1027-Obfuscated Files or Information/ID4688-Obfuscated
+    payload transfer via service name - Tchopper.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_hktl_impacket_lateral_movement.yml
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/4688: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log. JPCERT sheets mentioning the same event ids/tools:
+    net-user (informational). || Original notes: In 4688 the parent is only present as ParentProcessName
+    on Windows 10 / Server 2016+ with the corresponding audit; on older systems use Sysmon 1 (ParentImage).
+    JPCERT sheets for wmic and wmiexec.vbs confirm WmiPrvSE.exe as the parent on the destination host.'
+- id: FH-LAT-008
+  title: Impacket exec family - cmd /Q /c with output redirected to \\127.0.0.1\ADMIN$ or C$
+  tactic: lateral-movement
+  attack:
+  - T1047
+  - T1021.003
+  - T1021.002
+  - T1569.002
+  - T1053.005
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 1
+  - 4688
+  - 11
+  prerequisites:
+  - Sysmon installed with a config that logs event 1 (and event 11 for the output file), or 4688 with
+    command line auditing
+  logic:
+    selection:
+      CommandLine|contains|all:
+      - cmd.exe
+      - /Q
+      - /c
+      - \\127.0.0.1\
+      - '&1'
+    selection_parent:
+      ParentImage|endswith:
+      - \WmiPrvSE.exe
+      - \mmc.exe
+      - \explorer.exe
+      - \services.exe
+    selection_file:
+      TargetFilename|re: (\\Windows\\|^[A-Z]:\\)__1\d{9}\.\d{1,7}$
+    condition: (selection and selection_parent) or selection_file
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~127.0.0.1
+    --field 'CommandLine~ADMIN$' --format llm
+  - forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~127.0.0.1 --field 'CommandLine~ADMIN$'
+    --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 11 --regex TargetFilename='__1\d{9}\.\d+$'
+    --format llm
+  pivots:
+  - 'Parent identifies the variant: WmiPrvSE.exe = wmiexec, mmc.exe = dcomexec MMC20, explorer.exe = dcomexec
+    ShellWindows/ShellBrowserWindow, services.exe = smbexec'
+  - 'atexec variant: parent svchost.exe -k netsvcs (Win10) running cmd.exe /C ... > C:\Windows\Temp\<random>.tmp
+    2>&1'
+  - The numeric part of the __<epoch>.<fraction> file name is the operator session start time
+  - 'Network side: 4624 LogonType 3 and 5140/5145 for ADMIN$ from the source IpAddress'
+  false_positives:
+  - Rare; only unusual admin scripts that redirect to a loopback admin share
+  severity: critical
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_hktl_impacket_lateral_movement.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_wmiexec_default_filename.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_writing_local_admin_share.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_hktl_wmiexec_default_powershell.yml
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/PanacheSysmon_vs_AtomicRedTeam01.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1027-Obfuscated Files or Information/ID4688-Obfuscated
+    payload transfer via service name - Tchopper.evtx'
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/1: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/4688: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; MW-Sysmon/Operational/11: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states. || Original
+    notes: Behaviour matches the Impacket example scripts as documented in Sigma comments; only Sigma
+    documents it here and newer Impacket releases or forks (e.g. NetExec, custom builds) can change the
+    redirect target or file name. Absence of a hit is not evidence of absence.'
+- id: FH-LAT-009
+  title: PowerShell remoting / WinRM - wsmprovhost.exe host process and its children
+  tactic: lateral-movement
+  attack:
+  - T1021.006
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4688
+  prerequisites:
+  - Audit Process Creation with command line, or Sysmon event 1
+  logic:
+    selection_host:
+      NewProcessName|endswith: \wsmprovhost.exe
+    selection_children:
+      ParentProcessName|endswith: \wsmprovhost.exe
+    condition: selection_host or selection_children
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4688 --field NewProcessName~wsmprovhost --format
+    llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~wsmprovhost
+    --format llm
+  pivots:
+  - Microsoft-Windows-WinRM/Operational 169 (user authenticated) and 81/82/134 (CreateShell) in the same
+    minute (FH-RMT-012)
+  - 4624 LogonType 3 from the connecting IpAddress; JPCERT saw Kerberos with KeyLength 0 for WinRM logons
+    in a domain
+  - PowerShell 4104 / 4103 on the target for what was executed
+  - Clients using Evil-WinRM present as ruby.exe on the source host
+  false_positives:
+  - Normal PowerShell remoting by administrators, Exchange management, and monitoring
+  severity: medium
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_winrm_remote_powershell_session_process.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_winrm_susp_child_process.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_hktl_evil_winrm.yml
+  - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/WinRM.htm
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1027-Obfuscated Files or Information/ID4688-Obfuscated
+    payload transfer via service name - Tchopper.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/4688: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log.  Note: flipped to true: wsmprovhost.exe as
+    image or parent matches the Sigma remote-PowerShell process rule; 4688 uses NewProcessName/ParentProcessName.
+    JPCERT sheets mentioning the same event ids/tools: WinRM (informational). || Original notes: wsmprovhost.exe
+    as the host process is documented by Sigma only; JPCERT''s WinRM/WinRS sheets (older Windows) show
+    WmiPrvSE.exe/WinRM operational events rather than wsmprovhost, so that part could not be independently
+    confirmed.'
+- id: FH-LAT-010
+  title: Inbound WinRM connections via Windows Filtering Platform (5156 to 5985/5986)
+  tactic: lateral-movement
+  attack:
+  - T1021.006
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 5156
+  prerequisites:
+  - Audit Filtering Platform Connection (Success) - very high volume, rarely enabled
+  logic:
+    selection:
+      EventID: 5156
+      DestPort:
+      - 5985
+      - 5986
+      LayerRTID: 44
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 5156 --field DestPort=5985 --format llm
+  - forhunt search <paths> --channel Security --event-id 5156 --field DestPort=5986 --format llm
+  pivots:
+  - SourceAddress gives the connecting host; compare with 4624 type 3 and WinRM/Operational
+  false_positives:
+  - Any legitimate WinRM client; also the host connecting to itself via loopback
+  severity: low
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_remote_powershell_session.yml
+  - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/WinRM.htm
+  - 'sample: EVTX-ATTACK-SAMPLES/Command and Control/DE_RDP_Tunnel_5156.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/5156: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log.  Note: flipped to true: 5156 DestPort 5985/5986
+    with LayerRTID 44 matches the Sigma rule; LayerRTID 44 and numeric DestPort seen in real 5156 events.
+    JPCERT sheets mentioning the same event ids/tools: WinRM (informational). || Original notes: JPCERT
+    lists Security 5156 among destination-host events for WinRM but I did not confirm the LayerRTID value;
+    44 is from Sigma only. Skip when WFP auditing is off (check forhunt stats for any 5156).'
+- id: FH-LAT-011
+  title: DCOM lateral movement - MMC20.Application, ShellWindows/ShellBrowserWindow, Excel/Office DCOM
+  tactic: lateral-movement
+  attack:
+  - T1021.003
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4688
+  prerequisites:
+  - Process creation auditing with command line, or Sysmon event 1
+  logic:
+    selection_mmc:
+      ParentProcessName|endswith: \svchost.exe
+      NewProcessName|endswith: \mmc.exe
+      CommandLine|contains: -Embedding
+    selection_mmc_child:
+      ParentProcessName|endswith: \mmc.exe
+      NewProcessName|endswith:
+      - \cmd.exe
+      - \powershell.exe
+    selection_excel:
+      ParentProcessName|endswith: \excel.exe
+      NewProcessName|endswith:
+      - \foxprow.exe
+      - \schdplus.exe
+      - \winproj.exe
+    condition: selection_mmc or selection_mmc_child or selection_excel
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4688 --field NewProcessName~mmc.exe --field CommandLine~Embedding
+    --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~mmc.exe
+    --format llm
+  pivots:
+  - 4624 LogonType 3 from the controlling host immediately before; DCOM uses RPC 135 plus a high port
+    (Sysmon 3 / 5156)
+  - 'ShellWindows / ShellBrowserWindow: a command interpreter whose parent is explorer.exe started by
+    DCOM, often cmd.exe /Q /c ... ADMIN$ (FH-LAT-008)'
+  - dllhost.exe spawning unusual children is another DCOM host to inspect
+  false_positives:
+  - mmc.exe -Embedding is also used by legitimate COM activation of management snap-ins
+  severity: medium
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_mmc_mmc20_lateral_movement.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_office_excel_dcom_lateral_movement.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_hktl_impacket_lateral_movement.yml
+  - https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1027-Obfuscated Files or Information/ID4688-Obfuscated
+    payload transfer via service name - Tchopper.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4688: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states. || Original
+    notes: DCOM leaves little native logging; these process-tree patterns are from Sigma only. JPCERT''s
+    sheets do not cover DCOM. Treat as hypotheses to confirm with network and process evidence.'
+- id: FH-LAT-012
+  title: Pass-the-hash heuristic - NTLM network logon with null subject SID and KeyLength 0
+  tactic: lateral-movement
+  attack:
+  - T1550.002
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4624
+  prerequisites:
+  - Audit Logon (Success)
+  logic:
+    selection:
+      EventID: 4624
+      LogonType: 3
+      LogonProcessName: NtLmSsp
+      AuthenticationPackageName: NTLM
+      SubjectUserSid: S-1-0-0
+      KeyLength: 0
+    filter_anonymous:
+      TargetUserName: ANONYMOUS LOGON
+    condition: selection and not filter_anonymous
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=3 --field LogonProcessName=NtLmSsp
+    --field KeyLength=0 --format llm
+  pivots:
+  - 'TargetUserName and IpAddress: is a local or domain admin authenticating from a workstation that never
+    did before?'
+  - 4672 (special privileges) with the same TargetLogonId on the target
+  - 'Credential theft on the source: Sysmon 10 to lsass.exe, 4688 for mimikatz-like tools (see credential-access
+    checklist)'
+  - Compare with Kerberos logons for the same account/host pair; PtH forces NTLM where Kerberos would
+    be normal
+  false_positives:
+  - Old clients and applications using NTLMv1 or no session security, file-share browsing by IP address
+  - Many legitimate NTLM network logons also report KeyLength 0
+  severity: low
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_pass_the_hash_2.yml
+  - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/RemoteLogin-Mimikatz.htm
+  - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/RemoteLogin-WCE.htm
+  - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/PsExec.htm
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1069-Permission Groups Discovery/ID4799-4624-Local
+    admin group enumerated by SharpHound.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4624: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: The
+    KeyLength 0 heuristic (Sigma, citing Microsoft/NSA-era guidance I could not open) depends on NTLM
+    version and client; use it only to rank NTLM logons, never as proof. JPCERT sheets mentioning the
+    same event ids/tools: net-user (informational). || Original notes: CONTRADICTED IN PART: JPCERT lab
+    runs of Mimikatz pass-the-hash and WCE remote login recorded 4624 type 3 NtLmSsp with KeyLength 128,
+    not 0, and even plain PsExec with a password shows NTLM/128. The KeyLength 0 heuristic (Sigma, citing
+    Microsoft/NSA-era guidance I could not open) depends on NTLM version and client; use it only to rank
+    NTLM logons, never as proof. Better signal: NTLM used where Kerberos is expected plus the credential-theft
+    evidence on the source.'
+- id: FH-LAT-013
+  title: Logon type 9 NewCredentials with seclogo (runas /netonly, Mimikatz sekurlsa::pth, overpass-the-hash)
+  tactic: lateral-movement
+  attack:
+  - T1550.002
+  - T1550.003
+  - T1078
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4624
+  prerequisites:
+  - Audit Logon (Success)
+  logic:
+    selection:
+      EventID: 4624
+      LogonType: 9
+      LogonProcessName: seclogo
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=9 --format llm
+  - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=9 --field LogonProcessName=seclogo
+    --format llm
+  pivots:
+  - 'ProcessName of the logon (the process that called LogonUser) and the TargetUserName: runas /netonly
+    shows the alternate identity here, while SubjectUserName stays the real user'
+  - ImpersonationLevel Impersonation with SubjectUserName equal to TargetUserName hints at token duplication
+    tooling (Cobalt Strike make_token style)
+  - 'Outbound activity right after: 4648 on the same host, then 4624 type 3 on a remote host using that
+    identity'
+  - Sysmon 10 against lsass.exe shortly before, for sekurlsa::pth style activity
+  false_positives:
+  - Admins using runas /netonly, some automation, backup and monitoring tools
+  severity: medium
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_overpass_the_hash.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_pass_the_hash_2.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_susp_logon_newcredentials.yml
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/LogonLogoff/Logon/Sec_4624_Info_Logon-Type-9-NewInteractive.yml
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/LogonLogoff/Logon/Sec_4624_Med_Logon-Type9-NewInteractive_PossibleTokenImpersonation.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1069-Permission Groups Discovery/ID4799-4624-Local
+    admin group enumerated by SharpHound.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/4624: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log. JPCERT sheets mentioning the same event ids/tools:
+    Mimikatz_GoldenTicket, Mimikatz_SilverTicket, PowerSploit_Invoke-Mimikatz (informational). || Original
+    notes: Event and field semantics (LogonType 9, LogonProcessName seclogo, Negotiate) agree across Sigma
+    and Hayabusa. What a hit MEANS (attack vs benign runas /netonly) is context-dependent; the event is
+    logged on the machine where the credentials are used, not on the target of the network connection.'
+- id: FH-LAT-014
+  title: Explicit-credential logons (4648) toward remote servers
+  tactic: lateral-movement
+  attack:
+  - T1550.002
+  - T1021
+  - T1078
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4648
+  prerequisites:
+  - Audit Logon (Success) - 4648 is generated by the Logon subcategory
+  logic:
+    selection:
+      EventID: 4648
+    filter_local_target:
+      TargetServerName: localhost
+    filter_machine:
+      SubjectUserName|endswith: $
+    condition: selection and not filter_local_target and not filter_machine
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4648 --format llm
+  - forhunt search <paths> --channel Security --event-id 4648 --field ProcessName~powershell --format
+    llm
+  - forhunt search <paths> --channel Security --event-id 4648 --field ProcessName~wmic --format llm
+  pivots:
+  - SubjectUserName (who ran the tool) versus TargetUserName (credentials used) - a mismatch is the signal
+  - TargetServerName / TargetInfo = the remote host; look for 4624 type 3 on that host at the same second
+  - 'ProcessName: cmd, powershell, wmic, winrs, schtasks, net, reg, mstsc each map to a lateral technique'
+  - Many different TargetServerName values from one source in a short window indicates sweeping
+  false_positives:
+  - Scheduled tasks, runas, services starting with stored credentials, RDP client use (mstsc), browsers
+  severity: low
+  sources:
+  - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/schtasks.htm
+  - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/mstsc.htm
+  - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/wmiexec-vbs.htm
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_logon_explicit_credentials.yml
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/LogonLogoff/Logon/Sec_4648_Info_ExplicitLogon.yml
+  - 'sample: EVTX-ATTACK-SAMPLES/Command and Control/DE_RDP_Tunnel_5156.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_explicit_credential_local_logon.yml
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/4648: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log. || Original notes: JPCERT shows 4648 on the
+    source host for schtasks and mstsc and on the target for wmiexec.vbs; Sigma pins the field names ProcessName,
+    TargetServerName, SubjectUserName, TargetUserName. Very noisy on servers: baseline first.'
+- id: FH-LAT-015
+  title: Overpass-the-hash - RC4 TGT request from a host whose account normally uses AES
+  tactic: lateral-movement
+  attack:
+  - T1550.002
+  - T1550.003
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4768
+  - 4769
+  prerequisites:
+  - Audit Kerberos Authentication Service and Kerberos Service Ticket Operations (Success) on domain controllers
+  - A baseline showing the account and its workstation normally negotiate AES (0x11/0x12)
+  logic:
+    selection:
+      EventID: 4768
+      TicketEncryptionType: '0x17'
+      Status: '0x0'
+    filter_machine:
+      TargetUserName|endswith: $
+    condition: selection and not filter_machine and TargetUserName has prior 4768 with TicketEncryptionType
+      in (0x11, 0x12) from the same IpAddress
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4768 --field TicketEncryptionType=0x17 --format
+    llm
+  - forhunt search <paths> --channel Security --event-id 4769 --field TicketEncryptionType=0x17 --format
+    llm
+  pivots:
+  - 'IpAddress of the 4768: the workstation that used the NTLM hash as an RC4 key'
+  - Following 4769 (service tickets) and 4624 type 3 on target servers from the same account
+  - 'Client-side: 4624 type 9 seclogo (FH-LAT-013) on the host that performed the pass'
+  false_positives:
+  - Legacy systems, accounts with only RC4 keys, services configured for RC4, cross-forest trusts using
+    RC4
+  severity: medium
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_overpass_the_hash.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_rc4_kerberos.yml
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/AccountLogon/KerberosAuthenticationService/Sec_4768_Info_KrbTGT-Req.yml
+  - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/RemoteLogin-Mimikatz.htm
+  - 'sample: EVTX-to-MITRE-Attack/TA0006-Credential Access/T1110.xxx-Brut force/ID4768-4771-Kerberos brutforce
+    with non existing users.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1087-Account discovery/ID4769-Kerberos TGS host enumeration
+    (Bloodhound).evtx'
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_kerberos_asrep_roasting.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4768: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/4769: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: Event
+    and field names (TicketEncryptionType 0x17) are confirmed; the overpass-the-hash interpretation and
+    the need for a baseline are analyst heuristics. JPCERT sheets mentioning the same event ids/tools:
+    net-user (informational). || Original notes: Event and field names (TicketEncryptionType 0x17) are
+    confirmed; the overpass-the-hash interpretation and the need for a baseline are analyst heuristics.
+    Newer domain functional levels and the RC4 deprecation work reduce legitimate RC4 so it should get
+    more reliable over time; the ''hash used as RC4 key'' claim was not independently verified here.'
+- id: FH-LAT-016
+  title: Pass-the-ticket tooling - Kerberos traffic to KDC from a non-LSASS process
+  tactic: lateral-movement
+  attack:
+  - T1550.003
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 5156
+  - 4611
+  prerequisites:
+  - Audit Filtering Platform Connection (Success) for 5156 (high volume)
+  - Audit Security System Extension for 4611 (trusted logon process registered)
+  logic:
+    selection:
+      EventID: 5156
+      DestPort: 88
+    filter_lsass:
+      Application|endswith: \Windows\System32\lsass.exe
+    condition: selection and not filter_lsass
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 5156 --field DestPort=88 --format llm
+  - forhunt search <paths> --channel Security --event-id 4611 --format llm
+  pivots:
+  - Application field names the binary (Rubeus-like tools run as arbitrary executables)
+  - 4611 LogonProcessName values that are not standard (Winlogon, User32, Kerberos, NtLmSsp, Advapi, seclogo)
+    on a workstation
+  - Subsequent 4769 / 4624 type 3 using Kerberos from that host
+  false_positives:
+  - Browsers with integrated authentication and some Java servers contacting a KDC directly
+  severity: low
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_outbound_kerberos_connection.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_register_new_logon_process_by_rubeus.yml
+  - 'sample: EVTX-ATTACK-SAMPLES/Command and Control/DE_RDP_Tunnel_5156.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-ATTACK-SAMPLES/Privilege Escalation/security_4624_4673_token_manip.evtx'
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_remote_powershell_session.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/5156: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/4611: Microsoft docs, rule project,
+    real sample log.  Open: event ids, channel and fields are confirmed (see above) but the detection
+    logic goes beyond what any opened rule/source states. || Original notes: Sigma only. Pass-the-ticket
+    produces no unique native event; it is mostly inferred from Kerberos events that lack the expected
+    preceding TGT (4768) or come from unexpected hosts. Forged-ticket artefacts belong to credential-access.yaml.'
+- id: FH-LAT-017
+  title: Administrative share access from remote hosts (5140 on ADMIN$, C$, IPC$)
+  tactic: lateral-movement
+  attack:
+  - T1021.002
+  - T1570
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 5140
+  prerequisites:
+  - Audit File Share (Success) on the target
+  logic:
+    selection:
+      EventID: 5140
+      ShareName:
+      - \\*\ADMIN$
+      - \\*\C$
+    filter_machine:
+      SubjectUserName|endswith: $
+    condition: selection and not filter_machine
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 5140 --field 'ShareName~ADMIN$' --format llm
+  - forhunt search <paths> --channel Security --event-id 5140 --field 'ShareName~C$' --format llm
+  pivots:
+  - 'IpAddress / IpPort: the source; correlate with 4624 type 3 sharing the SubjectLogonId'
+  - 5145 on the same share for what was touched (FH-LAT-018)
+  - One source touching ADMIN$ on many hosts in minutes (check across hosts with forhunt timeline) suggests
+    automated spreading
+  false_positives:
+  - Backup, AV management, patching, SCCM and admin workstations
+  severity: medium
+  sources:
+  - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/PsExec.htm
+  - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/net-use.htm
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_admin_share_access.yml
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/ObjectAccess/FileShare/Sec_5140_Info_NetShareAccess.yml
+  - 'sample: EVTX-to-MITRE-Attack/EVTX_full_APT_attack_steps/ID5145-4624-DonPAPI full extraction.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/5140: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log. JPCERT sheets mentioning the same event ids/tools:
+    net-user (informational). || Original notes: ShareName is logged with a leading \\*\ (for example
+    \\*\ADMIN$); Sigma matches on Admin$ case-insensitively. 5140 is logged once per session/logon-to-share,
+    not per file.'
+- id: FH-LAT-018
+  title: File drops to admin shares (5145 write access to ADMIN$/C$ of executables and scripts)
+  tactic: lateral-movement
+  attack:
+  - T1570
+  - T1021.002
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 5145
+  prerequisites:
+  - Audit Detailed File Share (Success) on the target; this is high volume, scope it to servers and sensitive
+    hosts
+  logic:
+    selection:
+      EventID: 5145
+      ShareName|endswith:
+      - ADMIN$
+      - C$
+      AccessList|contains: '%%4417'
+    selection_ext:
+      RelativeTargetName|endswith:
+      - .exe
+      - .dll
+      - .bat
+      - .ps1
+      - .vbs
+      - .msi
+    filter_machine:
+      SubjectUserName|endswith: $
+    condition: selection and selection_ext and not filter_machine
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 5145 --field 'ShareName~ADMIN$' --field AccessList~%%4417
+    --format llm
+  - forhunt search <paths> --channel Security --event-id 5145 --field 'ShareName~C$' --field RelativeTargetName~.exe
+    --format llm
+  pivots:
+  - RelativeTargetName is the dropped file; hash it from the host (MFT, Sysmon 11) and see whether a service/task
+    executes it within seconds
+  - Followed by 7045 (service) or 4698 (task) pointing at the same file
+  - IpAddress / SubjectUserName for the copying source
+  false_positives:
+  - Software deployment and patch tools writing to ADMIN$
+  severity: high
+  sources:
+  - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/PsExec.htm
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_smb_file_creation_admin_shares.yml
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/ObjectAccess/DetailedFileShare/Sec_5145_Info_NetShareFileAccess.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0002-Execution/T1047-Windows Management Instrumentation/ID4688-5145-WMIexec
+    execution via SMB.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/5145: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log.  Note: corrections: AccessList in 5145 holds
+    message tokens (%%4417 = WriteData or AddFile), not the word WriteData; value fixed (sample: 60 events
+    with %%4417, 0 with WriteData). JPCERT sheets mentioning the same event ids/tools: net-user (informational).
+    || Original notes: JPCERT shows PsExec''s PSEXESVC.exe copy as 5145 on ADMIN$ with RelativeTargetName
+    PSEXESVC.exe; Sigma uses AccessMask 0x2 (WriteData) on C$. Share and file names in 5145 are per-access,
+    so expect many events per file copy.'
+- id: FH-LAT-019
+  title: RDP session hijacking with tscon.exe
+  tactic: lateral-movement
+  attack:
+  - T1563.002
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4688
+  prerequisites:
+  - Process creation auditing with command line, or Sysmon event 1 (needed to see tscon run as SYSTEM)
+  logic:
+    selection:
+      NewProcessName|endswith: \tscon.exe
+    selection_system:
+      SubjectUserSid: S-1-5-18
+    condition: selection and selection_system
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4688 --field NewProcessName~tscon.exe --format
+    llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~tscon.exe
+    --format llm
+  pivots:
+  - 'CommandLine <session id> /dest:<rdp-tcp#N>: which session was hijacked'
+  - LocalSessionManager 25 (reconnect) and Security 4778 without a matching authentication (no 1149 /
+    4624 type 10) in that window
+  - Service creation (7045 / sc.exe) running cmd /k tscon ... as the way to get SYSTEM
+  false_positives:
+  - Administrators legitimately switching sessions on RDS hosts
+  severity: high
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_tscon_rdp_session_hijacking.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_tscon_localsystem.yml
+  - https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1027-Obfuscated Files or Information/ID4688-Obfuscated
+    payload transfer via service name - Tchopper.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/DetailedTracking/ProcessCreation/Sec_4688_Med_ProcExec_RDP-Hijacking.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4688: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states. JPCERT
+    sheets mentioning the same event ids/tools: net-user (informational). || Original notes: Sigma-only
+    logic; the SYSTEM-context requirement reflects the documented technique (no password needed when run
+    as SYSTEM). Sysmon 1 gives User and IntegrityLevel; 4688 gives SubjectUserSid/TokenElevationType.'
+- id: FH-LAT-020
+  title: Impacket smbexec service pattern (BTOBTO / batch file with __output redirection)
+  tactic: lateral-movement
+  attack:
+  - T1021.002
+  - T1569.002
+  channel: System
+  provider: Service Control Manager
+  event_ids:
+  - 7045
+  - 4697
+  prerequisites:
+  - System log (7045); Security System Extension auditing for 4697
+  logic:
+    selection:
+      EventID: 7045
+      Provider: Service Control Manager
+    name:
+      ServiceName|contains: BTOBTO
+    image:
+      ImagePath|contains:
+      - '.bat & del '
+      - __output 2^>^&1 >
+    condition: selection and (name or image)
+  forhunt:
+  - forhunt search <paths> --channel System --event-id 7045 --field ImagePath~__output --format llm
+  - forhunt search <paths> --channel System --event-id 7045 --field ServiceName~BTOBTO --format llm
+  pivots:
+  - Each executed command creates and deletes a service with an ImagePath that echoes the command into
+    a .bat and runs it; expect many 7045 events in a row
+  - Parent services.exe running cmd.exe /Q /c echo ... (FH-LAT-008)
+  - 4624 type 3 and 5145 on C$ or ADMIN$ for the __output file
+  false_positives:
+  - Essentially none for the ImagePath pattern; the service name is attacker-configurable
+  severity: high
+  sources:
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/service_control_manager/win_system_hack_smbexec.yml
+  - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/service_installation/smbexec.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0002-Execution/T1569.002-Service execution/ID7000,7009,7045-Payload
+    deployed via service - Tchopper.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - 'sample: EVTX-to-MITRE-Attack/TA0008-Lateral Movement/T1021.002-SMB Windows Admin Shares/ID4688,4697,5140-5145
+    PSexec remote execution + admin share.evtx'
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: System/7045: MITRE CTI data-component log source,
+    rule project, real sample log; Security/4697: MITRE CTI data-component log source, Microsoft docs,
+    rule project, real sample log. || Original notes: Two separate rule sets (Sigma and Chainsaw) use
+    the same ImagePath fragments, but both derive from the Impacket source, so independence is limited
+    to the log-field semantics (EventID 7045, ServiceName, ImagePath), which JPCERT''s PsExec sheet also
+    confirms for 7045. Newer Impacket lets the operator rename the service.'
+- id: FH-LAT-021
+  title: WMI-Activity provider activity on target (5857/5860/5861) alongside remote logon
+  tactic: lateral-movement
+  attack:
+  - T1047
+  channel: Microsoft-Windows-WMI-Activity/Operational
+  provider: Microsoft-Windows-WMI-Activity
+  event_ids:
+  - 5857
+  - 5860
+  - 5861
+  prerequisites:
+  - Microsoft-Windows-WMI-Activity/Operational log present (enabled by default on modern Windows)
+  logic:
+    selection:
+      EventID: 5857
+      HostProcess: wmiprvse.exe
+    condition: selection and ProviderName in (Win32_Process provider, CommandLineEventConsumer, ActiveScriptEventConsumer)
+      within 60s after a 4624 LogonType 3
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-WMI-Activity/Operational --event-id 5857,5860,5861
+    --format llm
+  pivots:
+  - ProviderName and ProviderPath in 5857 show which WMI provider DLL was loaded (for example cimwin32.dll
+    for Win32_Process.Create, wbemcons.dll for event consumers)
+  - 5860/5861 are temporary/permanent event consumer registrations - persistence rather than one-shot
+    execution
+  - WmiPrvSE children (FH-LAT-007)
+  false_positives:
+  - '5857 fires for any WMI provider load: management software and Windows itself cause constant noise'
+  severity: low
+  sources:
+  - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/wmic.htm
+  - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/wmiexec-vbs.htm
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/WMI-Activity_Op/WMI_5857_Info_ProviderStarted.yml
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/WMI-Activity_Op/WMI_5861_Med_FilterToConsumerBinding_CmdExec.yml
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-WMI-Activity/Operational/5857: MITRE
+    CTI data-component log source, rule project; MW-WMI-Activity/Operational/5860: MITRE CTI data-component
+    log source, rule project; MW-WMI-Activity/Operational/5861: MITRE CTI data-component log source, rule
+    project.  Open: field name not found in any real log, Microsoft/Sysmon doc or rule (HostProcess).
+    || Original notes: JPCERT lists WMI-Activity 5857 on the destination host for WMI-based tools and
+    Hayabusa''s sample shows the ProviderName / HostProcess / ProviderPath UserData fields. Which provider
+    maps to which technique (cimwin32.dll for Win32_Process) is common knowledge but not cited in the
+    sources read.'
+- id: FH-LAT-022
+  title: Privileged network logon on a non-server host (4624 type 3 followed by 4672 with the same logon
+    id)
+  tactic: lateral-movement
+  attack:
+  - T1021.002
+  - T1078
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4624
+  - 4672
+  prerequisites:
+  - Audit Logon and Audit Special Logon (Success)
+  - Baseline of which admin accounts legitimately log on to which hosts
+  logic:
+    network:
+      EventID: 4624
+      LogonType: 3
+    filter_local:
+      IpAddress:
+      - '-'
+      - 127.0.0.1
+      - ::1
+    filter_machine:
+      TargetUserName|endswith: $
+    privileged:
+      EventID: 4672
+    condition: network and privileged with privileged.SubjectLogonId = network.TargetLogonId, excluding
+      filter_local and filter_machine
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=3 --format llm
+  - forhunt search <paths> --channel Security --event-id 4672 --format llm
+  pivots:
+  - 'IpAddress and WorkstationName of the 4624: the pivot host'
+  - Count distinct Computer values per (TargetUserName, IpAddress) across the log set - one account hitting
+    many hosts in minutes is spreading
+  - 'Next artefacts on that host: 7045/4697, 4698, 5145 writes, WmiPrvSE or wsmprovhost children'
+  false_positives:
+  - Domain admins and service accounts used by management servers
+  severity: informational
+  sources:
+  - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/PsExec.htm
+  - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/wmic.htm
+  - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/lateral_movement/network_logon.yml
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/LogonLogoff/SpecialLogon/Sec_4672_Info_AdminLogon.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1069-Permission Groups Discovery/ID4799-4624-Local
+    admin group enumerated by SharpHound.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0002-Execution/T1047-Windows Management Instrumentation/ID4688-5145-WMIexec
+    execution via SMB.evtx'
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_alert_ruler.yml
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/4624: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log; Security/4672: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log. JPCERT sheets mentioning the same event ids/tools:
+    net-user (informational). || Original notes: JPCERT shows 4624 type 3 and 4672 on the destination
+    for PsExec, WMI and others; Chainsaw uses type 3 with non-local IpAddress. The join on logon id is
+    standard (Microsoft documents SubjectLogonId in 4672 as the same session) but I could not open that
+    page. This is a triage filter, not a detection.'

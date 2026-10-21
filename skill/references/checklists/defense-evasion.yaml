@@ -45,12 +45,19 @@ checks:
   - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/Security/Default/Sec_1102_High_SecLogCleared.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_audit_log_cleared.yml
   - https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack.json
+  - 'sample: EVTX-ATTACK-SAMPLES/Defense Evasion/DE_1102_security_log_cleared.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_audit_log_cleared.yml
   verified: true
-  notes: 'Hayabusa and SigmaHQ both use 1102 in the Security channel; SigmaHQ names the provider Microsoft-Windows-Eventlog
-    (and the legacy id 517 on pre-Vista logs). The actor fields live in UserData (LogFileCleared). Check
-    provider spelling in your EVTX; it varies by rendering. ATT&CK ids: current data (v20) moved the old
-    Defense Evasion tactic into Stealth and Defense Impairment and renumbered several techniques; both
-    the new and the legacy id are listed in attack.'
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/1102: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log. ATT&CK: legacy id(s) T1070.001 were revoked
+    in the current mitre/cti enterprise-attack data; the replacement id is listed first and the legacy
+    id is kept after it. || Original notes: Hayabusa and SigmaHQ both use 1102 in the Security channel;
+    SigmaHQ names the provider Microsoft-Windows-Eventlog (and the legacy id 517 on pre-Vista logs). The
+    actor fields live in UserData (LogFileCleared). Check provider spelling in your EVTX; it varies by
+    rendering. ATT&CK ids: current data (v20) moved the old Defense Evasion tactic into Stealth and Defense
+    Impairment and renumbered several techniques; both the new and the legacy id are listed in attack.'
 - id: FH-DEF-002
   title: Any event log cleared (System 104)
   tactic: defense-evasion
@@ -67,7 +74,7 @@ checks:
   logic:
     selection:
       EventID: 104
-      Provider_Name: Microsoft-Windows-Eventlog
+      Provider: Microsoft-Windows-Eventlog
     selection_important:
       Channel:
       - Application
@@ -81,7 +88,7 @@ checks:
     condition: selection
   forhunt:
   - forhunt search <paths> --channel System --event-id 104 --format llm
-  - forhunt search <paths> --channel System --event-id 104 --field Provider_Name=Microsoft-Windows-Eventlog
+  - forhunt search <paths> --channel System --event-id 104 --field Provider=Microsoft-Windows-Eventlog
     --format llm
   pivots:
   - Which log was cleared (the UserData channel name; rendering of this field is tool-dependent) and by
@@ -96,13 +103,22 @@ checks:
   - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/System/Sys_104_Med_LogCleared.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/system/microsoft_windows_eventlog/win_system_eventlog_cleared.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/system/microsoft_windows_eventlog/win_system_susp_eventlog_cleared.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1070.001-Clear Windows event logs/ID104-1102-Event
+    log cleared.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/microsoft_windows_eventlog/win_system_susp_eventlog_cleared.yml
   verified: true
-  notes: 'Hayabusa and SigmaHQ agree on System 104 / provider Microsoft-Windows-Eventlog and both distinguish
-    "important" logs from others. The name of the cleared channel is in UserData: Hayabusa maps it to
-    LogFileClearedChannel, SigmaHQ calls it Channel, which collides with the System Channel; in raw EVTX
-    it is the Channel element inside UserData/LogFileCleared. Confirm in a sample before scripting. ATT&CK
-    ids: current data (v20) moved the old Defense Evasion tactic into Stealth and Defense Impairment and
-    renumbered several techniques; both the new and the legacy id are listed in attack.'
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: System/104: MITRE CTI data-component log source,
+    rule project, real sample log.  Note: corrections: logic field Provider_Name -> Provider (System field
+    name used by forhunt/EVTX); forhunt: --field Provider_Name= returned no rows; use --field Provider=.
+    ATT&CK: legacy id(s) T1070.001 were revoked in the current mitre/cti enterprise-attack data; the replacement
+    id is listed first and the legacy id is kept after it. || Original notes: Hayabusa and SigmaHQ agree
+    on System 104 / provider Microsoft-Windows-Eventlog and both distinguish "important" logs from others.
+    The name of the cleared channel is in UserData: Hayabusa maps it to LogFileClearedChannel, SigmaHQ
+    calls it Channel, which collides with the System Channel; in raw EVTX it is the Channel element inside
+    UserData/LogFileCleared. Confirm in a sample before scripting. ATT&CK ids: current data (v20) moved
+    the old Defense Evasion tactic into Stealth and Defense Impairment and renumbered several techniques;
+    both the new and the legacy id are listed in attack.'
 - id: FH-DEF-003
   title: Log clearing / configuration tampering command lines (wevtutil cl, Clear-EventLog, WMI)
   tactic: defense-evasion
@@ -173,12 +189,25 @@ checks:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_susp_eventlog_clear.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/wmi/win_wmi_activity_nteventlogfile_cleareventlog.yml
   - https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack.json
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1027-Obfuscated Files or Information/ID4688-Obfuscated
+    payload transfer via service name - Tchopper.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/PanacheSysmon_vs_AtomicRedTeam01.evtx'
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_susp_eventlog_clear.yml
   verified: false
-  notes: 'Command-line patterns are from SigmaHQ (single source). The 4104 branch is analyst knowledge.
-    SigmaHQ also tracks failed WMI clear attempts in Microsoft-Windows-WMI-Activity/Operational event
-    5858 (Win32_NTEventlogFile ClearEventLog). ATT&CK ids: current data (v20) moved the old Defense Evasion
-    tactic into Stealth and Defense Impairment and renumbered several techniques; both the new and the
-    legacy id are listed in attack.'
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4688: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; MW-Sysmon/Operational/1: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/4104: MITRE CTI data-component
+    log source.  Open: event id / channel pair has fewer than two independent confirmations (Security/4104(cti)).
+    JPCERT sheets mentioning the same event ids/tools: wevtutil (informational). ATT&CK: legacy id(s)
+    T1070.001 were revoked in the current mitre/cti enterprise-attack data; the replacement id is listed
+    first and the legacy id is kept after it. || Original notes: Command-line patterns are from SigmaHQ
+    (single source). The 4104 branch is analyst knowledge. SigmaHQ also tracks failed WMI clear attempts
+    in Microsoft-Windows-WMI-Activity/Operational event 5858 (Win32_NTEventlogFile ClearEventLog). ATT&CK
+    ids: current data (v20) moved the old Defense Evasion tactic into Stealth and Defense Impairment and
+    renumbered several techniques; both the new and the legacy id are listed in attack.'
 - id: FH-DEF-004
   title: EventLog service stopped or disabled (6006 / 7040 / 1100)
   tactic: defense-evasion
@@ -229,14 +258,24 @@ checks:
   - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/System/Sys_7040_Med_EventLogServiceStartupDisabled.yml
   - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/System/Sys_6006_Info_EventLogSvcStopped.yml
   - https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack.json
+  - 'sample: EVTX-to-MITRE-Attack/TA0006-Credential Access/T1649- Steal or Forge Authentication Certificates/ID
+    39 KDC - ADCS ESC 1 auth request.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - 'sample: EVTX-ATTACK-SAMPLES/Defense Evasion/DE_WinEventLogSvc_Crash_System_7036.evtx'
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/service_control_manager/win_system_defender_disabled.yml
   verified: false
-  notes: 'Hayabusa only for 7040 (param1 / param3) and 6006; param1/param2/param3 are the positional EventData
-    names of SCM events. 1100 (event log service shutdown, Security) and 7036 for the Event Log service
-    were not confirmed by a read source for this purpose; SigmaHQ shows the 7036 param1/param2 pattern
-    only for Defender. The Event Log service normally cannot be stopped manually while running, so a 7040
-    disable followed by reboot is the usual method. ATT&CK ids: current data (v20) moved the old Defense
-    Evasion tactic into Stealth and Defense Impairment and renumbered several techniques; both the new
-    and the legacy id are listed in attack.'
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: System/6006: rule project; System/7040:
+    MITRE CTI data-component log source, rule project, real sample log; System/7036: MITRE CTI data-component
+    log source, rule project, real sample log; System/1100: no source.  Open: event id / channel pair
+    has fewer than two independent confirmations (System/6006(rule),System/1100()). ATT&CK: legacy id(s)
+    T1562.002 were revoked in the current mitre/cti enterprise-attack data; the replacement id is listed
+    first and the legacy id is kept after it. || Original notes: Hayabusa only for 7040 (param1 / param3)
+    and 6006; param1/param2/param3 are the positional EventData names of SCM events. 1100 (event log service
+    shutdown, Security) and 7036 for the Event Log service were not confirmed by a read source for this
+    purpose; SigmaHQ shows the 7036 param1/param2 pattern only for Defender. The Event Log service normally
+    cannot be stopped manually while running, so a 7040 disable followed by reboot is the usual method.
+    ATT&CK ids: current data (v20) moved the old Defense Evasion tactic into Stealth and Defense Impairment
+    and renumbered several techniques; both the new and the legacy id are listed in attack.'
 - id: FH-DEF-005
   title: Audit policy disabled or changed (4719) and object SACL changed (4907)
   tactic: defense-evasion
@@ -288,11 +327,20 @@ checks:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_disable_event_auditing.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_disable_event_auditing_critical.yml
   - https://raw.githubusercontent.com/Yamato-Security/EnableWindowsLogSettings/main/README.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1562.002-Disable Windows Event Logging/ID4719-Audit
+    policy deactivation.evtx'
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_disable_event_auditing.yml
   verified: false
-  notes: SigmaHQ (two rules, one repo) confirms 4719 with AuditPolicyChanges %%8448 (Success removed)
-    and %%8450 (Failure removed) and the subcategory GUIDs. 4907 has no read source; its semantics are
-    analyst knowledge. The Yamato guide was read for logging-setup context only. Microsoft Learn was unreachable
-    from the research sandbox, so field semantics were not checked against the vendor page.
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4719: Microsoft docs, rule project,
+    real sample log; Security/4907: Microsoft docs.  Open: event id / channel pair has fewer than two
+    independent confirmations (Security/4907(ms)). ATT&CK: legacy id(s) T1562.002 were revoked in the
+    current mitre/cti enterprise-attack data; the replacement id is listed first and the legacy id is
+    kept after it. || Original notes: SigmaHQ (two rules, one repo) confirms 4719 with AuditPolicyChanges
+    %%8448 (Success removed) and %%8450 (Failure removed) and the subcategory GUIDs. 4907 has no read
+    source; its semantics are analyst knowledge. The Yamato guide was read for logging-setup context only.
+    Microsoft Learn was unreachable from the research sandbox, so field semantics were not checked against
+    the vendor page.'
 - id: FH-DEF-006
   title: System time changed (4616)
   tactic: defense-evasion
@@ -326,12 +374,18 @@ checks:
   severity: medium
   sources:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_susp_time_modification.yml
-  verified: false
-  notes: 'Single source (SigmaHQ), which states the audit-subcategory requirement. Timeline analysis note:
-    if 4616 shows time changes, normalise timestamps before building a timeline. Microsoft Learn was unreachable
-    from the research sandbox, so field semantics were not checked against the vendor page. ATT&CK ids:
-    current data (v20) moved the old Defense Evasion tactic into Stealth and Defense Impairment and renumbered
-    several techniques; both the new and the legacy id are listed in attack.'
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1070.006-Timestomp/ID4616-system time changed.evtx'
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_time_modification.yml
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/4616: Microsoft docs, rule project,
+    real sample log.  Note: flipped to true: logic equals the Sigma time-change rule (4616 minus svchost/VMware/VirtualBox
+    time sync); real 4616 events in the mdecrevoisier sample carry ProcessName and SubjectUserSid. ||
+    Original notes: Single source (SigmaHQ), which states the audit-subcategory requirement. Timeline
+    analysis note: if 4616 shows time changes, normalise timestamps before building a timeline. Microsoft
+    Learn was unreachable from the research sandbox, so field semantics were not checked against the vendor
+    page. ATT&CK ids: current data (v20) moved the old Defense Evasion tactic into Stealth and Defense
+    Impairment and renumbered several techniques; both the new and the legacy id are listed in attack.'
 - id: FH-DEF-007
   title: Defender real-time or scanning protection disabled (5001 / 5010 / 5012)
   tactic: defense-evasion
@@ -370,11 +424,17 @@ checks:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_real_time_protection_disabled.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_virus_scan_disabled.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_malware_and_pua_scan_disabled.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/windefend/win_defender_real_time_protection_disabled.yml
   verified: false
-  notes: 'Single repo (SigmaHQ): 5001 real-time protection disabled, 5010 malware/PUA scanning disabled,
-    5012 virus scanning disabled. The events do not name the actor; correlate. Tamper Protection blocks
-    many of these changes (see next check). Microsoft Learn was unreachable from the research sandbox,
-    so field semantics were not checked against the vendor page.'
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Windows Defender/Operational/5001: rule
+    project; MW-Windows Defender/Operational/5010: rule project; MW-Windows Defender/Operational/5012:
+    rule project.  Open: event id / channel pair has fewer than two independent confirmations (ndows Defender/5001(rule),ndows
+    Defender/5010(rule),ndows Defender/5012(rule)). ATT&CK: legacy id(s) T1562.001 were revoked in the
+    current mitre/cti enterprise-attack data; the replacement id is listed first and the legacy id is
+    kept after it. || Original notes: Single repo (SigmaHQ): 5001 real-time protection disabled, 5010
+    malware/PUA scanning disabled, 5012 virus scanning disabled. The events do not name the actor; correlate.
+    Tamper Protection blocks many of these changes (see next check). Microsoft Learn was unreachable from
+    the research sandbox, so field semantics were not checked against the vendor page.'
 - id: FH-DEF-008
   title: 'Defender configuration change: exclusions added, protection values altered, tamper protection
     blocks (5007 / 5013)'
@@ -432,11 +492,19 @@ checks:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_suspicious_features_tampering.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_tamper_protection_trigger.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_config_change_exploit_guard_tamper.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1562.001-Impair Defenses-Disable or Modify tool/ID5007-Defender
+    threat exclusion (native).evtx'
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/windefend/win_defender_tamper_protection_trigger.yml
   verified: false
-  notes: 'SigmaHQ only. 5007 uses OldValue / NewValue strings of the form <registry path> = <value>; 5013
-    uses Value. These field names come from the SigmaHQ rules. 5007 is very noisy on managed hosts: always
-    filter to the specific values above. Microsoft Learn was unreachable from the research sandbox, so
-    field semantics were not checked against the vendor page.'
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Windows Defender/Operational/5007: rule
+    project, real sample log; MW-Windows Defender/Operational/5013: rule project.  Open: event id / channel
+    pair has fewer than two independent confirmations (ndows Defender/5013(rule)) | field name confirmed
+    by a single rule project only (not seen in a real log) (NewValue,Value). ATT&CK: legacy id(s) T1562.001
+    were revoked in the current mitre/cti enterprise-attack data; the replacement id is listed first and
+    the legacy id is kept after it. || Original notes: SigmaHQ only. 5007 uses OldValue / NewValue strings
+    of the form <registry path> = <value>; 5013 uses Value. These field names come from the SigmaHQ rules.
+    5007 is very noisy on managed hosts: always filter to the specific values above. Microsoft Learn was
+    unreachable from the research sandbox, so field semantics were not checked against the vendor page.'
 - id: FH-DEF-009
   title: Defender exclusion or disable via PowerShell / registry (4688, Sysmon 1, Sysmon 13, 4104)
   tactic: defense-evasion
@@ -490,10 +558,23 @@ checks:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_powershell_defender_exclusion.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/registry/registry_set/registry_set_defender_exclusions.yml
   - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/registry-actions.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1027-Obfuscated Files or Information/ID4688-Obfuscated
+    payload transfer via service name - Tchopper.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/PanacheSysmon_vs_AtomicRedTeam01.evtx'
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_powershell_defender_exclusion.yml
   verified: false
-  notes: Command-line and registry patterns from SigmaHQ; event 13 field semantics from the Sysmon guide.
-    -DisableRealtimeMonitoring and the 4104 branch are analyst additions. Tamper Protection can block
-    the change (5013).
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4688: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; MW-Sysmon/Operational/1: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/13: Microsoft docs, rule project;
+    Security/4104: MITRE CTI data-component log source.  Open: event id / channel pair has fewer than
+    two independent confirmations (Security/4104(cti)). ATT&CK: legacy id(s) T1562.001 were revoked in
+    the current mitre/cti enterprise-attack data; the replacement id is listed first and the legacy id
+    is kept after it. || Original notes: Command-line and registry patterns from SigmaHQ; event 13 field
+    semantics from the Sysmon guide. -DisableRealtimeMonitoring and the 4104 branch are analyst additions.
+    Tamper Protection can block the change (5013).'
 - id: FH-DEF-010
   title: Security / logging service stopped or disabled (7036 / 7040, net stop, sc)
   tactic: defense-evasion
@@ -559,10 +640,23 @@ checks:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/system/service_control_manager/win_system_defender_disabled.yml
   - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/System/Sys_7040_Med_EventLogServiceStartupDisabled.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_net_stop_service.yml
+  - 'sample: EVTX-ATTACK-SAMPLES/Defense Evasion/DE_WinEventLogSvc_Crash_System_7036.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - 'sample: EVTX-to-MITRE-Attack/TA0006-Credential Access/T1649- Steal or Forge Authentication Certificates/ID
+    39 KDC - ADCS ESC 1 auth request.evtx'
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_susp_service_tamper.yml
   verified: false
-  notes: 7036 param1/param2 are service display name and new state (localised) per SigmaHQ; 7040 param1/param3
-    per Hayabusa. The list of services in selection_disabled beyond Defender and Event Log is analyst
-    knowledge. Sysmon service name varies by installation.
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: System/7036: MITRE CTI data-component log
+    source, rule project, real sample log; System/7040: MITRE CTI data-component log source, rule project,
+    real sample log; Security/4688: MITRE CTI data-component log source, Microsoft docs, rule project,
+    real sample log.  Open: event ids, channel and fields are confirmed (see above) but the detection
+    logic goes beyond what any opened rule/source states: The list of services in selection_disabled beyond
+    Defender and Event Log is analyst knowledge. ATT&CK: legacy id(s) T1562.001 were revoked in the current
+    mitre/cti enterprise-attack data; the replacement id is listed first and the legacy id is kept after
+    it. || Original notes: 7036 param1/param2 are service display name and new state (localised) per SigmaHQ;
+    7040 param1/param3 per Hayabusa. The list of services in selection_disabled beyond Defender and Event
+    Log is analyst knowledge. Sysmon service name varies by installation.'
 - id: FH-DEF-011
   title: Defender detections and history deletion (1116 / 1117 / 1013 / 1015)
   tactic: defense-evasion
@@ -609,11 +703,19 @@ checks:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_history_delete.yml
   - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/WindowsDefender/Defender_1116_High_Alert.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_restored_quarantine_file.yml
-  verified: true
-  notes: SigmaHQ and Hayabusa both use the Windows Defender/Operational channel and event 1116 (SeverityID
-    in Hayabusa); SigmaHQ lists 1006, 1015, 1116, 1117 as detection events, 1013 as history deletion and
-    1009 as an item restored from quarantine. Credential-tool specific names are in the credential-access
-    checklist.
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/WinDefender_Events_1117_1116_AtomicRedTeam.evtx'
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/windefend/win_defender_restored_quarantine_file.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Windows Defender/Operational/1116: rule
+    project, real sample log; MW-Windows Defender/Operational/1117: rule project, real sample log; MW-Windows
+    Defender/Operational/1015: rule project; MW-Windows Defender/Operational/1013: rule project; MW-Windows
+    Defender/Operational/1009: rule project.  Open: event id / channel pair has fewer than two independent
+    confirmations (ndows Defender/1015(rule),ndows Defender/1013(rule),ndows Defender/1009(rule)). ATT&CK:
+    legacy id(s) T1562.001 were revoked in the current mitre/cti enterprise-attack data; the replacement
+    id is listed first and the legacy id is kept after it. || Original notes: SigmaHQ and Hayabusa both
+    use the Windows Defender/Operational channel and event 1116 (SeverityID in Hayabusa); SigmaHQ lists
+    1006, 1015, 1116, 1117 as detection events, 1013 as history deletion and 1009 as an item restored
+    from quarantine. Credential-tool specific names are in the credential-access checklist.'
 - id: FH-DEF-012
   title: Sysmon service stopped, config changed, or erroring (Sysmon 4 / 16 / 255)
   tactic: defense-evasion
@@ -664,10 +766,21 @@ checks:
   - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/sysmon/Sysmon_255_Low_Error.yml
   - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/sysmon/Sysmon_4_Info_SvcStateChanged.yml
   - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/configuration.md
-  verified: true
-  notes: SigmaHQ and Hayabusa both use channel Microsoft-Windows-Sysmon/Operational and events 4 (State),
-    16 and 255 (Description); the TrustedSec guide (configuration chapter) states that event 16 is raised
-    when the config is changed via the Sysmon command line.
+  - 'sample: EVTX-ATTACK-SAMPLES/Privilege Escalation/privesc_spoolsv_spl_file_write_sysmon11.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - 'sample: EVTX-ATTACK-SAMPLES/Credential Access/babyshark_mimikatz_powershell.evtx'
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/sysmon/sysmon_config_modification_status.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/4: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; MW-Sysmon/Operational/16: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; MW-Sysmon/Operational/255: Microsoft docs,
+    rule project.  Open: field name confirmed by a single rule project only (not seen in a real log) (Description).
+    ATT&CK: legacy id(s) T1562.001 were revoked in the current mitre/cti enterprise-attack data; the replacement
+    id is listed first and the legacy id is kept after it. || Original notes: SigmaHQ and Hayabusa both
+    use channel Microsoft-Windows-Sysmon/Operational and events 4 (State), 16 and 255 (Description); the
+    TrustedSec guide (configuration chapter) states that event 16 is raised when the config is changed
+    via the Sysmon command line.'
 - id: FH-DEF-013
   title: 'Sysmon / EDR sensor tampering: fltMC unload, WINEVT channel disabled in registry'
   tactic: defense-evasion
@@ -719,11 +832,25 @@ checks:
   sources:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_fltmc_unload_driver_sysmon.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_sysmon_channel_reference_deletion.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1027-Obfuscated Files or Information/ID4688-Obfuscated
+    payload transfer via service name - Tchopper.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/PanacheSysmon_vs_AtomicRedTeam01.evtx'
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_sysmon_channel_reference_deletion.yml
   verified: false
-  notes: Single repo (SigmaHQ). The Sysmon publisher GUID {5770385f-c22a-43e0-bf4c-06f5698ffbd9} and the
-    4657/4663 requirement for a registry SACL are as stated there. Other agent-specific tamper techniques
-    are out of scope. Microsoft Learn was unreachable from the research sandbox, so field semantics were
-    not checked against the vendor page.
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4688: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; MW-Sysmon/Operational/1: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/4657: MITRE CTI data-component
+    log source, Microsoft docs, rule project; Security/4663: MITRE CTI data-component log source, Microsoft
+    docs, rule project, real sample log.  Open: field name confirmed by a single rule project only (not
+    seen in a real log) (NewValue,ObjectValueName). ATT&CK: legacy id(s) T1562.001, T1562.006 were revoked
+    in the current mitre/cti enterprise-attack data; the replacement id is listed first and the legacy
+    id is kept after it. || Original notes: Single repo (SigmaHQ). The Sysmon publisher GUID {5770385f-c22a-43e0-bf4c-06f5698ffbd9}
+    and the 4657/4663 requirement for a registry SACL are as stated there. Other agent-specific tamper
+    techniques are out of scope. Microsoft Learn was unreachable from the research sandbox, so field semantics
+    were not checked against the vendor page.'
 - id: FH-DEF-014
   title: Windows Firewall rule added, changed, deleted or reset (MPSSVC 2004 / 2005 / 2006 / 2032 / 2033)
   tactic: defense-evasion
@@ -791,14 +918,31 @@ checks:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/firewall_as/win_firewall_as_delete_rule.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/firewall_as/win_firewall_as_delete_all_rules.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/firewall_as/win_firewall_as_reset_config.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1562.004-Impair Defenses-Disable or Modify System
+    Firewall/ID2004-New firewall rule created by PowerShell.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/firewall_as/win_firewall_as_add_rule_susp_folder.yml
   verified: false
-  notes: 'SigmaHQ only. Windows 11 / newer builds use the alternate ids 2071 (add), 2052 (delete), 2059
-    (delete all), 2060 (reset), 2097 (add, extended). 2005 (rule changed) is per the task brief and was
-    not confirmed by a read source. The exact channel path was taken from the task brief and the SigmaHQ
-    logsource name firewall-as; confirm on a real EVTX. Event provider name is not verified. Microsoft
-    Learn was unreachable from the research sandbox, so field semantics were not checked against the vendor
-    page. ATT&CK ids: current data (v20) moved the old Defense Evasion tactic into Stealth and Defense
-    Impairment and renumbered several techniques; both the new and the legacy id are listed in attack.'
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Windows Firewall With Advanced Security/Firewall/2004:
+    MITRE CTI data-component log source, rule project, real sample log; MW-Windows Firewall With Advanced
+    Security/Firewall/2005: MITRE CTI data-component log source, rule project; MW-Windows Firewall With
+    Advanced Security/Firewall/2006: MITRE CTI data-component log source, rule project; MW-Windows Firewall
+    With Advanced Security/Firewall/2032: rule project; MW-Windows Firewall With Advanced Security/Firewall/2033:
+    rule project; MW-Windows Firewall With Advanced Security/Firewall/2071: rule project; MW-Windows Firewall
+    With Advanced Security/Firewall/2052: rule project; MW-Windows Firewall With Advanced Security/Firewall/2059:
+    rule project; MW-Windows Firewall With Advanced Security/Firewall/2060: rule project; MW-Windows Firewall
+    With Advanced Security/Firewall/2097: rule project.  Open: event id / channel pair has fewer than
+    two independent confirmations (anced Security/2032(rule),anced Security/2033(rule),anced Security/2071(rule),anced
+    Security/2052(rule),anced Security/2059(rule),anced Security/2060(rule),anced Security/2097(rule)).
+    ATT&CK: legacy id(s) T1562.004 were revoked in the current mitre/cti enterprise-attack data; the replacement
+    id is listed first and the legacy id is kept after it. || Original notes: SigmaHQ only. Windows 11
+    / newer builds use the alternate ids 2071 (add), 2052 (delete), 2059 (delete all), 2060 (reset), 2097
+    (add, extended). 2005 (rule changed) is per the task brief and was not confirmed by a read source.
+    The exact channel path was taken from the task brief and the SigmaHQ logsource name firewall-as; confirm
+    on a real EVTX. Event provider name is not verified. Microsoft Learn was unreachable from the research
+    sandbox, so field semantics were not checked against the vendor page. ATT&CK ids: current data (v20)
+    moved the old Defense Evasion tactic into Stealth and Defense Impairment and renumbered several techniques;
+    both the new and the legacy id are listed in attack.'
 - id: FH-DEF-015
   title: Firewall disabled or broadly opened via netsh
   tactic: defense-evasion
@@ -843,9 +987,22 @@ checks:
   sources:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_netsh_fw_disable.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_netsh_fw_set_rule.yml
-  verified: false
-  notes: 'Single repo (SigmaHQ; a companion rule flags netsh advfirewall firewall set rule ... new enable=yes
-    for whole rule groups such as Network Discovery or File and Printer Sharing); also consider Set-NetFirewallProfile
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1027-Obfuscated Files or Information/ID4688-Obfuscated
+    payload transfer via service name - Tchopper.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/PanacheSysmon_vs_AtomicRedTeam01.evtx'
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_netsh_fw_disable.yml
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/4688: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log; MW-Sysmon/Operational/1: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Note: flipped to true: logic equals the
+    Sigma netsh firewall-disable rule (advfirewall set ... state off / firewall set opmode disable); 4688
+    uses NewProcessName. ATT&CK: legacy id(s) T1562.004 were revoked in the current mitre/cti enterprise-attack
+    data; the replacement id is listed first and the legacy id is kept after it. || Original notes: Single
+    repo (SigmaHQ; a companion rule flags netsh advfirewall firewall set rule ... new enable=yes for whole
+    rule groups such as Network Discovery or File and Printer Sharing); also consider Set-NetFirewallProfile
     -Enabled False and registry edits in 4104/Sysmon 13 (not source-backed here). ATT&CK ids: current
     data (v20) moved the old Defense Evasion tactic into Stealth and Defense Impairment and renumbered
     several techniques; both the new and the legacy id are listed in attack.'
@@ -889,9 +1046,15 @@ checks:
   - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/process-tampering.md
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_tampering/proc_tampering_susp_process_hollowing.yml
   - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/sysmon/Sysmon_25_Med_ProcessTampering.yml
-  verified: true
-  notes: The TrustedSec guide, SigmaHQ and Hayabusa all describe Sysmon event 25 with a Type field ("Image
-    is replaced"). Not all hollowing variants are detected (guide).
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_tampering/proc_tampering_susp_process_hollowing.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/25: MITRE CTI data-component
+    log source, Microsoft docs, rule project.  Open: field name confirmed by a single rule project only
+    (not seen in a real log) (Type). || Original notes: The TrustedSec guide, SigmaHQ and Hayabusa all
+    describe Sysmon event 25 with a Type field ("Image is replaced"). Not all hollowing variants are detected
+    (guide).'
 - id: FH-DEF-017
   title: File deletion of logs, tools or Sysmon-tracked paths (Sysmon 26 / 23)
   tactic: defense-evasion
@@ -942,11 +1105,20 @@ checks:
   - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/file_delete_detected.md
   - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/file-delete.md
   - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/sysmon/Sysmon_26_Med_FileDeleted_RuleAlert.yml
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - 'sample: EVTX-ATTACK-SAMPLES/Privilege Escalation/Sysmon_UACME_64.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
   verified: false
-  notes: Event ids and the 23/26 difference are confirmed by the TrustedSec guide and Hayabusa; the path
-    heuristics are analyst additions and not from any rule, hence unverified. Windows itself deletes .evtx
-    only via the clear APIs (which produce 1102/104); direct deletion of evtx files requires the service
-    to be stopped.
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/26: Microsoft docs,
+    rule project; MW-Sysmon/Operational/23: MITRE CTI data-component log source, Microsoft docs, rule
+    project, real sample log.  Open: event ids, channel and fields are confirmed (see above) but the detection
+    logic goes beyond what any opened rule/source states: Event ids and the 23/26 difference are confirmed
+    by the TrustedSec guide and Hayabusa; the path heuristics are analyst additions and not from any rule,
+    hence unverified. JPCERT sheets mentioning the same event ids/tools: net-user (informational). ||
+    Original notes: Event ids and the 23/26 difference are confirmed by the TrustedSec guide and Hayabusa;
+    the path heuristics are analyst additions and not from any rule, hence unverified. Windows itself
+    deletes .evtx only via the clear APIs (which produce 1102/104); direct deletion of evtx files requires
+    the service to be stopped.'
 - id: FH-DEF-018
   title: 'Timestomping: file creation time changed (Sysmon 2) and PowerShell timestamp edits (4104)'
   tactic: defense-evasion
@@ -997,11 +1169,18 @@ checks:
   - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/file-create-time-change.md
   - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/sysmon/Sysmon_2_Low_PossibleTimestomping.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/powershell/powershell_script/posh_ps_timestomp.yml
-  verified: true
-  notes: The TrustedSec guide and Hayabusa confirm Sysmon event 2 and its CreationUtcTime / PreviousCreationUtcTime
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/Malware/DE_timestomp_and_dll_sideloading_and_RunPersist.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/2: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/4104: MITRE CTI data-component
+    log source.  Open: event id / channel pair has fewer than two independent confirmations (Security/4104(cti)).
+    JPCERT sheets mentioning the same event ids/tools: timestomp (informational). || Original notes: The
+    TrustedSec guide and Hayabusa confirm Sysmon event 2 and its CreationUtcTime / PreviousCreationUtcTime
     fields; SigmaHQ supplies the PowerShell script-block strings. Event 2 is typically noisy and rated
     low by Hayabusa. Timestomping of $FILE_NAME or last-write times is not seen by Sysmon 2; use MFT analysis
-    for that.
+    for that.'
 - id: FH-DEF-019
   title: PowerShell AMSI bypass in script blocks (4104)
   tactic: defense-evasion
@@ -1046,10 +1225,18 @@ checks:
   sources:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/powershell/powershell_script/posh_ps_amsi_bypass_pattern_nov22.yml
   - https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack.json
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1016-System Network Configuration Discovery/ID800-4103-4104-Firewall
+    configuration enumerated (PowerShell).evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
   verified: false
-  notes: The reflection pattern is from SigmaHQ (single source); the string list (AmsiUtils, amsiInitFailed,
-    AmsiScanBuffer) is analyst knowledge. Heavy obfuscation (string concatenation, base64) defeats keyword
-    matching; 4104 logs the deobfuscated script block only for blocks that PowerShell itself compiled.
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-PowerShell/Operational/4104: MITRE CTI
+    data-component log source, rule project, real sample log.  Open: literal value not found in any opened
+    source (amsiContext; AmsiScanBuffer). ATT&CK: legacy id(s) T1562.001 were revoked in the current mitre/cti
+    enterprise-attack data; the replacement id is listed first and the legacy id is kept after it. ||
+    Original notes: The reflection pattern is from SigmaHQ (single source); the string list (AmsiUtils,
+    amsiInitFailed, AmsiScanBuffer) is analyst knowledge. Heavy obfuscation (string concatenation, base64)
+    defeats keyword matching; 4104 logs the deobfuscated script block only for blocks that PowerShell
+    itself compiled.'
 - id: FH-DEF-020
   title: 'ETW tampering: .NET ETW disabled via registry or environment variable (4657 / Sysmon 13) and
     script text'
@@ -1114,11 +1301,21 @@ checks:
   sources:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_dot_net_etw_tamper.yml
   - https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/sigma/builtin/registry/registry_set/registry_set_dot_net_etw_tamper.yml
   verified: false
-  notes: '4657 registry pattern from SigmaHQ (single source); in-memory EtwEventWrite patching leaves
-    no registry or log trace, only 4104 text at best. 4104 strings and the Sysmon 13 branch are analyst
-    knowledge. ATT&CK ids: current data (v20) moved the old Defense Evasion tactic into Stealth and Defense
-    Impairment and renumbered several techniques; both the new and the legacy id are listed in attack.'
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4657: MITRE CTI data-component
+    log source, Microsoft docs, rule project; Security/13: Microsoft docs, rule project; Security/4104:
+    MITRE CTI data-component log source.  Open: event id / channel pair has fewer than two independent
+    confirmations (Security/4104(cti)) | literal value not found in any opened source (EtwEventWrite;
+    PSEtwLogProvider) | field name confirmed by a single rule project only (not seen in a real log) (NewValue,ObjectName,ObjectValueName).
+    ATT&CK: legacy id(s) T1562.006 were revoked in the current mitre/cti enterprise-attack data; the replacement
+    id is listed first and the legacy id is kept after it. || Original notes: 4657 registry pattern from
+    SigmaHQ (single source); in-memory EtwEventWrite patching leaves no registry or log trace, only 4104
+    text at best. 4104 strings and the Sysmon 13 branch are analyst knowledge. ATT&CK ids: current data
+    (v20) moved the old Defense Evasion tactic into Stealth and Defense Impairment and renumbered several
+    techniques; both the new and the legacy id are listed in attack.'
 - id: FH-DEF-021
   title: 'Event log gaps: record-id discontinuities and silent intervals'
   tactic: defense-evasion
@@ -1143,7 +1340,7 @@ checks:
       other channels continue
   forhunt:
   - forhunt stats <paths> --format llm
-  - forhunt timeline <paths> --since <window start> --until <window end> --format llm
+  - forhunt timeline <paths> --since 2024-05-01T10:00:00Z --until 2024-05-01T12:00:00Z --format llm
   - forhunt search <paths> --channel Security --event-id 1102,104,1100 --format llm
   pivots:
   - Use forhunt stats gap output per channel and note start/end timestamps of each gap
@@ -1160,11 +1357,21 @@ checks:
   severity: medium
   sources:
   - https://raw.githubusercontent.com/Yamato-Security/EnableWindowsLogSettings/main/README.md
+  - 'sample: EVTX-ATTACK-SAMPLES/Defense Evasion/DE_1102_security_log_cleared.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1070.006-Timestomp/ID4616-system time changed.evtx'
   verified: false
-  notes: 'This is the researcher method suggested for forhunt, not a source-backed detection: no vendor
-    or community source read defines gap thresholds. Yamato Security guide read for log-size/retention
-    context only. Whether Windows keeps or resets EventRecordID after a clear should be confirmed on a
-    sample before relying on it (open question).'
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/1102: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/104: rule project; Security/1100:
+    no source; Security/4616: Microsoft docs, rule project, real sample log.  Open: event id / channel
+    pair has fewer than two independent confirmations (Security/104(rule),Security/1100()) | corrections:
+    forhunt placeholder replaced by an example value so the command parses (edit the value). ATT&CK: legacy
+    id(s) T1070.001 were revoked in the current mitre/cti enterprise-attack data; the replacement id is
+    listed first and the legacy id is kept after it. || Original notes: This is the researcher method
+    suggested for forhunt, not a source-backed detection: no vendor or community source read defines gap
+    thresholds. Yamato Security guide read for log-size/retention context only. Whether Windows keeps
+    or resets EventRecordID after a clear should be confirmed on a sample before relying on it (open question).'
 - id: FH-DEF-022
   title: Process masquerading as svchost.exe (wrong path or no service arguments)
   tactic: defense-evasion
@@ -1209,10 +1416,20 @@ checks:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_svchost_masqueraded_execution.yml
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_svchost_execution_with_no_cli_flags.yml
   - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/process-creation.md
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/PanacheSysmon_vs_AtomicRedTeam01.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1027-Obfuscated Files or Information/ID4688-Obfuscated
+    payload transfer via service name - Tchopper.evtx'
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_susp_proc_wrong_parent.yml
   verified: true
-  notes: SigmaHQ supplies both patterns (path/OriginalFileName mismatch and a bare svchost.exe command
-    line); the Sysmon guide confirms Image / OriginalFileName / ParentImage fields. Extend the same logic
-    to other masqueraded names (lsass.exe, csrss.exe, services.exe) with their expected paths.
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/1: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/4688: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log. || Original notes: SigmaHQ supplies both
+    patterns (path/OriginalFileName mismatch and a bare svchost.exe command line); the Sysmon guide confirms
+    Image / OriginalFileName / ParentImage fields. Extend the same logic to other masqueraded names (lsass.exe,
+    csrss.exe, services.exe) with their expected paths.'
 - id: FH-DEF-023
   title: rundll32.exe launched without arguments
   tactic: defense-evasion
@@ -1255,6 +1472,18 @@ checks:
   sources:
   - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_rundll32_no_params.yml
   - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/process-creation.md
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/PanacheSysmon_vs_AtomicRedTeam01.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1027-Obfuscated Files or Information/ID4688-Obfuscated
+    payload transfer via service name - Tchopper.evtx'
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_rundll32_no_params.yml
   verified: false
-  notes: 'Single rule source (SigmaHQ); the Cobalt Strike spawnto interpretation is analyst knowledge.
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/1: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/4688: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: Single
+    rule source (SigmaHQ); the Cobalt Strike spawnto interpretation is analyst knowledge. || Original
+    notes: Single rule source (SigmaHQ); the Cobalt Strike spawnto interpretation is analyst knowledge.
     Weak on its own: pair with injection or network telemetry.'

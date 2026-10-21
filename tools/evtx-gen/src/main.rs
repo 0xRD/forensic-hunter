@@ -448,6 +448,29 @@ fn noise(channel: &str, ft: u64, rng: &mut Rng, hosts: &[String]) -> Ev {
     }
 }
 
+/// Writes one event, nested or flat (see `events::nested`).
+fn push<W: std::io::Write + std::io::Seek>(
+    w: &mut EvtxWriter<W>,
+    e: &Ev,
+    tidx: usize,
+    templates: &[Template],
+    vals: &mut Vec<V>,
+) -> std::io::Result<Option<u64>> {
+    if events::nested(e.kind) {
+        vals.push(V::Payload);
+        w.push(
+            e.ft,
+            tidx,
+            &templates[tidx],
+            vals,
+            Some((tidx + 1, &templates[tidx + 1], &e.data)),
+        )
+    } else {
+        vals.extend(e.data.iter().cloned());
+        w.push(e.ft, tidx, &templates[tidx], vals, None)
+    }
+}
+
 fn write_events(
     path: &Path,
     evs: &[Ev],
@@ -468,15 +491,13 @@ fn write_events(
             e.sid.as_deref(),
             rng,
         );
-        vals.extend(e.data.iter().cloned());
         assert_eq!(
             e.data.len(),
             sp.fields.len(),
             "{:?}: wrong number of values",
             e.kind
         );
-        w.push(e.ft, tidx, &templates[tidx], &vals)?
-            .context("file full")?;
+        push(&mut w, e, tidx, templates, &mut vals)?.context("file full")?;
     }
     w.finish()?;
     let len = std::fs::metadata(path)?.len() as usize;
@@ -882,8 +903,7 @@ fn corpus(out: &Path, size: u64, file_size: u64, seed: u64) -> anyhow::Result<()
                 let e = noise(channel, ft, &mut rng, &hs);
                 let (tidx, sp) = spec(e.kind);
                 let mut vals = system_values(sp, e.ft, rid, &e.host, e.sid.as_deref(), &mut rng);
-                vals.extend(e.data);
-                match w.push(e.ft, tidx, &templates[tidx], &vals)? {
+                match push(&mut w, &e, tidx, &templates, &mut vals)? {
                     Some(_) => rid += 1,
                     None => break,
                 }

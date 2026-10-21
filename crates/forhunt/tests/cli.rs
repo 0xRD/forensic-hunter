@@ -306,7 +306,7 @@ fn corrupt_and_truncated_inputs() {
     let o = forhunt(&["parse", &fx("truncated.evtx")]);
     assert!(o.status.success());
     let v = lines(&String::from_utf8_lossy(&o.stdout));
-    assert_eq!(v.len(), 225);
+    assert_eq!(v.len(), 216);
     assert!(String::from_utf8_lossy(&o.stderr).contains("truncated"));
 
     let o = forhunt(&["parse", "-q", &fx("empty.evtx"), &fx("not-evtx.evtx")]);
@@ -394,4 +394,20 @@ fn display_time_zone() {
         "Europe/Paris",
     ]);
     assert_eq!(lines(&out)[0]["t"], "2024-03-11T11:30:00.000000+01:00");
+}
+
+#[test]
+fn fast_path_matches_json_path() {
+    // The template-value fast path must produce exactly what the JSON path
+    // produces (docs/PERF.md P-005); fixtures cover nested and flat payloads.
+    let dir = fixtures().display().to_string();
+    let fast = ok(&["parse", "-q", &dir]);
+    let slow = ok(&["parse", "-q", "--slow-decoder", &dir]);
+    assert_eq!(fast.lines().count(), slow.lines().count());
+    for (a, b) in fast.lines().zip(slow.lines()) {
+        assert_eq!(a, b);
+    }
+    let fast = ok(&["parse", "-q", "-F", "csv", &dir]);
+    let slow = ok(&["parse", "-q", "-F", "csv", "--slow-decoder", &dir]);
+    assert_eq!(fast, slow);
 }

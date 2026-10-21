@@ -53,6 +53,9 @@ pub struct Common {
     /// Display timestamps in this IANA time zone (e.g. Europe/Paris) instead of UTC.
     #[arg(long, global = true, value_name = "TZ")]
     pub tz: Option<String>,
+    /// Decode every record through the JSON path (testing only).
+    #[arg(long, global = true, hide = true)]
+    pub slow_decoder: bool,
     /// Extra field map (TOML, same format as the built-in map).
     #[arg(long, global = true, value_name = "FILE")]
     pub map: Option<PathBuf>,

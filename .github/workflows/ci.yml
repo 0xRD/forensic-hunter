@@ -52,6 +52,17 @@ jobs:
       - name: Benchmarks compile
         run: cargo bench --workspace --no-run --locked
 
+  checklists:
+    name: skill checklists
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install pyyaml
+      - name: Schema valid and INDEX.md up to date
+        run: python3 scripts/gen-checklist-index.py --check
+      - name: Install scripts parse
+        run: bash -n skill/scripts/install.sh && bash -n skill/scripts/fetch-samples.sh
+
   deny:
     name: cargo deny
     runs-on: ubuntu-latest

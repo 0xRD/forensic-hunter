@@ -1,623 +1,858 @@
 tactic: impact
 title: Impact
-description: >
-  Impact in EVTX is mostly the pre-encryption "inhibit recovery" phase (shadow copies, backup
-  catalogs, boot recovery options, backup/AV/SQL services), followed by the destructive phase itself
-  (bursts of file creation, rename and delete, ransom notes, wipes) and side effects (service stops,
-  Defender being disabled, log clearing, mass password resets, shutdowns). Most command-line checks
-  use Sysmon 1 as the primary event; the same logic applies to Security 4688 using NewProcessName
-  and CommandLine (needs the "Include command line in process creation events" GPO). File-level
-  evidence needs Sysmon 11/23/26; native logs alone cannot see mass file encryption.
+description: 'Impact in EVTX is mostly the pre-encryption "inhibit recovery" phase (shadow copies, backup
+  catalogs, boot recovery options, backup/AV/SQL services), followed by the destructive phase itself (bursts
+  of file creation, rename and delete, ransom notes, wipes) and side effects (service stops, Defender
+  being disabled, log clearing, mass password resets, shutdowns). Most command-line checks use Sysmon
+  1 as the primary event; the same logic applies to Security 4688 using NewProcessName and CommandLine
+  (needs the "Include command line in process creation events" GPO). File-level evidence needs Sysmon
+  11/23/26; native logs alone cannot see mass file encryption.
+
+  '
 checks:
-  - id: FH-IMP-001
-    title: Shadow copy deletion via vssadmin, wmic or diskshadow command line
-    tactic: impact
-    attack: [T1490]
-    channel: Microsoft-Windows-Sysmon/Operational
-    provider: Microsoft-Windows-Sysmon
-    event_ids: [1]
-    prerequisites:
-      - "Sysmon installed with a config that logs event 1 (ProcessCreate)"
-      - "Alternative: Security 4688 with Audit Process Creation and the command line GPO enabled"
-    logic:
-      selection_img:
-        Image|endswith:
-          - '\vssadmin.exe'
-          - '\wmic.exe'
-          - '\diskshadow.exe'
-          - '\powershell.exe'
-          - '\pwsh.exe'
-      selection_cli:
-        CommandLine|contains|all:
-          - 'shadow'
-          - 'delete'
-      condition: selection_img and selection_cli
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~shadow --format llm
-      - forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~shadow --format llm
-    pivots:
-      - "ParentImage / ParentCommandLine and User: who launched it, from which session (LogonId -> 4624)"
-      - "Look 0-30 minutes after for wbadmin, bcdedit, service stops (IMP-003, IMP-004, IMP-010) and mass file activity (IMP-013)"
-      - "Same command on other hosts within minutes = scripted domain-wide deployment (GPO, PsExec, 7045)"
-    false_positives:
-      - "Backup software or admins pruning shadow copies (usually from a known service account or backup agent parent)"
-    severity: critical
-    sources:
-      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_susp_shadow_copies_deletion.yml
-      - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1490/T1490.md
-      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
-    verified: true
-    notes: "Sigma and Atomic Red Team agree on the command forms (vssadmin delete shadows /all /quiet, wmic shadowcopy delete). Sysmon event 1 confirmed by Microsoft Sysmon docs. Shell quoting/case varies; use case-insensitive contains."
-
-  - id: FH-IMP-002
-    title: Shadow copy deletion via PowerShell Win32_ShadowCopy
-    tactic: impact
-    attack: [T1490]
-    channel: Microsoft-Windows-PowerShell/Operational
-    provider: Microsoft-Windows-PowerShell
-    event_ids: [4104]
-    prerequisites:
-      - "PowerShell Script Block Logging enabled (4104)"
-    logic:
-      selection:
-        EventID: 4104
-        ScriptBlockText|contains|all:
-          - 'Win32_ShadowCopy'
-          - 'Delete'
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~Win32_ShadowCopy --format llm
-    pivots:
-      - "ScriptBlockId / Path and the 4624 logon behind the PowerShell host"
-      - "Sysmon 1 for powershell.exe around the same time to get the parent"
-    false_positives:
-      - "Admin cleanup scripts for VSS storage"
-    severity: critical
-    sources:
-      - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1490/T1490.md
-      - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
-    verified: false
-    notes: "Command form from Atomic Red Team; event 4104 mapping from the EVTX-to-MITRE catalog. 4104 field semantics not confirmed from a Microsoft page (Microsoft Learn was unreachable)."
-
-  - id: FH-IMP-003
-    title: Backup catalog or system state backup deletion with wbadmin
-    tactic: impact
-    attack: [T1490]
-    channel: Microsoft-Windows-Sysmon/Operational
-    provider: Microsoft-Windows-Sysmon
-    event_ids: [1]
-    prerequisites:
-      - "Sysmon installed with a config that logs event 1; or Security 4688 with command line auditing"
-    logic:
-      selection:
-        Image|endswith: '\wbadmin.exe'
-        CommandLine|contains|all:
-          - 'delete'
-          - 'catalog'
-      selection_systemstate:
-        Image|endswith: '\wbadmin.exe'
-        CommandLine|contains|all:
-          - 'delete'
-          - 'systemstatebackup'
-      condition: selection or selection_systemstate
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~wbadmin --field CommandLine~delete --format llm
-    pivots:
-      - "Surrounding vssadmin / bcdedit commands (IMP-001, IMP-004) from the same ParentProcessGuid"
-    false_positives:
-      - "Backup administrators resetting a corrupted catalog (rare, ticketed)"
-    severity: critical
-    sources:
-      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_susp_shadow_copies_deletion.yml
-      - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1490/T1490.md
-      - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
-    verified: true
-    notes: "Three independent catalogs list wbadmin delete catalog (-quiet); Sysmon 1 per Microsoft docs."
-
-  - id: FH-IMP-004
-    title: Boot recovery disabled with bcdedit
-    tactic: impact
-    attack: [T1490]
-    channel: Microsoft-Windows-Sysmon/Operational
-    provider: Microsoft-Windows-Sysmon
-    event_ids: [1]
-    prerequisites:
-      - "Sysmon installed with a config that logs event 1; or Security 4688 with command line auditing"
-    logic:
-      selection_img:
-        Image|endswith: '\bcdedit.exe'
-        CommandLine|contains: 'set'
-      selection_recovery:
-        CommandLine|contains|all:
-          - 'recoveryenabled'
-          - 'no'
-      selection_bootstatus:
-        CommandLine|contains|all:
-          - 'bootstatuspolicy'
-          - 'ignoreallfailures'
-      condition: selection_img and (selection_recovery or selection_bootstatus)
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~bcdedit --field CommandLine~recoveryenabled --format llm
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~bcdedit --field CommandLine~bootstatuspolicy --format llm
-    pivots:
-      - "Check for other bcdedit changes such as safeboot (see IMP-017) in the same session"
-      - "Parent process and user; look for the ransomware binary starting soon after"
-    false_positives:
-      - "Rare admin troubleshooting; some imaging/deployment scripts"
-    severity: high
-    sources:
-      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_bcdedit_boot_conf_tamper.yml
-      - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1490/T1490.md
-    verified: true
-    notes: "Sigma and Atomic Red Team agree on both option pairs (bootstatuspolicy ignoreallfailures, recoveryenabled no)."
-
-  - id: FH-IMP-005
-    title: Shadow storage shrunk to force deletion of snapshots (vssadmin resize shadowstorage)
-    tactic: impact
-    attack: [T1490]
-    channel: Microsoft-Windows-Sysmon/Operational
-    provider: Microsoft-Windows-Sysmon
-    event_ids: [1]
-    prerequisites:
-      - "Sysmon installed with a config that logs event 1; or Security 4688 with command line auditing"
-    logic:
-      selection:
-        Image|endswith: '\vssadmin.exe'
-        CommandLine|contains|all:
-          - 'resize'
-          - 'shadowstorage'
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~vssadmin --field CommandLine~shadowstorage --format llm
-    pivots:
-      - "Same pivots as IMP-001"
-    false_positives:
-      - "Admins legitimately sizing VSS storage (MaxSize=<sane value> rather than UNBOUNDED or very small values)"
-    severity: high
-    sources:
-      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_susp_shadow_copies_deletion.yml
-      - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1490/T1490.md
-    verified: true
-    notes: "Sigma focuses on 'unbounded' values; Atomic shows a small MaxSize (20%) form. Treat an unusually small MaxSize on the same volume as suspect too."
-
-  - id: FH-IMP-006
-    title: Defender real-time protection disabled (5001)
-    tactic: impact
-    attack: [T1562.001]
-    channel: Microsoft-Windows-Windows Defender/Operational
-    provider: Microsoft-Windows-Windows Defender
-    event_ids: [5001]
-    prerequisites:
-      - "Microsoft Defender Antivirus is the active AV (not passive mode / third-party AV)"
-    logic:
-      selection:
-        EventID: 5001
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel "Microsoft-Windows-Windows Defender/Operational" --event-id 5001,5010,5012,5013,5007 --format llm
-    pivots:
-      - "The event does not record who did it: look at Sysmon 13 on HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows Defender and 1 for powershell Set-MpPreference around the timestamp"
-      - "5007 (configuration changed) with Old/New values nearby; 5013 if Tamper Protection blocked a change"
-    false_positives:
-      - "Defender updates, onboarding of third-party AV, admin maintenance"
-    severity: high
-    sources:
-      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_real_time_protection_disabled.yml
-    verified: false
-    notes: "Only one source actually opened (Sigma, which itself cites Microsoft Learn). Microsoft page not readable in this session. The channel string is 'Microsoft-Windows-Windows Defender/Operational'."
-
-  - id: FH-IMP-007
-    title: Tamper Protection blocked a Defender setting change (5013)
-    tactic: impact
-    attack: [T1562.001]
-    channel: Microsoft-Windows-Windows Defender/Operational
-    provider: Microsoft-Windows-Windows Defender
-    event_ids: [5013]
-    prerequisites:
-      - "Defender Tamper Protection enabled"
-    logic:
-      selection:
-        EventID: 5013
-        Value|endswith:
-          - '\DisableAntiSpyware'
-          - '\DisableAntiVirus'
-          - '\DisableRealtimeMonitoring'
-          - '\DisableBehaviorMonitoring'
-          - '\DisableIOAVProtection'
-          - '\DisableScriptScanning'
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel "Microsoft-Windows-Windows Defender/Operational" --event-id 5013 --format llm
-    pivots:
-      - "A blocked attempt proves an actor with admin rights was on the host: pull Sysmon 1 and 4624 around the timestamp"
-    false_positives:
-      - "Management tools that legitimately try to modify protected settings"
-    severity: high
-    sources:
-      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_tamper_protection_trigger.yml
-    verified: false
-    notes: "Single source opened. The Value field naming is from that rule."
-
-  - id: FH-IMP-008
-    title: Defender detection history deleted (1013)
-    tactic: impact
-    attack: [T1562.001, T1070]
-    channel: Microsoft-Windows-Windows Defender/Operational
-    provider: Microsoft-Windows-Windows Defender
-    event_ids: [1013]
-    prerequisites:
-      - "Defender Antivirus active"
-    logic:
-      selection:
-        EventID: 1013
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel "Microsoft-Windows-Windows Defender/Operational" --event-id 1013,1116,1117,1118,1119 --format llm
-    pivots:
-      - "Detections (1116/1117) just before the deletion show what the actor wanted hidden"
-    false_positives:
-      - "Scheduled history cleanup by retention settings"
-    severity: medium
-    sources:
-      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_history_delete.yml
-    verified: false
-    notes: "Single source opened."
-
-  - id: FH-IMP-009
-    title: Event log cleared as precursor (Security 1102, System 104)
-    tactic: impact
-    attack: [T1070.001]
-    channel: Security
-    provider: Microsoft-Windows-Eventlog
-    event_ids: [1102, 104]
-    prerequisites:
-      - "None for 1102 (always logged). 104 is written to the System log when a non-Security log is cleared"
-    logic:
-      selection_security:
-        EventID: 1102
-        Channel: Security
-      selection_system:
-        EventID: 104
-        Channel: System
-      condition: selection_security or selection_system
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 1102 --format llm
-      - forhunt search <paths> --channel System --event-id 104 --format llm
-    pivots:
-      - "UserData fields (SubjectUserName, SubjectLogonId for 1102) -> 4624 with the same TargetLogonId"
-      - "Sysmon 1 for wevtutil cl or Clear-EventLog around the same time"
-      - "Gap analysis: use forhunt stats to see how far back the surviving log goes"
-    false_positives:
-      - "Admin maintenance or lab/imaging resets"
-    severity: high
-    sources:
-      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_audit_log_cleared.yml
-    verified: false
-    notes: "Sigma confirms 1102 from provider Microsoft-Windows-Eventlog (plus legacy 517). 104 not confirmed from a source opened here; included from analyst knowledge. Field names of the UserData block should be checked against real samples."
-
-  - id: FH-IMP-010
-    title: Backup, AV or database service stopped (System 7036 / command line)
-    tactic: impact
-    attack: [T1489]
-    channel: System
-    provider: Service Control Manager
-    event_ids: [7036]
-    prerequisites:
-      - "None (Service Control Manager logs state changes by default)"
-    logic:
-      selection:
-        EventID: 7036
-        Provider: Service Control Manager
-        param2: 'stopped'
-        param1|re: '(?i)(veeam|backup|sql|mssql|vss|sophos|defend|msexchange|acronis|bedrock|memtas|mepocs|svc\$)'
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel System --event-id 7036 --field param2=stopped --format llm
-    pivots:
-      - "Burst: many distinct services stopping within a minute is typical pre-encryption behaviour (count(distinct param1) > 8 within 2m)"
-      - "Sysmon 1 for net stop, sc stop/config, taskkill, Stop-Service to identify the initiator (7036 has no user)"
-    false_positives:
-      - "Patch windows, reboots (shutdown stops everything), backup jobs that stop SQL writers"
-    severity: medium
-    sources:
-      - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1489/T1489.md
-    verified: false
-    notes: "7036 parameter layout (param1 service name, param2 state) from analyst knowledge, not confirmed from Microsoft docs in this session. Service name list is illustrative, tune to the estate. Exclude the reboot window using 1074/6006."
-
-  - id: FH-IMP-011
-    title: Service start type changed to disabled (System 7040) or sc config disabled
-    tactic: impact
-    attack: [T1489, T1562.001]
-    channel: System
-    provider: Service Control Manager
-    event_ids: [7040]
-    prerequisites:
-      - "None for 7040"
-      - "For the command-line variant: Sysmon event 1 or 4688 with command line"
-    logic:
-      selection:
-        EventID: 7040
-        param3|contains: 'disabled'
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel System --event-id 7040 --format llm
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~"start= disabled" --format llm
-    pivots:
-      - "Service name (param1) against backup/AV/SQL/EDR product lists"
-      - "Sysmon 13 on HKLM\\SYSTEM\\CurrentControlSet\\Services\\<name>\\Start for the initiating image"
-    false_positives:
-      - "Hardening scripts, software uninstalls"
-    severity: medium
-    sources:
-      - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1489/T1489.md
-    verified: false
-    notes: "7040 field names (param1 name, param2 old type, param3 new type) from analyst knowledge, unconfirmed here."
-
-  - id: FH-IMP-012
-    title: Service or process kill of security/backup tooling via taskkill, net stop or Stop-Service
-    tactic: impact
-    attack: [T1489, T1562.001]
-    channel: Microsoft-Windows-Sysmon/Operational
-    provider: Microsoft-Windows-Sysmon
-    event_ids: [1]
-    prerequisites:
-      - "Sysmon installed with a config that logs event 1; or Security 4688 with command line auditing"
-    logic:
-      selection_img:
-        Image|endswith:
-          - '\net.exe'
-          - '\net1.exe'
-          - '\sc.exe'
-          - '\taskkill.exe'
-          - '\powershell.exe'
-      selection_cli:
-        CommandLine|contains:
-          - ' stop '
-          - 'taskkill'
-          - 'Stop-Service'
-          - 'Stop-Process'
-      selection_target:
-        CommandLine|re: '(?i)(veeam|backup|sql|vss|sophos|defender|windefend|msexchange|acronis|mcafee|symantec|crowdstrike|sense)'
-      condition: selection_img and selection_cli and selection_target
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~"net stop" --format llm
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~taskkill --format llm
-    pivots:
-      - "Count of distinct stop commands by the same ParentProcessGuid (batch file hallmark)"
-      - "Correlate with System 7036 stopped bursts (IMP-010)"
-    false_positives:
-      - "Maintenance scripts, uninstallers"
-    severity: high
-    sources:
-      - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1489/T1489.md
-      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
-    verified: false
-    notes: "Atomic shows taskkill /f /im form. The target product regex is analyst-chosen and unsourced; the 'net stop' pattern in ransomware batch files is well known but no opened source quantifies it."
-
-  - id: FH-IMP-013
-    title: Mass file creation or rename burst with ransom-note style names (Sysmon 11)
-    tactic: impact
-    attack: [T1486]
-    channel: Microsoft-Windows-Sysmon/Operational
-    provider: Microsoft-Windows-Sysmon
-    event_ids: [11]
-    prerequisites:
-      - "Sysmon installed with a config that logs event 11 (FileCreate). Many configs exclude Office/doc paths; verify coverage"
-    logic:
-      selection:
-        EventID: 11
-      note_burst:
-        TargetFilename|re: '(?i)(readme|decrypt|restore|recover|how_to|ransom|_help_|instructions).*\.(txt|html|hta)$'
-      condition: count(selection) by Image > 500 within 1m or count(distinct TargetFilename directory) by TargetFilename basename > 20 within 5m
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 11 --regex TargetFilename='(?i)(readme|decrypt|restore|how_to).*\.(txt|html|hta)$' --format llm
-      - forhunt stats <paths> --format llm
-    pivots:
-      - "Image writing the files: hash it (Sysmon 1 Hashes), find its first execution and parent"
-      - "Same basename written into many directories = ransom note drop; new extension on many files = encryption pass"
-      - "Sysmon 23/26 deletes of originals (IMP-014)"
-    false_positives:
-      - "Software installers, backup/sync clients, build systems writing many files; legitimate README files"
-    severity: critical
-    sources:
-      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
-      - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1486/T1486.md
-    verified: false
-    notes: "Thresholds and the filename regex are heuristics, not from a vetted source. Atomic Red Team examples use names like YOUR_FILES.txt and akira_readme.txt. Sysmon does not log file renames as a distinct event: a rename shows as a new FileCreate (11) or as 23/26 for the old name. EVTX alone cannot prove encryption."
-
-  - id: FH-IMP-014
-    title: Mass file deletion burst (Sysmon 23 / 26)
-    tactic: impact
-    attack: [T1485, T1486]
-    channel: Microsoft-Windows-Sysmon/Operational
-    provider: Microsoft-Windows-Sysmon
-    event_ids: [23, 26]
-    prerequisites:
-      - "Sysmon 13+ with FileDelete (23) or FileDeleteDetected (26) rules. Event 23 archives deleted files to ArchiveDirectory and can fill the disk"
-    logic:
-      selection:
-        EventID:
-          - 23
-          - 26
-      condition: count(selection) by Image > 500 within 1m
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 23,26 --format llm
-    pivots:
-      - "Event 23 means a copy of the deleted file may exist in the Sysmon archive directory: recover it"
-      - "Combine with IMP-013 file creation bursts by the same Image"
-    false_positives:
-      - "Temp-file cleanup, browser cache clearing, build/CI hosts, disk cleanup"
-    severity: medium
-    sources:
-      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
-    verified: false
-    notes: "Event meanings confirmed by the Sysmon docs; the burst threshold is a heuristic with no source."
-
-  - id: FH-IMP-015
-    title: Secure deletion / free-space wipe (sdelete, cipher /w, Sysmon 28)
-    tactic: impact
-    attack: [T1485]
-    channel: Microsoft-Windows-Sysmon/Operational
-    provider: Microsoft-Windows-Sysmon
-    event_ids: [1, 28]
-    prerequisites:
-      - "Sysmon with event 1; event 28 (FileBlockShredding) needs Sysmon 14+ and a FileBlockShredding rule, and it blocks as well as logs"
-    logic:
-      selection_cipher:
-        Image|endswith: '\cipher.exe'
-        CommandLine|contains: '/w'
-      selection_sdelete:
-        Image|endswith:
-          - '\sdelete.exe'
-          - '\sdelete64.exe'
-      selection_blocked:
-        EventID: 28
-      condition: selection_cipher or selection_sdelete or selection_blocked
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~cipher --field CommandLine~/w --format llm
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1,28 --field Image~sdelete --format llm
-    pivots:
-      - "What was wiped first (file paths in earlier 11/23 events)? Wipe tools often run after exfiltration (COLL checks)"
-    false_positives:
-      - "Admins sanitising disks before decommissioning"
-    severity: high
-    sources:
-      - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1485/T1485.md
-      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
-    verified: false
-    notes: "cipher /w is in Atomic Red Team; Sysmon 28 purpose per Microsoft docs. sdelete execution has no source opened; renamed binaries evade the Image test, so also check OriginalFileName/Description."
-
-  - id: FH-IMP-016
-    title: Mass password changes or resets (4723 / 4724 burst) and many account lockouts (4740)
-    tactic: impact
-    attack: [T1531]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4723, 4724, 4740]
-    prerequisites:
-      - "Audit User Account Management (Success) for 4723/4724; Audit Account Lockout / User Account Management for 4740 (logged on the DC and on the machine that locked a local account)"
-    logic:
-      selection_pw:
-        EventID:
-          - 4723
-          - 4724
-      selection_lock:
-        EventID: 4740
-      condition: count(distinct TargetUserName) by SubjectUserName > 15 within 10m for selection_pw, or count(distinct TargetUserName) > 20 within 10m for selection_lock
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4723,4724 --format llm
-      - forhunt search <paths> --channel Security --event-id 4740 --format llm
-    pivots:
-      - "SubjectUserName / SubjectLogonId -> 4624 to see where the resetting admin session came from"
-      - "4740 CallerComputerName shows the source of bad passwords (spray vs. service with a stale password)"
-      - "Also check 4725 (disable) and 4726 (delete) bursts and 4738"
-    false_positives:
-      - "Helpdesk bulk resets, forced rotations, password-policy rollouts, service accounts with stale credentials"
-    severity: medium
-    sources:
-      - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
-    verified: false
-    notes: "Event ids appear in the catalog only for Mimikatz-style password change detection. The burst thresholds are heuristics. Impact-style account lockout/denial of access is ATT&CK T1531 (Account Access Removal)."
-
-  - id: FH-IMP-017
-    title: Safe-mode boot forced or system rebooted by script (bcdedit safeboot, shutdown)
-    tactic: impact
-    attack: [T1529, T1490]
-    channel: Microsoft-Windows-Sysmon/Operational
-    provider: Microsoft-Windows-Sysmon
-    event_ids: [1]
-    prerequisites:
-      - "Sysmon with event 1; or Security 4688 with command line auditing"
-    logic:
-      selection_safeboot:
-        Image|endswith: '\bcdedit.exe'
-        CommandLine|contains: 'safeboot'
-      selection_shutdown:
-        Image|endswith: '\shutdown.exe'
-        CommandLine|contains:
-          - '/r'
-          - '/s'
-          - '/f'
-      condition: selection_safeboot or selection_shutdown
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~shutdown --format llm
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~safeboot --format llm
-    pivots:
-      - "System 1074 on the same host gives the initiating process and user (see IMP-018)"
-    false_positives:
-      - "Patching reboots; admin shutdowns"
-    severity: medium
-    sources:
-      - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1529/T1529.md
-    verified: false
-    notes: "Atomic confirms shutdown /s and /r forms. bcdedit safeboot as a ransomware tactic is from analyst knowledge; no source opened here."
-
-  - id: FH-IMP-018
-    title: System shutdown or restart initiated (1074), unexpected shutdown (6008), log stop/start (6006/6005)
-    tactic: impact
-    attack: [T1529]
-    channel: System
-    provider: User32
-    event_ids: [1074, 6006, 6008, 6005]
-    prerequisites:
-      - "None (default System log events)"
-    logic:
-      selection_1074:
-        EventID: 1074
-      selection_6008:
-        EventID: 6008
-      selection_6006:
-        EventID: 6006
-      condition: selection_1074 or selection_6008 or selection_6006
-    forhunt:
-      - forhunt search <paths> --channel System --event-id 1074,6005,6006,6008 --format llm
-    pivots:
-      - "1074 names the initiating process, user and reason: a non-standard process (not svchost/TrustedInstaller/explorer) is notable"
-      - "6008 (unclean shutdown) near encryption or wiper activity may indicate forced power-off/crash"
-      - "Timeline: forhunt timeline around the reboot to see what ran just before"
-    false_positives:
-      - "Patching, maintenance windows, power failures"
-    severity: low
-    sources:
-      - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1529/T1529.md
-    verified: false
-    notes: "Event ids and field meanings are from analyst knowledge; Microsoft pages were unreachable. 1074 provider is User32; 6005/6006/6008 come from the EventLog provider."
-
-  - id: FH-IMP-019
-    title: Defacement or ransom wallpaper (web root writes, wallpaper registry change)
-    tactic: impact
-    attack: [T1491]
-    channel: Microsoft-Windows-Sysmon/Operational
-    provider: Microsoft-Windows-Sysmon
-    event_ids: [11, 13]
-    prerequisites:
-      - "Sysmon with event 11 and event 13 rules covering web roots and HKCU\\Control Panel\\Desktop"
-    logic:
-      selection_web:
-        EventID: 11
-        TargetFilename|contains:
-          - '\inetpub\wwwroot\'
-        TargetFilename|endswith:
-          - '.html'
-          - '.aspx'
-          - '.php'
-          - '.jpg'
-      filter_expected_writers:
-        Image|endswith:
-          - '\w3wp.exe'
-          - '\msdeploy.exe'
-      selection_wallpaper:
-        EventID: 13
-        TargetObject|endswith: '\Control Panel\Desktop\Wallpaper'
-      condition: (selection_web and not filter_expected_writers) or selection_wallpaper
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~Desktop\Wallpaper --format llm
-    pivots:
-      - "Image/User behind the write; IIS logs (not EVTX) for the upload path"
-    false_positives:
-      - "Normal web deployments; users changing wallpaper; corporate wallpaper policies"
-    severity: low
-    sources:
-      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
-    verified: false
-    notes: "Low-confidence, analyst-designed check. Defacement evidence is mostly in web server logs, which are outside EVTX."
+- id: FH-IMP-001
+  title: Shadow copy deletion via vssadmin, wmic or diskshadow command line
+  tactic: impact
+  attack:
+  - T1490
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 1
+  prerequisites:
+  - Sysmon installed with a config that logs event 1 (ProcessCreate)
+  - 'Alternative: Security 4688 with Audit Process Creation and the command line GPO enabled'
+  logic:
+    selection_img:
+      Image|endswith:
+      - \vssadmin.exe
+      - \wmic.exe
+      - \diskshadow.exe
+      - \powershell.exe
+      - \pwsh.exe
+    selection_cli:
+      CommandLine|contains|all:
+      - shadow
+      - delete
+    condition: selection_img and selection_cli
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~shadow
+    --format llm
+  - forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~shadow --format llm
+  pivots:
+  - 'ParentImage / ParentCommandLine and User: who launched it, from which session (LogonId -> 4624)'
+  - Look 0-30 minutes after for wbadmin, bcdedit, service stops (IMP-003, IMP-004, IMP-010) and mass file
+    activity (IMP-013)
+  - Same command on other hosts within minutes = scripted domain-wide deployment (GPO, PsExec, 7045)
+  false_positives:
+  - Backup software or admins pruning shadow copies (usually from a known service account or backup agent
+    parent)
+  severity: critical
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_susp_shadow_copies_deletion.yml
+  - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1490/T1490.md
+  - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/PanacheSysmon_vs_AtomicRedTeam01.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_susp_shadow_copies_deletion.yml
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/1: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log. JPCERT sheets mentioning the same event
+    ids/tools: vssadmin, wmic (informational). || Original notes: Sigma and Atomic Red Team agree on the
+    command forms (vssadmin delete shadows /all /quiet, wmic shadowcopy delete). Sysmon event 1 confirmed
+    by Microsoft Sysmon docs. Shell quoting/case varies; use case-insensitive contains.'
+- id: FH-IMP-002
+  title: Shadow copy deletion via PowerShell Win32_ShadowCopy
+  tactic: impact
+  attack:
+  - T1490
+  channel: Microsoft-Windows-PowerShell/Operational
+  provider: Microsoft-Windows-PowerShell
+  event_ids:
+  - 4104
+  prerequisites:
+  - PowerShell Script Block Logging enabled (4104)
+  logic:
+    selection:
+      EventID: 4104
+      ScriptBlockText|contains|all:
+      - Win32_ShadowCopy
+      - Delete
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field
+    ScriptBlockText~Win32_ShadowCopy --format llm
+  pivots:
+  - ScriptBlockId / Path and the 4624 logon behind the PowerShell host
+  - Sysmon 1 for powershell.exe around the same time to get the parent
+  false_positives:
+  - Admin cleanup scripts for VSS storage
+  severity: critical
+  sources:
+  - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1490/T1490.md
+  - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1016-System Network Configuration Discovery/ID800-4103-4104-Firewall
+    configuration enumerated (PowerShell).evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/powershell/powershell_script/posh_ps_susp_win32_shadowcopy_deletion.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-PowerShell/Operational/4104: MITRE CTI
+    data-component log source, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: 4104
+    field semantics not confirmed from a Microsoft page (Microsoft Learn was unreachable). || Original
+    notes: Command form from Atomic Red Team; event 4104 mapping from the EVTX-to-MITRE catalog. 4104
+    field semantics not confirmed from a Microsoft page (Microsoft Learn was unreachable).'
+- id: FH-IMP-003
+  title: Backup catalog or system state backup deletion with wbadmin
+  tactic: impact
+  attack:
+  - T1490
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 1
+  prerequisites:
+  - Sysmon installed with a config that logs event 1; or Security 4688 with command line auditing
+  logic:
+    selection:
+      Image|endswith: \wbadmin.exe
+      CommandLine|contains|all:
+      - delete
+      - catalog
+    selection_systemstate:
+      Image|endswith: \wbadmin.exe
+      CommandLine|contains|all:
+      - delete
+      - systemstatebackup
+    condition: selection or selection_systemstate
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~wbadmin
+    --field CommandLine~delete --format llm
+  pivots:
+  - Surrounding vssadmin / bcdedit commands (IMP-001, IMP-004) from the same ParentProcessGuid
+  false_positives:
+  - Backup administrators resetting a corrupted catalog (rare, ticketed)
+  severity: critical
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_susp_shadow_copies_deletion.yml
+  - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1490/T1490.md
+  - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/PanacheSysmon_vs_AtomicRedTeam01.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_wbadmin_delete_all_backups.yml
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/1: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log. || Original notes: Three independent catalogs
+    list wbadmin delete catalog (-quiet); Sysmon 1 per Microsoft docs.'
+- id: FH-IMP-004
+  title: Boot recovery disabled with bcdedit
+  tactic: impact
+  attack:
+  - T1490
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 1
+  prerequisites:
+  - Sysmon installed with a config that logs event 1; or Security 4688 with command line auditing
+  logic:
+    selection_img:
+      Image|endswith: \bcdedit.exe
+      CommandLine|contains: set
+    selection_recovery:
+      CommandLine|contains|all:
+      - recoveryenabled
+      - 'no'
+    selection_bootstatus:
+      CommandLine|contains|all:
+      - bootstatuspolicy
+      - ignoreallfailures
+    condition: selection_img and (selection_recovery or selection_bootstatus)
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~bcdedit
+    --field CommandLine~recoveryenabled --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~bcdedit
+    --field CommandLine~bootstatuspolicy --format llm
+  pivots:
+  - Check for other bcdedit changes such as safeboot (see IMP-017) in the same session
+  - Parent process and user; look for the ransomware binary starting soon after
+  false_positives:
+  - Rare admin troubleshooting; some imaging/deployment scripts
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_bcdedit_boot_conf_tamper.yml
+  - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1490/T1490.md
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/PanacheSysmon_vs_AtomicRedTeam01.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_bcdedit_boot_conf_tamper.yml
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/1: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log. || Original notes: Sigma and Atomic Red
+    Team agree on both option pairs (bootstatuspolicy ignoreallfailures, recoveryenabled no).'
+- id: FH-IMP-005
+  title: Shadow storage shrunk to force deletion of snapshots (vssadmin resize shadowstorage)
+  tactic: impact
+  attack:
+  - T1490
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 1
+  prerequisites:
+  - Sysmon installed with a config that logs event 1; or Security 4688 with command line auditing
+  logic:
+    selection:
+      Image|endswith: \vssadmin.exe
+      CommandLine|contains|all:
+      - resize
+      - shadowstorage
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~vssadmin
+    --field CommandLine~shadowstorage --format llm
+  pivots:
+  - Same pivots as IMP-001
+  false_positives:
+  - Admins legitimately sizing VSS storage (MaxSize=<sane value> rather than UNBOUNDED or very small values)
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_susp_shadow_copies_deletion.yml
+  - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1490/T1490.md
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/PanacheSysmon_vs_AtomicRedTeam01.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_susp_shadow_copies_deletion.yml
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/1: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log. JPCERT sheets mentioning the same event
+    ids/tools: vssadmin (informational). || Original notes: Sigma focuses on ''unbounded'' values; Atomic
+    shows a small MaxSize (20%) form. Treat an unusually small MaxSize on the same volume as suspect too.'
+- id: FH-IMP-006
+  title: Defender real-time protection disabled (5001)
+  tactic: impact
+  attack:
+  - T1685
+  - T1562.001
+  channel: Microsoft-Windows-Windows Defender/Operational
+  provider: Microsoft-Windows-Windows Defender
+  event_ids:
+  - 5001
+  prerequisites:
+  - Microsoft Defender Antivirus is the active AV (not passive mode / third-party AV)
+  logic:
+    selection:
+      EventID: 5001
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel "Microsoft-Windows-Windows Defender/Operational" --event-id 5001,5010,5012,5013,5007
+    --format llm
+  pivots:
+  - 'The event does not record who did it: look at Sysmon 13 on HKLM\SOFTWARE\Policies\Microsoft\Windows
+    Defender and 1 for powershell Set-MpPreference around the timestamp'
+  - 5007 (configuration changed) with Old/New values nearby; 5013 if Tamper Protection blocked a change
+  false_positives:
+  - Defender updates, onboarding of third-party AV, admin maintenance
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_real_time_protection_disabled.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/windefend/win_defender_real_time_protection_disabled.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Windows Defender/Operational/5001: rule
+    project.  Open: event id / channel pair has fewer than two independent confirmations (ndows Defender/5001(rule)).
+    ATT&CK: legacy id(s) T1562.001 were revoked in the current mitre/cti enterprise-attack data; the replacement
+    id is listed first and the legacy id is kept after it. || Original notes: Only one source actually
+    opened (Sigma, which itself cites Microsoft Learn). Microsoft page not readable in this session. The
+    channel string is ''Microsoft-Windows-Windows Defender/Operational''.'
+- id: FH-IMP-007
+  title: Tamper Protection blocked a Defender setting change (5013)
+  tactic: impact
+  attack:
+  - T1685
+  - T1562.001
+  channel: Microsoft-Windows-Windows Defender/Operational
+  provider: Microsoft-Windows-Windows Defender
+  event_ids:
+  - 5013
+  prerequisites:
+  - Defender Tamper Protection enabled
+  logic:
+    selection:
+      EventID: 5013
+      Value|endswith:
+      - \DisableAntiSpyware
+      - \DisableAntiVirus
+      - \DisableRealtimeMonitoring
+      - \DisableBehaviorMonitoring
+      - \DisableIOAVProtection
+      - \DisableScriptScanning
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel "Microsoft-Windows-Windows Defender/Operational" --event-id 5013
+    --format llm
+  pivots:
+  - 'A blocked attempt proves an actor with admin rights was on the host: pull Sysmon 1 and 4624 around
+    the timestamp'
+  false_positives:
+  - Management tools that legitimately try to modify protected settings
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_tamper_protection_trigger.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/windefend/win_defender_tamper_protection_trigger.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Windows Defender/Operational/5013: rule
+    project.  Open: event id / channel pair has fewer than two independent confirmations (ndows Defender/5013(rule))
+    | field name confirmed by a single rule project only (not seen in a real log) (Value). ATT&CK: legacy
+    id(s) T1562.001 were revoked in the current mitre/cti enterprise-attack data; the replacement id is
+    listed first and the legacy id is kept after it. || Original notes: Single source opened. The Value
+    field naming is from that rule.'
+- id: FH-IMP-008
+  title: Defender detection history deleted (1013)
+  tactic: impact
+  attack:
+  - T1685
+  - T1562.001
+  - T1070
+  channel: Microsoft-Windows-Windows Defender/Operational
+  provider: Microsoft-Windows-Windows Defender
+  event_ids:
+  - 1013
+  prerequisites:
+  - Defender Antivirus active
+  logic:
+    selection:
+      EventID: 1013
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel "Microsoft-Windows-Windows Defender/Operational" --event-id 1013,1116,1117,1118,1119
+    --format llm
+  pivots:
+  - Detections (1116/1117) just before the deletion show what the actor wanted hidden
+  false_positives:
+  - Scheduled history cleanup by retention settings
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_history_delete.yml
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/windefend/win_defender_history_delete.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Windows Defender/Operational/1013: rule
+    project.  Open: event id / channel pair has fewer than two independent confirmations (ndows Defender/1013(rule)).
+    ATT&CK: legacy id(s) T1562.001 were revoked in the current mitre/cti enterprise-attack data; the replacement
+    id is listed first and the legacy id is kept after it. || Original notes: Single source opened.'
+- id: FH-IMP-009
+  title: Event log cleared as precursor (Security 1102, System 104)
+  tactic: impact
+  attack:
+  - T1685.005
+  - T1070.001
+  channel: Security
+  provider: Microsoft-Windows-Eventlog
+  event_ids:
+  - 1102
+  - 104
+  prerequisites:
+  - None for 1102 (always logged). 104 is written to the System log when a non-Security log is cleared
+  logic:
+    selection_security:
+      EventID: 1102
+      Channel: Security
+    selection_system:
+      EventID: 104
+      Channel: System
+    condition: selection_security or selection_system
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 1102 --format llm
+  - forhunt search <paths> --channel System --event-id 104 --format llm
+  pivots:
+  - UserData fields (SubjectUserName, SubjectLogonId for 1102) -> 4624 with the same TargetLogonId
+  - Sysmon 1 for wevtutil cl or Clear-EventLog around the same time
+  - 'Gap analysis: use forhunt stats to see how far back the surviving log goes'
+  false_positives:
+  - Admin maintenance or lab/imaging resets
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_audit_log_cleared.yml
+  - 'sample: EVTX-ATTACK-SAMPLES/Defense Evasion/DE_1102_security_log_cleared.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/microsoft_windows_eventlog/win_system_susp_eventlog_cleared.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/1102: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/104: rule project.  Open: event
+    id / channel pair has fewer than two independent confirmations (Security/104(rule)). ATT&CK: legacy
+    id(s) T1070.001 were revoked in the current mitre/cti enterprise-attack data; the replacement id is
+    listed first and the legacy id is kept after it. || Original notes: Sigma confirms 1102 from provider
+    Microsoft-Windows-Eventlog (plus legacy 517). 104 not confirmed from a source opened here; included
+    from analyst knowledge. Field names of the UserData block should be checked against real samples.'
+- id: FH-IMP-010
+  title: Backup, AV or database service stopped (System 7036 / command line)
+  tactic: impact
+  attack:
+  - T1489
+  channel: System
+  provider: Service Control Manager
+  event_ids:
+  - 7036
+  prerequisites:
+  - None (Service Control Manager logs state changes by default)
+  logic:
+    selection:
+      EventID: 7036
+      Provider: Service Control Manager
+      param2: stopped
+      param1|re: (?i)(veeam|backup|sql|mssql|vss|sophos|defend|msexchange|acronis|bedrock|memtas|mepocs|svc\$)
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel System --event-id 7036 --field param2=stopped --format llm
+  pivots:
+  - 'Burst: many distinct services stopping within a minute is typical pre-encryption behaviour (count(distinct
+    param1) > 8 within 2m)'
+  - Sysmon 1 for net stop, sc stop/config, taskkill, Stop-Service to identify the initiator (7036 has
+    no user)
+  false_positives:
+  - Patch windows, reboots (shutdown stops everything), backup jobs that stop SQL writers
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1489/T1489.md
+  - 'sample: EVTX-ATTACK-SAMPLES/Defense Evasion/DE_WinEventLogSvc_Crash_System_7036.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/service_control_manager/win_system_defender_disabled.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: System/7036: MITRE CTI data-component log
+    source, rule project, real sample log.  Open: event ids, channel and fields are confirmed (see above)
+    but the detection logic goes beyond what any opened rule/source states: 7036 parameter layout (param1
+    service name, param2 state) from analyst knowledge, not confirmed from Microsoft docs in this session.
+    || Original notes: 7036 parameter layout (param1 service name, param2 state) from analyst knowledge,
+    not confirmed from Microsoft docs in this session. Service name list is illustrative, tune to the
+    estate. Exclude the reboot window using 1074/6006.'
+- id: FH-IMP-011
+  title: Service start type changed to disabled (System 7040) or sc config disabled
+  tactic: impact
+  attack:
+  - T1489
+  - T1685
+  - T1562.001
+  channel: System
+  provider: Service Control Manager
+  event_ids:
+  - 7040
+  prerequisites:
+  - None for 7040
+  - 'For the command-line variant: Sysmon event 1 or 4688 with command line'
+  logic:
+    selection:
+      EventID: 7040
+      param3|contains: disabled
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel System --event-id 7040 --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~"start=
+    disabled" --format llm
+  pivots:
+  - Service name (param1) against backup/AV/SQL/EDR product lists
+  - Sysmon 13 on HKLM\SYSTEM\CurrentControlSet\Services\<name>\Start for the initiating image
+  false_positives:
+  - Hardening scripts, software uninstalls
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1489/T1489.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0006-Credential Access/T1649- Steal or Forge Authentication Certificates/ID
+    39 KDC - ADCS ESC 1 auth request.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/System/Sys_7040_Med_EventLogServiceStartupDisabled.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: System/7040: MITRE CTI data-component log
+    source, rule project, real sample log.  Open: event ids, channel and fields are confirmed (see above)
+    but the detection logic goes beyond what any opened rule/source states: 7040 field names (param1 name,
+    param2 old type, param3 new type) from analyst knowledge, unconfirmed here. ATT&CK: legacy id(s) T1562.001
+    were revoked in the current mitre/cti enterprise-attack data; the replacement id is listed first and
+    the legacy id is kept after it. || Original notes: 7040 field names (param1 name, param2 old type,
+    param3 new type) from analyst knowledge, unconfirmed here.'
+- id: FH-IMP-012
+  title: Service or process kill of security/backup tooling via taskkill, net stop or Stop-Service
+  tactic: impact
+  attack:
+  - T1489
+  - T1685
+  - T1562.001
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 1
+  prerequisites:
+  - Sysmon installed with a config that logs event 1; or Security 4688 with command line auditing
+  logic:
+    selection_img:
+      Image|endswith:
+      - \net.exe
+      - \net1.exe
+      - \sc.exe
+      - \taskkill.exe
+      - \powershell.exe
+    selection_cli:
+      CommandLine|contains:
+      - ' stop '
+      - taskkill
+      - Stop-Service
+      - Stop-Process
+    selection_target:
+      CommandLine|re: (?i)(veeam|backup|sql|vss|sophos|defender|windefend|msexchange|acronis|mcafee|symantec|crowdstrike|sense)
+    condition: selection_img and selection_cli and selection_target
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~"net
+    stop" --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~taskkill
+    --format llm
+  pivots:
+  - Count of distinct stop commands by the same ParentProcessGuid (batch file hallmark)
+  - Correlate with System 7036 stopped bursts (IMP-010)
+  false_positives:
+  - Maintenance scripts, uninstallers
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1489/T1489.md
+  - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/PanacheSysmon_vs_AtomicRedTeam01.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_spoolsv_susp_child_processes.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/1: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: The
+    target product regex is analyst-chosen and unsourced; the ''net stop'' pattern in ransomware batch
+    files is well known but no opened source quantifies it. ATT&CK: legacy id(s) T1562.001 were revoked
+    in the current mitre/cti enterprise-attack data; the replacement id is listed first and the legacy
+    id is kept after it. || Original notes: Atomic shows taskkill /f /im form. The target product regex
+    is analyst-chosen and unsourced; the ''net stop'' pattern in ransomware batch files is well known
+    but no opened source quantifies it.'
+- id: FH-IMP-013
+  title: Mass file creation or rename burst with ransom-note style names (Sysmon 11)
+  tactic: impact
+  attack:
+  - T1486
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 11
+  prerequisites:
+  - Sysmon installed with a config that logs event 11 (FileCreate). Many configs exclude Office/doc paths;
+    verify coverage
+  logic:
+    selection:
+      EventID: 11
+    note_burst:
+      TargetFilename|re: (?i)(readme|decrypt|restore|recover|how_to|ransom|_help_|instructions).*\.(txt|html|hta)$
+    condition: count(selection) by Image > 500 within 1m or count(distinct TargetFilename directory) by
+      TargetFilename basename > 20 within 5m
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 11 --regex TargetFilename='(?i)(readme|decrypt|restore|how_to).*\.(txt|html|hta)$'
+    --format llm
+  - forhunt stats <paths> --format llm
+  pivots:
+  - 'Image writing the files: hash it (Sysmon 1 Hashes), find its first execution and parent'
+  - Same basename written into many directories = ransom note drop; new extension on many files = encryption
+    pass
+  - Sysmon 23/26 deletes of originals (IMP-014)
+  false_positives:
+  - Software installers, backup/sync clients, build systems writing many files; legitimate README files
+  severity: critical
+  sources:
+  - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+  - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1486/T1486.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0004-Privilege Escalation/T1068-Exploitation for Privilege Escalation/ID12-13
+    Mini_Plasma_PoC_AbortHydration_ArbitraryRegKey_EoP.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/11: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: Thresholds
+    and the filename regex are heuristics, not from a vetted source. || Original notes: Thresholds and
+    the filename regex are heuristics, not from a vetted source. Atomic Red Team examples use names like
+    YOUR_FILES.txt and akira_readme.txt. Sysmon does not log file renames as a distinct event: a rename
+    shows as a new FileCreate (11) or as 23/26 for the old name. EVTX alone cannot prove encryption.'
+- id: FH-IMP-014
+  title: Mass file deletion burst (Sysmon 23 / 26)
+  tactic: impact
+  attack:
+  - T1485
+  - T1486
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 23
+  - 26
+  prerequisites:
+  - Sysmon 13+ with FileDelete (23) or FileDeleteDetected (26) rules. Event 23 archives deleted files
+    to ArchiveDirectory and can fill the disk
+  logic:
+    selection:
+      EventID:
+      - 23
+      - 26
+    condition: count(selection) by Image > 500 within 1m
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 23,26 --format llm
+  pivots:
+  - 'Event 23 means a copy of the deleted file may exist in the Sysmon archive directory: recover it'
+  - Combine with IMP-013 file creation bursts by the same Image
+  false_positives:
+  - Temp-file cleanup, browser cache clearing, build/CI hosts, disk cleanup
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+  - 'sample: EVTX-ATTACK-SAMPLES/Privilege Escalation/Sysmon_UACME_64.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_delete/file_delete_win_delete_prefetch.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/23: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; MW-Sysmon/Operational/26: Microsoft docs,
+    rule project.  Open: event ids, channel and fields are confirmed (see above) but the detection logic
+    goes beyond what any opened rule/source states: Event meanings confirmed by the Sysmon docs; the burst
+    threshold is a heuristic with no source. || Original notes: Event meanings confirmed by the Sysmon
+    docs; the burst threshold is a heuristic with no source.'
+- id: FH-IMP-015
+  title: Secure deletion / free-space wipe (sdelete, cipher /w, Sysmon 28)
+  tactic: impact
+  attack:
+  - T1485
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 1
+  - 28
+  prerequisites:
+  - Sysmon with event 1; event 28 (FileBlockShredding) needs Sysmon 14+ and a FileBlockShredding rule,
+    and it blocks as well as logs
+  logic:
+    selection_cipher:
+      Image|endswith: \cipher.exe
+      CommandLine|contains: /w
+    selection_sdelete:
+      Image|endswith:
+      - \sdelete.exe
+      - \sdelete64.exe
+    selection_blocked:
+      EventID: 28
+    condition: selection_cipher or selection_sdelete or selection_blocked
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~cipher
+    --field CommandLine~/w --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1,28 --field Image~sdelete
+    --format llm
+  pivots:
+  - What was wiped first (file paths in earlier 11/23 events)? Wipe tools often run after exfiltration
+    (COLL checks)
+  false_positives:
+  - Admins sanitising disks before decommissioning
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1485/T1485.md
+  - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/PanacheSysmon_vs_AtomicRedTeam01.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_renamed_sysinternals_sdelete.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/1: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; MW-Sysmon/Operational/28: Microsoft docs,
+    rule project.  Open: event ids, channel and fields are confirmed (see above) but the detection logic
+    goes beyond what any opened rule/source states. JPCERT sheets mentioning the same event ids/tools:
+    sdelete (informational). || Original notes: cipher /w is in Atomic Red Team; Sysmon 28 purpose per
+    Microsoft docs. sdelete execution has no source opened; renamed binaries evade the Image test, so
+    also check OriginalFileName/Description.'
+- id: FH-IMP-016
+  title: Mass password changes or resets (4723 / 4724 burst) and many account lockouts (4740)
+  tactic: impact
+  attack:
+  - T1531
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4723
+  - 4724
+  - 4740
+  prerequisites:
+  - Audit User Account Management (Success) for 4723/4724; Audit Account Lockout / User Account Management
+    for 4740 (logged on the DC and on the machine that locked a local account)
+  logic:
+    selection_pw:
+      EventID:
+      - 4723
+      - 4724
+    selection_lock:
+      EventID: 4740
+    condition: count(distinct TargetUserName) by SubjectUserName > 15 within 10m for selection_pw, or
+      count(distinct TargetUserName) > 20 within 10m for selection_lock
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4723,4724 --format llm
+  - forhunt search <paths> --channel Security --event-id 4740 --format llm
+  pivots:
+  - SubjectUserName / SubjectLogonId -> 4624 to see where the resetting admin session came from
+  - 4740 CallerComputerName shows the source of bad passwords (spray vs. service with a stale password)
+  - Also check 4725 (disable) and 4726 (delete) bursts and 4738
+  false_positives:
+  - Helpdesk bulk resets, forced rotations, password-policy rollouts, service accounts with stale credentials
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0003-Persistence/T1098.xxx-Account manipulation/ID4723-5145-password
+    reset with changeNTLM (Mimikatz).evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - 'sample: EVTX-ATTACK-SAMPLES/Privilege Escalation/samaccount_spoofing_CVE-2021-42287_CVE-2021-42278_DC_securitylogs.evtx'
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/AccountManagement/UserAccountManagement/Sec_4724_Med_AcctPassword_OtherChanged.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4723: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/4724: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/4740: MITRE CTI data-component
+    log source, Microsoft docs.  Open: event ids, channel and fields are confirmed (see above) but the
+    detection logic goes beyond what any opened rule/source states: The burst thresholds are heuristics.
+    JPCERT sheets mentioning the same event ids/tools: net-user (informational). || Original notes: Event
+    ids appear in the catalog only for Mimikatz-style password change detection. The burst thresholds
+    are heuristics. Impact-style account lockout/denial of access is ATT&CK T1531 (Account Access Removal).'
+- id: FH-IMP-017
+  title: Safe-mode boot forced or system rebooted by script (bcdedit safeboot, shutdown)
+  tactic: impact
+  attack:
+  - T1529
+  - T1490
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 1
+  prerequisites:
+  - Sysmon with event 1; or Security 4688 with command line auditing
+  logic:
+    selection_safeboot:
+      Image|endswith: \bcdedit.exe
+      CommandLine|contains: safeboot
+    selection_shutdown:
+      Image|endswith: \shutdown.exe
+      CommandLine|contains:
+      - /r
+      - /s
+      - /f
+    condition: selection_safeboot or selection_shutdown
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~shutdown
+    --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~safeboot
+    --format llm
+  pivots:
+  - System 1074 on the same host gives the initiating process and user (see IMP-018)
+  false_positives:
+  - Patching reboots; admin shutdowns
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1529/T1529.md
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/PanacheSysmon_vs_AtomicRedTeam01.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_bcdedit_susp_execution.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/1: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: bcdedit
+    safeboot as a ransomware tactic is from analyst knowledge; no source opened here. || Original notes:
+    Atomic confirms shutdown /s and /r forms. bcdedit safeboot as a ransomware tactic is from analyst
+    knowledge; no source opened here.'
+- id: FH-IMP-018
+  title: System shutdown or restart initiated (1074), unexpected shutdown (6008), log stop/start (6006/6005)
+  tactic: impact
+  attack:
+  - T1529
+  channel: System
+  provider: User32
+  event_ids:
+  - 1074
+  - 6006
+  - 6008
+  - 6005
+  prerequisites:
+  - None (default System log events)
+  logic:
+    selection_1074:
+      EventID: 1074
+    selection_6008:
+      EventID: 6008
+    selection_6006:
+      EventID: 6006
+    condition: selection_1074 or selection_6008 or selection_6006
+  forhunt:
+  - forhunt search <paths> --channel System --event-id 1074,6005,6006,6008 --format llm
+  pivots:
+  - '1074 names the initiating process, user and reason: a non-standard process (not svchost/TrustedInstaller/explorer)
+    is notable'
+  - 6008 (unclean shutdown) near encryption or wiper activity may indicate forced power-off/crash
+  - 'Timeline: forhunt timeline around the reboot to see what ran just before'
+  false_positives:
+  - Patching, maintenance windows, power failures
+  severity: low
+  sources:
+  - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1529/T1529.md
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/System/Sys_6008_Low_UnexpectedShutdown.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/1074: MITRE CTI data-component
+    log source; System/6006: rule project; System/6008: Microsoft docs, rule project; System/6005: rule
+    project.  Open: event id / channel pair has fewer than two independent confirmations (Security/1074(cti),System/6006(rule),System/6005(rule)).
+    || Original notes: Event ids and field meanings are from analyst knowledge; Microsoft pages were unreachable.
+    1074 provider is User32; 6005/6006/6008 come from the EventLog provider.'
+- id: FH-IMP-019
+  title: Defacement or ransom wallpaper (web root writes, wallpaper registry change)
+  tactic: impact
+  attack:
+  - T1491
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 11
+  - 13
+  prerequisites:
+  - Sysmon with event 11 and event 13 rules covering web roots and HKCU\Control Panel\Desktop
+  logic:
+    selection_web:
+      EventID: 11
+      TargetFilename|contains:
+      - \inetpub\wwwroot\
+      TargetFilename|endswith:
+      - .html
+      - .aspx
+      - .php
+      - .jpg
+    filter_expected_writers:
+      Image|endswith:
+      - \w3wp.exe
+      - \msdeploy.exe
+    selection_wallpaper:
+      EventID: 13
+      TargetObject|endswith: \Control Panel\Desktop\Wallpaper
+    condition: (selection_web and not filter_expected_writers) or selection_wallpaper
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~Desktop\Wallpaper
+    --format llm
+  pivots:
+  - Image/User behind the write; IIS logs (not EVTX) for the upload path
+  false_positives:
+  - Normal web deployments; users changing wallpaper; corporate wallpaper policies
+  severity: low
+  sources:
+  - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0004-Privilege Escalation/T1068-Exploitation for Privilege Escalation/ID12-13
+    Mini_Plasma_PoC_AbortHydration_ArbitraryRegKey_EoP.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_exchange_webshell_drop.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/11: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; MW-Sysmon/Operational/13: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states. || Original
+    notes: Low-confidence, analyst-designed check. Defacement evidence is mostly in web server logs, which
+    are outside EVTX.'

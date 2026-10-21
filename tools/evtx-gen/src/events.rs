@@ -50,7 +50,50 @@ fn system() -> Node {
     )
 }
 
-/// Builds `<Event><System/><EventData><Data Name=..>%n</Data>...</EventData></Event>`.
+fn guid(seed: u32) -> [u8; 16] {
+    let mut guid = [0u8; 16];
+    guid[0..4].copy_from_slice(&seed.to_le_bytes());
+    guid[4..8].copy_from_slice(&0x4648_4754u32.to_le_bytes()); // "FHGT"
+    for (i, b) in guid[8..].iter_mut().enumerate() {
+        *b = (seed as u8).wrapping_mul(31).wrapping_add(i as u8 * 17);
+    }
+    guid
+}
+
+/// Windows' usual layout: `<Event><System/>%15</Event>` where substitution 15
+/// is a nested template instance (BinXML value) holding the `EventData`.
+fn outer_template(seed: u32) -> Template {
+    let root = el(
+        "Event",
+        vec![("xmlns", Content::Text(EVENT_NS))],
+        vec![system(), sub(SYS_SUBS + 1, Ty::BinXml)],
+    );
+    Template {
+        guid: guid(seed),
+        root,
+    }
+}
+
+/// `<EventData><Data Name=..>%n</Data>...</EventData>` (substitutions from 0).
+fn payload_template(seed: u32, fields: &[(&'static str, Ty)]) -> Template {
+    let data = fields
+        .iter()
+        .enumerate()
+        .map(|(i, (n, ty))| {
+            el(
+                "Data",
+                vec![("Name", Content::Text(n))],
+                vec![sub(i as u16, *ty)],
+            )
+        })
+        .collect();
+    Template {
+        guid: guid(seed),
+        root: el("EventData", vec![], data),
+    }
+}
+
+/// Flat layout: `<Event><System/><EventData><Data Name=..>%n</Data>...</EventData></Event>`.
 fn template(seed: u32, fields: &[(&'static str, Ty)]) -> Template {
     let data = fields
         .iter()
@@ -566,12 +609,27 @@ pub static SPECS: &[Spec] = &[
     },
 ];
 
+/// Two templates per spec: index `2i` is the record template, `2i + 1` the
+/// nested payload template (unused for flat specs, see [`nested`]).
 pub fn templates() -> Vec<Template> {
-    SPECS
-        .iter()
-        .enumerate()
-        .map(|(i, s)| template(0x1000 + i as u32 + s.event_id as u32 * 64, s.fields))
-        .collect()
+    let mut out = Vec::new();
+    for (i, s) in SPECS.iter().enumerate() {
+        let seed = 0x1000 + i as u32 + s.event_id as u32 * 64;
+        if nested(s.kind) {
+            out.push(outer_template(seed));
+            out.push(payload_template(seed ^ 0x8000_0000, s.fields));
+        } else {
+            out.push(template(seed, s.fields));
+            out.push(template(seed, s.fields));
+        }
+    }
+    out
+}
+
+/// Whether the event's payload is a nested template (most providers) or
+/// inline in the record template (kept for PowerShell to cover both shapes).
+pub fn nested(kind: Kind) -> bool {
+    kind != Kind::PsScript4104
 }
 
 pub fn spec(kind: Kind) -> (usize, &'static Spec) {
@@ -579,6 +637,7 @@ pub fn spec(kind: Kind) -> (usize, &'static Spec) {
         .iter()
         .enumerate()
         .find(|(_, s)| s.kind == kind)
+        .map(|(i, s)| (2 * i, s))
         .expect("kind has a spec")
 }
 

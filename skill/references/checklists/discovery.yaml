@@ -1,583 +1,825 @@
 tactic: discovery
 title: Discovery
-description: >
-  Discovery in EVTX is a mix of process telemetry (net.exe, nltest, whoami, AdFind, wmic, setspn;
-  Sysmon 1 or Security 4688) and directory/SMB telemetry on servers and domain controllers
-  (4662, 4661, 4798, 4799, 5140, 5145, Sysmon 3, WFP 5156/5157). Individual commands are noisy
-  and mostly benign; the signal is a burst of several distinct tools in a short window by one
-  user or parent, or high-volume enumeration from a single source (BloodHound/SharpHound). Command-line
-  checks use Sysmon 1; the same logic applies to Security 4688 with NewProcessName and CommandLine.
+description: 'Discovery in EVTX is a mix of process telemetry (net.exe, nltest, whoami, AdFind, wmic,
+  setspn; Sysmon 1 or Security 4688) and directory/SMB telemetry on servers and domain controllers (4662,
+  4661, 4798, 4799, 5140, 5145, Sysmon 3, WFP 5156/5157). Individual commands are noisy and mostly benign;
+  the signal is a burst of several distinct tools in a short window by one user or parent, or high-volume
+  enumeration from a single source (BloodHound/SharpHound). Command-line checks use Sysmon 1; the same
+  logic applies to Security 4688 with NewProcessName and CommandLine.
+
+  '
 checks:
-  - id: FH-DISC-001
-    title: Account and group enumeration with net.exe / net1.exe
-    tactic: discovery
-    attack: [T1087.001, T1087.002, T1069.001, T1069.002, T1135]
-    channel: Microsoft-Windows-Sysmon/Operational
-    provider: Microsoft-Windows-Sysmon
-    event_ids: [1]
-    prerequisites:
-      - "Sysmon installed with a config that logs event 1; or Security 4688 with command line auditing"
-    logic:
-      selection_img:
-        Image|endswith:
-          - '\net.exe'
-          - '\net1.exe'
-      selection_cli:
-        CommandLine|contains:
-          - ' user'
-          - ' group'
-          - ' localgroup'
-          - ' view'
-          - ' share'
-          - ' accounts'
-          - ' config'
-      condition: selection_img and selection_cli
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~net --field CommandLine~"/domain" --format llm
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~"net group" --format llm
-    pivots:
-      - "'domain admins', 'enterprise admins', 'net view /domain', '/domain' suffix = targeted AD reconnaissance"
-      - "ParentImage: cmd/powershell spawned by an Office app, script host, remote execution service (7045/services.exe) or WMI (wmiprvse.exe)"
-      - "See DISC-003 for burst scoring across discovery tools"
-    false_positives:
-      - "Admin scripts, logon scripts mapping drives with net use/view, inventory tools"
-    severity: low
-    sources:
-      - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
-      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
-    verified: false
-    notes: "A single net.exe call is rarely malicious. The EVTX-to-MITRE catalog lists user/group/share discovery by command line as event 1 or 4688, but no source opened here gives exact argument lists; the argument list above is analyst-written."
-
-  - id: FH-DISC-002
-    title: Domain controller and trust discovery with nltest
-    tactic: discovery
-    attack: [T1482, T1018, T1016]
-    channel: Microsoft-Windows-Sysmon/Operational
-    provider: Microsoft-Windows-Sysmon
-    event_ids: [1]
-    prerequisites:
-      - "Sysmon installed with a config that logs event 1; or Security 4688 with command line auditing"
-    logic:
-      selection_img:
-        Image|endswith: '\nltest.exe'
-      selection_cli:
-        CommandLine|contains:
-          - 'dclist'
-          - 'domain_trusts'
-          - 'all_trusts'
-          - 'dsgetdc'
-          - 'dnsgetdc'
-          - 'trusted_domains'
-          - 'parentdomain'
-          - '/server'
-      condition: selection_img and selection_cli
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~nltest --format llm
-    pivots:
-      - "Often paired with net group 'domain admins' /domain, AdFind (DISC-004) and ping sweeps in the same minutes"
-      - "ParentImage and User; hands-on-keyboard sessions from a freshly compromised workstation"
-    false_positives:
-      - "Domain-join troubleshooting, health scripts"
-    severity: medium
-    sources:
-      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_nltest_recon.yml
-      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
-    verified: false
-    notes: "Only the Sigma rule gives the argument list; its cited incident reports (DFIR Report Ryuk/Trickbot) were not opened here."
-
-  - id: FH-DISC-003
-    title: Burst of discovery utilities from one session (whoami, systeminfo, ipconfig, arp, route, netstat, quser, qwinsta, tasklist)
-    tactic: discovery
-    attack: [T1033, T1082, T1016, T1049, T1057, T1007]
-    channel: Microsoft-Windows-Sysmon/Operational
-    provider: Microsoft-Windows-Sysmon
-    event_ids: [1]
-    prerequisites:
-      - "Sysmon installed with a config that logs event 1 (and does not filter out these tools); or Security 4688 with command line auditing"
-    logic:
-      selection:
-        Image|endswith:
-          - '\whoami.exe'
-          - '\systeminfo.exe'
-          - '\ipconfig.exe'
-          - '\arp.exe'
-          - '\route.exe'
-          - '\netstat.exe'
-          - '\quser.exe'
-          - '\qwinsta.exe'
-          - '\tasklist.exe'
-          - '\hostname.exe'
-          - '\nslookup.exe'
-          - '\net.exe'
-          - '\net1.exe'
-          - '\nltest.exe'
-      condition: count(distinct Image) by ParentProcessGuid > 4 within 2m
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~whoami --format llm
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --regex Image='(?i)\\(whoami|systeminfo|ipconfig|arp|route|netstat|quser|qwinsta|tasklist)\.exe$' --format llm
-    pivots:
-      - "whoami /all, /priv or /groups is a stronger signal than bare whoami"
-      - "ParentImage: cmd.exe launched by a script/RMM/remote shell; check the user and the originating 4624"
-      - "Output redirection to a file (> C:\\Users\\Public\\x.txt) suggests staging for later collection (see COLL checks)"
-    false_positives:
-      - "Support staff troubleshooting, RMM and inventory agents, monitoring scripts"
-    severity: medium
-    sources:
-      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
-    verified: false
-    notes: "The threshold (distinct tools in 2 minutes) is a heuristic and has no external source. Other catalogs treat these as 'event 1 or 4688' commandline detections."
-
-  - id: FH-DISC-004
-    title: AdFind Active Directory query tool
-    tactic: discovery
-    attack: [T1018, T1087.002, T1482, T1069.002]
-    channel: Microsoft-Windows-Sysmon/Operational
-    provider: Microsoft-Windows-Sysmon
-    event_ids: [1]
-    prerequisites:
-      - "Sysmon installed with a config that logs event 1; or Security 4688 with command line auditing"
-    logic:
-      selection_img:
-        Image|endswith: '\AdFind.exe'
-      selection_cli:
-        CommandLine|contains:
-          - 'domainlist'
-          - 'trustdmp'
-          - 'dcmodes'
-          - 'adinfo'
-          - '-sc dclist'
-          - 'computers_pwdnotreqd'
-          - 'objectcategory='
-          - 'subnetdmp'
-          - 'gpodmp'
-          - 'ouddmp'
-          - 'users_noexpire'
-      condition: selection_img or selection_cli
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~objectcategory= --format llm
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~adfind --format llm
-    pivots:
-      - "Output files (Sysmon 11 TargetFilename such as ad_users.txt, ad_computers.txt) are staging targets: see COLL staging check"
-      - "On DCs: 1644 expensive LDAP searches and 4662 bursts from the same source"
-    false_positives:
-      - "Legitimate admin use (rare in most estates); renamed binary will evade Image test: use Hashes / OriginalFileName"
-    severity: high
-    sources:
-      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_pua_adfind_susp_usage.yml
-    verified: false
-    notes: "Single source opened. The flag list comes from that rule; 'ouddmp' is written as the rule's ' oudmp ' flag, check real command lines."
-
-  - id: FH-DISC-005
-    title: BloodHound/SharpHound LDAP enumeration - read-property bursts on AD user objects (4662)
-    tactic: discovery
-    attack: [T1087.002, T1069.002, T1482]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4662]
-    prerequisites:
-      - "Audit Directory Service Access (Success) on domain controllers"
-      - "A SACL on AD user objects auditing 'Read all properties' (or Read Property) for Everyone; without it, 4662 is not generated for reads"
-    logic:
-      selection:
-        EventID: 4662
-        ObjectType|contains: 'bf967aba-0de6-11d0-a285-00aa003049e2'
-      filter_machine_accounts:
-        SubjectUserName|endswith: '$'
-      condition: selection and not filter_machine_accounts and count(selection) by SubjectUserName > 200 within 5m
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4662 --field ObjectType~bf967aba-0de6-11d0-a285-00aa003049e2 --format llm
-      - forhunt stats <paths> --format llm
-    pivots:
-      - "SubjectUserName / SubjectLogonId -> 4624 on the DC and the workstation that originated the LDAP session (IpAddress)"
-      - "Honeypot AD objects with a SACL give high-fidelity hits: any 4662 on the decoy by a non-admin is suspicious"
-      - "Corroborate with DC Directory Service 1644 (expensive/inefficient LDAP searches) and workstation-side Sysmon 3 to 389/636/3268"
-    false_positives:
-      - "Identity sync (Azure AD Connect MSOL_ accounts), Exchange, directory-integrated apps, admin tooling"
-    severity: medium
-    sources:
-      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_ad_user_enumeration.yml
-      - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
-    verified: true
-    notes: "Two independent catalogs agree on 4662 (Sigma on read access to user-class objects; EVTX-to-MITRE on SharpHound touching honeypot objects). The user class schema GUID bf967aba-0de6-11d0-a285-00aa003049e2 is from the Sigma rule. The burst threshold (200 in 5m) is a heuristic, tune per environment."
-
-  - id: FH-DISC-006
-    title: SAM enumeration via handle requests on SAM_USER / SAM_GROUP objects (4661)
-    tactic: discovery
-    attack: [T1087.002, T1069.002, T1201]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4661]
-    prerequisites:
-      - "Audit SAM (Success) and Audit Kernel Object as needed; very high volume on DCs so usually off by default"
-    logic:
-      selection:
-        EventID: 4661
-        ObjectType:
-          - 'SAM_USER'
-          - 'SAM_GROUP'
-        AccessMask: '0x2d'
-      sensitive_rids:
-        ObjectName|startswith: 'S-1-5-21-'
-        ObjectName|endswith:
-          - '-500'
-          - '-512'
-      condition: selection and sensitive_rids or count(distinct ObjectName) by SubjectUserName > 100 within 5m
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4661 --field ObjectType=SAM_USER --format llm
-      - forhunt search <paths> --channel Security --event-id 4661 --field ObjectType=SAM_GROUP --format llm
-    pivots:
-      - "RID -500 (Administrator) and -512 (Domain Admins) are the classic 'net user administrator /domain' / 'net group \"domain admins\" /domain' targets"
-      - "Sequential RIDs in ObjectName across hundreds of events = RID brute-force enumeration (CrackMapExec-style)"
-      - "SubjectLogonId -> 4624 and source IpAddress (via 4776/4624)"
-    false_positives:
-      - "Management and inventory tools querying SAM; normal helpdesk lookups"
-    severity: medium
-    sources:
-      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_susp_net_recon_activity.yml
-      - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
-    verified: true
-    notes: "Both sources use 4661 with SAM object types; Sigma gives the 0x2d mask and the -500/-512 suffixes. The burst threshold is a heuristic."
-
-  - id: FH-DISC-007
-    title: SMB named-pipe enumeration (srvsvc, samr, lsarpc, wkssvc) across many hosts (5145)
-    tactic: discovery
-    attack: [T1135, T1087, T1069, T1018]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [5145]
-    prerequisites:
-      - "Audit Detailed File Share (Success) - very high volume; enable on servers/DCs deliberately"
-    logic:
-      selection:
-        EventID: 5145
-        ShareName|endswith: 'IPC$'
-        RelativeTargetName:
-          - 'srvsvc'
-          - 'samr'
-          - 'lsarpc'
-          - 'wkssvc'
-      filter_machine_accounts:
-        SubjectUserName|endswith: '$'
-      condition: selection and not filter_machine_accounts and count(distinct Computer) by IpAddress > 10 within 10m
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 5145 --field ShareName~IPC$ --field RelativeTargetName=srvsvc --format llm
-      - forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName=samr --format llm
-    pivots:
-      - "Source IpAddress and SubjectUserName; then Sysmon 3 on the source for the tool process"
-      - "The same pipes are used by remote service/task creation (svcctl, atsvc): look for 7045/4698 on the target"
-    false_positives:
-      - "Admin consoles, vulnerability scanners, backup/inventory software"
-    severity: medium
-    sources:
-      - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
-      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_smb_file_creation_admin_shares.yml
-    verified: false
-    notes: "The catalog confirms 5145 for named-pipe enumeration across hosts (SharpHound); Sigma confirms ShareName, AccessMask, IpAddress, SubjectUserName fields on 5145. The RelativeTargetName field name and the pipe list are analyst knowledge not confirmed in an opened source. Threshold is a heuristic."
-
-  - id: FH-DISC-008
-    title: Remote enumeration of local group membership (4799)
-    tactic: discovery
-    attack: [T1069.001]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4799]
-    prerequisites:
-      - "Audit Security Group Management (Success)"
-    logic:
-      selection:
-        EventID: 4799
-        TargetUserName:
-          - 'Administrators'
-          - 'Remote Desktop Users'
-          - 'Remote Management Users'
-          - 'Distributed COM Users'
-      filter_expected_callers:
-        CallerProcessName|endswith:
-          - '\svchost.exe'
-          - '\lsass.exe'
-      condition: selection and not filter_expected_callers or count(distinct Computer) by SubjectUserName > 10 within 10m
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4799 --format llm
-    pivots:
-      - "SubjectLogonId -> 4624 LogonType 3 with source IpAddress: SharpHound-style collection enumerates local admins on many machines"
-      - "Correlate with 5145 samr/srvsvc activity (DISC-007)"
-    false_positives:
-      - "Management agents, configuration compliance scanners, Windows itself (noisy on many builds)"
-    severity: low
-    sources:
-      - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
-    verified: false
-    notes: "The catalog lists 4799 for remote local-group enumeration (SharpHound). Field names (TargetUserName is the group, CallerProcessName) from analyst knowledge: Microsoft's page was not readable. A web search snippet (not opened) indicated 4798/4799 are noisy in normal operation."
-
-  - id: FH-DISC-009
-    title: Local group membership of a user enumerated (4798)
-    tactic: discovery
-    attack: [T1069.001, T1087.001]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4798]
-    prerequisites:
-      - "Audit User Account Management (Success)"
-    logic:
-      selection:
-        EventID: 4798
-      filter_system_callers:
-        CallerProcessName|endswith:
-          - '\lsass.exe'
-          - '\svchost.exe'
-      condition: selection and not filter_system_callers
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4798 --format llm
-    pivots:
-      - "CallerProcessName is the process that asked; a user-writable path or net.exe / powershell.exe is notable"
-      - "Pair with Sysmon 1 for net.exe localgroup / whoami /groups at the same time"
-    false_positives:
-      - "Very noisy: logon processing, RDP, management software"
-    severity: informational
-    sources:
-      - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
-    verified: false
-    notes: "Use as corroboration only. No opened source documents the field list; the filter is a baseline suggestion."
-
-  - id: FH-DISC-010
-    title: PowerView / AD PowerShell enumeration in script blocks
-    tactic: discovery
-    attack: [T1087.002, T1069.002, T1482, T1018, T1016]
-    channel: Microsoft-Windows-PowerShell/Operational
-    provider: Microsoft-Windows-PowerShell
-    event_ids: [4104]
-    prerequisites:
-      - "PowerShell Script Block Logging enabled"
-    logic:
-      selection:
-        EventID: 4104
-        ScriptBlockText|contains:
-          - 'Get-DomainUser'
-          - 'Get-DomainComputer'
-          - 'Get-DomainGroupMember'
-          - 'Get-DomainTrust'
-          - 'Get-NetDomain'
-          - 'Find-LocalAdminAccess'
-          - 'Invoke-ShareFinder'
-          - 'Invoke-UserHunter'
-          - 'Get-ADComputer'
-          - 'Get-ADUser'
-          - 'Get-ADForest'
-          - 'DirectorySearcher'
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~Get-DomainUser --format llm
-      - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~DirectorySearcher --format llm
-    pivots:
-      - "Get-AD* only exists where the RSAT/AD module is present: from a non-admin workstation it is unusual (EVTX-to-MITRE catalog flags AD module use from non-admin hosts)"
-      - "Long scripts are split across several 4104 events (MessageNumber/MessageTotal): reassemble by ScriptBlockId"
-    false_positives:
-      - "Admin scripts, Exchange/AD management tooling, inventory scripts"
-    severity: medium
-    sources:
-      - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
-      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/powershell/powershell_script/posh_ps_software_discovery.yml
-    verified: false
-    notes: "The catalog confirms 4104/4103/800 for AD and group discovery via PowerShell. The cmdlet list is analyst knowledge of PowerView; no opened source lists it. Sigma's 4104 rule confirms the ScriptBlockText field and the Script Block Logging prerequisite."
-
-  - id: FH-DISC-011
-    title: SPN enumeration and Kerberos TGS burst from a single source (setspn, SharpHound)
-    tactic: discovery
-    attack: [T1087.002, T1558.003]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [4769]
-    prerequisites:
-      - "Audit Kerberos Service Ticket Operations (Success) on domain controllers"
-    logic:
-      selection:
-        EventID: 4769
-      filter_noise:
-        ServiceName|endswith: '$'
-      condition: selection and not filter_noise and count(distinct ServiceName) by IpAddress > 30 within 10m
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 4769 --format llm
-    pivots:
-      - "Check TicketEncryptionType 0x17 (RC4): same burst may be Kerberoasting (credential-access checklist)"
-      - "Workstation-side Sysmon 1 for setspn.exe -T / -Q */*"
-    false_positives:
-      - "Workstations touching many services after logon, jump hosts"
-    severity: low
-    sources:
-      - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
-    verified: false
-    notes: "The catalog lists single-source host enumeration over TGS (4769) for SharpHound. Threshold and ServiceName filtering are heuristics."
-
-  - id: FH-DISC-012
-    title: Host-based port scan (Sysmon 3 fan-out)
-    tactic: discovery
-    attack: [T1046, T1018]
-    channel: Microsoft-Windows-Sysmon/Operational
-    provider: Microsoft-Windows-Sysmon
-    event_ids: [3]
-    prerequisites:
-      - "Sysmon installed with a config that logs event 3 (disabled by default; often filtered heavily)"
-    logic:
-      selection:
-        EventID: 3
-        Initiated: 'true'
-      condition: count(distinct DestinationIp) by Image > 50 within 1m or count(distinct DestinationPort) by Image, DestinationIp > 20 within 1m
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 3 --field Initiated=true --format llm
-      - forhunt stats <paths> --format llm
-    pivots:
-      - "Image (unsigned / in user-writable paths, or a renamed scanner) and ProcessGuid -> Sysmon 1 for command line"
-      - "Common targets: 445, 3389, 135, 5985, 22, 1433"
-    false_positives:
-      - "Vulnerability scanners, network monitoring, backup discovery, browsers/P2P"
-    severity: medium
-    sources:
-      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
-    verified: false
-    notes: "Event 3 semantics confirmed by the Microsoft Sysmon docs; thresholds are heuristics. Sysmon 3 does not log blocked or failed attempts reliably, so a scanner hitting closed ports may be under-represented."
-
-  - id: FH-DISC-013
-    title: Host-based port scan seen by Windows Filtering Platform (5156 / 5157)
-    tactic: discovery
-    attack: [T1046]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [5156, 5157]
-    prerequisites:
-      - "Audit Filtering Platform Connection (Success and Failure); extremely high volume, normally off"
-    logic:
-      selection:
-        EventID:
-          - 5156
-          - 5157
-        Direction: '%%14593'
-      condition: count(distinct DestAddress) by Application > 50 within 1m or count(distinct DestPort) by Application, DestAddress > 20 within 1m
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 5156,5157 --format llm
-    pivots:
-      - "Application path and ProcessID; 5157 (blocked) bursts reveal scans that hit firewall rules"
-      - "Correlate with Sysmon 3 if available"
-    false_positives:
-      - "Scanners, monitoring, backup agents"
-    severity: low
-    sources:
-      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_smb_file_creation_admin_shares.yml
-    verified: false
-    notes: "Field names (Application, DestAddress, DestPort, Direction %%14593 = outbound) from analyst knowledge; Microsoft docs unreachable. The Sigma file cited only confirms Security-log event field style, not 5156 specifics."
-
-  - id: FH-DISC-014
-    title: Network share discovery - one source touching many shares (5140)
-    tactic: discovery
-    attack: [T1135]
-    channel: Security
-    provider: Microsoft-Windows-Security-Auditing
-    event_ids: [5140]
-    prerequisites:
-      - "Audit File Share (Success) on file servers and DCs"
-    logic:
-      selection:
-        EventID: 5140
-      filter_machine_accounts:
-        SubjectUserName|endswith: '$'
-      condition: selection and not filter_machine_accounts and count(distinct ShareName) by IpAddress > 10 within 10m
-    forhunt:
-      - forhunt search <paths> --channel Security --event-id 5140 --format llm
-    pivots:
-      - "Same IpAddress / SubjectUserName -> 5145 for file-level activity, then COLL staging/exfil checks"
-      - "Access to ADMIN$, C$, IPC$ across many hosts overlaps with lateral movement"
-    false_positives:
-      - "Backup servers, antivirus scanners, user logon scripts, DFS"
-    severity: low
-    sources:
-      - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
-    verified: false
-    notes: "Catalog lists network share discovery mostly by command line; the 5140 aggregation is an analyst design and the threshold is a heuristic."
-
-  - id: FH-DISC-015
-    title: Security software discovery (WMI SecurityCenter2, Get-MpComputerStatus, product queries)
-    tactic: discovery
-    attack: [T1518.001]
-    channel: Microsoft-Windows-Sysmon/Operational
-    provider: Microsoft-Windows-Sysmon
-    event_ids: [1]
-    prerequisites:
-      - "Sysmon installed with a config that logs event 1; or Security 4688 with command line auditing. For PowerShell variants also 4104 (Script Block Logging)"
-    logic:
-      selection_wmic:
-        Image|endswith: '\wmic.exe'
-        CommandLine|contains:
-          - 'SecurityCenter2'
-          - 'AntiVirusProduct'
-      selection_ps:
-        CommandLine|contains:
-          - 'SecurityCenter2'
-          - 'Get-MpComputerStatus'
-          - 'AntiVirusProduct'
-      condition: selection_wmic or selection_ps
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~SecurityCenter2 --format llm
-      - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~SecurityCenter2 --format llm
-    pivots:
-      - "Typically precedes Defender tampering (IMP-006/007) or tool selection by the actor"
-    false_positives:
-      - "Inventory/EDR/health-check agents, helpdesk scripts"
-    severity: low
-    sources:
-      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_wmic_recon_product.yml
-    verified: false
-    notes: "Only the existence of a related Sigma rule (wmic product recon) was confirmed by fetch; its body was not read. The SecurityCenter2 namespace is from the task brief and analyst knowledge."
-
-  - id: FH-DISC-016
-    title: Installed-software discovery via registry Uninstall keys in script blocks
-    tactic: discovery
-    attack: [T1518]
-    channel: Microsoft-Windows-PowerShell/Operational
-    provider: Microsoft-Windows-PowerShell
-    event_ids: [4104]
-    prerequisites:
-      - "PowerShell Script Block Logging enabled"
-    logic:
-      selection:
-        EventID: 4104
-        ScriptBlockText|contains|all:
-          - 'Get-ItemProperty'
-          - '\Software\'
-          - 'Select-Object'
-          - 'Format-Table'
-      condition: selection
-    forhunt:
-      - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~Uninstall --format llm
-    pivots:
-      - "Pair with SecurityCenter2 queries (DISC-015) and AV product enumeration"
-    false_positives:
-      - "Inventory scripts and admin one-liners"
-    severity: informational
-    sources:
-      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/powershell/powershell_script/posh_ps_software_discovery.yml
-    verified: false
-    notes: "Single source opened. Low value alone; use as context."
-
-  - id: FH-DISC-017
-    title: RDP service discovery - one client connecting to many hosts (RdpCoreTS 131)
-    tactic: discovery
-    attack: [T1046, T1021.001]
-    channel: Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational
-    provider: Microsoft-Windows-RemoteDesktopServices-RdpCoreTS
-    event_ids: [131]
-    prerequisites:
-      - "RdpCoreTS/Operational log enabled (it is by default on current Windows Server and recent client builds; verify)"
-    logic:
-      selection:
-        EventID: 131
-      condition: count(distinct Computer) by ClientIP > 5 within 10m
-    forhunt:
-      - forhunt search <paths> --channel "Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational" --event-id 131 --format llm
-    pivots:
-      - "Cross-host: merge logs from many hosts and group by the client IP; then TS-RCM 1149 and Security 4624 type 10/3 for successful sessions"
-    false_positives:
-      - "RDP gateways, jump hosts, vulnerability scanners"
-    severity: low
-    sources:
-      - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
-    verified: false
-    notes: "The catalog lists event 131 for RDP discovery across multiple hosts. The field name ClientIP is from analyst knowledge, check against samples."
+- id: FH-DISC-001
+  title: Account and group enumeration with net.exe / net1.exe
+  tactic: discovery
+  attack:
+  - T1087.001
+  - T1087.002
+  - T1069.001
+  - T1069.002
+  - T1135
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 1
+  prerequisites:
+  - Sysmon installed with a config that logs event 1; or Security 4688 with command line auditing
+  logic:
+    selection_img:
+      Image|endswith:
+      - \net.exe
+      - \net1.exe
+    selection_cli:
+      CommandLine|contains:
+      - ' user'
+      - ' group'
+      - ' localgroup'
+      - ' view'
+      - ' share'
+      - ' accounts'
+      - ' config'
+    condition: selection_img and selection_cli
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~net
+    --field CommandLine~"/domain" --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~"net
+    group" --format llm
+  pivots:
+  - '''domain admins'', ''enterprise admins'', ''net view /domain'', ''/domain'' suffix = targeted AD
+    reconnaissance'
+  - 'ParentImage: cmd/powershell spawned by an Office app, script host, remote execution service (7045/services.exe)
+    or WMI (wmiprvse.exe)'
+  - See DISC-003 for burst scoring across discovery tools
+  false_positives:
+  - Admin scripts, logon scripts mapping drives with net use/view, inventory tools
+  severity: low
+  sources:
+  - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
+  - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/PanacheSysmon_vs_AtomicRedTeam01.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/sigma/sysmon/threat-hunting/process_creation/proc_creation_win_net_execution.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/1: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states. JPCERT
+    sheets mentioning the same event ids/tools: net-user (informational). || Original notes: A single
+    net.exe call is rarely malicious. The EVTX-to-MITRE catalog lists user/group/share discovery by command
+    line as event 1 or 4688, but no source opened here gives exact argument lists; the argument list above
+    is analyst-written.'
+- id: FH-DISC-002
+  title: Domain controller and trust discovery with nltest
+  tactic: discovery
+  attack:
+  - T1482
+  - T1018
+  - T1016
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 1
+  prerequisites:
+  - Sysmon installed with a config that logs event 1; or Security 4688 with command line auditing
+  logic:
+    selection_img:
+      Image|endswith: \nltest.exe
+    selection_cli:
+      CommandLine|contains:
+      - dclist
+      - domain_trusts
+      - all_trusts
+      - dsgetdc
+      - dnsgetdc
+      - trusted_domains
+      - parentdomain
+      - /server
+    condition: selection_img and selection_cli
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~nltest
+    --format llm
+  pivots:
+  - Often paired with net group 'domain admins' /domain, AdFind (DISC-004) and ping sweeps in the same
+    minutes
+  - ParentImage and User; hands-on-keyboard sessions from a freshly compromised workstation
+  false_positives:
+  - Domain-join troubleshooting, health scripts
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_nltest_recon.yml
+  - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/PanacheSysmon_vs_AtomicRedTeam01.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_nltest_recon.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/1: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states. JPCERT
+    sheets mentioning the same event ids/tools: nltest (informational). || Original notes: Only the Sigma
+    rule gives the argument list; its cited incident reports (DFIR Report Ryuk/Trickbot) were not opened
+    here.'
+- id: FH-DISC-003
+  title: Burst of discovery utilities from one session (whoami, systeminfo, ipconfig, arp, route, netstat,
+    quser, qwinsta, tasklist)
+  tactic: discovery
+  attack:
+  - T1033
+  - T1082
+  - T1016
+  - T1049
+  - T1057
+  - T1007
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 1
+  prerequisites:
+  - Sysmon installed with a config that logs event 1 (and does not filter out these tools); or Security
+    4688 with command line auditing
+  logic:
+    selection:
+      Image|endswith:
+      - \whoami.exe
+      - \systeminfo.exe
+      - \ipconfig.exe
+      - \arp.exe
+      - \route.exe
+      - \netstat.exe
+      - \quser.exe
+      - \qwinsta.exe
+      - \tasklist.exe
+      - \hostname.exe
+      - \nslookup.exe
+      - \net.exe
+      - \net1.exe
+      - \nltest.exe
+    condition: count(distinct Image) by ParentProcessGuid > 4 within 2m
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~whoami
+    --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --regex Image='(?i)\\(whoami|systeminfo|ipconfig|arp|route|netstat|quser|qwinsta|tasklist)\.exe$'
+    --format llm
+  pivots:
+  - whoami /all, /priv or /groups is a stronger signal than bare whoami
+  - 'ParentImage: cmd.exe launched by a script/RMM/remote shell; check the user and the originating 4624'
+  - Output redirection to a file (> C:\Users\Public\x.txt) suggests staging for later collection (see
+    COLL checks)
+  false_positives:
+  - Support staff troubleshooting, RMM and inventory agents, monitoring scripts
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/PanacheSysmon_vs_AtomicRedTeam01.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_webshell_recon_commands_and_processes.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/1: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: The
+    threshold (distinct tools in 2 minutes) is a heuristic and has no external source. JPCERT sheets mentioning
+    the same event ids/tools: klist-purge, net-user, nltest (informational). || Original notes: The threshold
+    (distinct tools in 2 minutes) is a heuristic and has no external source. Other catalogs treat these
+    as ''event 1 or 4688'' commandline detections.'
+- id: FH-DISC-004
+  title: AdFind Active Directory query tool
+  tactic: discovery
+  attack:
+  - T1018
+  - T1087.002
+  - T1482
+  - T1069.002
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 1
+  prerequisites:
+  - Sysmon installed with a config that logs event 1; or Security 4688 with command line auditing
+  logic:
+    selection_img:
+      Image|endswith: \AdFind.exe
+    selection_cli:
+      CommandLine|contains:
+      - domainlist
+      - trustdmp
+      - dcmodes
+      - adinfo
+      - -sc dclist
+      - computers_pwdnotreqd
+      - objectcategory=
+      - subnetdmp
+      - gpodmp
+      - ouddmp
+      - users_noexpire
+    condition: selection_img or selection_cli
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~objectcategory=
+    --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~adfind
+    --format llm
+  pivots:
+  - 'Output files (Sysmon 11 TargetFilename such as ad_users.txt, ad_computers.txt) are staging targets:
+    see COLL staging check'
+  - 'On DCs: 1644 expensive LDAP searches and 4662 bursts from the same source'
+  false_positives:
+  - 'Legitimate admin use (rare in most estates); renamed binary will evade Image test: use Hashes / OriginalFileName'
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_pua_adfind_susp_usage.yml
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/PanacheSysmon_vs_AtomicRedTeam01.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_renamed_adfind.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/1: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: literal value not found in any opened
+    source (ouddmp). JPCERT sheets mentioning the same event ids/tools: Find-GPOPasswords, net-user (informational).
+    || Original notes: Single source opened. The flag list comes from that rule; ''ouddmp'' is written
+    as the rule''s '' oudmp '' flag, check real command lines.'
+- id: FH-DISC-005
+  title: BloodHound/SharpHound LDAP enumeration - read-property bursts on AD user objects (4662)
+  tactic: discovery
+  attack:
+  - T1087.002
+  - T1069.002
+  - T1482
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4662
+  prerequisites:
+  - Audit Directory Service Access (Success) on domain controllers
+  - A SACL on AD user objects auditing 'Read all properties' (or Read Property) for Everyone; without
+    it, 4662 is not generated for reads
+  logic:
+    selection:
+      EventID: 4662
+      ObjectType|contains: bf967aba-0de6-11d0-a285-00aa003049e2
+    filter_machine_accounts:
+      SubjectUserName|endswith: $
+    condition: selection and not filter_machine_accounts and count(selection) by SubjectUserName > 200
+      within 5m
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4662 --field ObjectType~bf967aba-0de6-11d0-a285-00aa003049e2
+    --format llm
+  - forhunt stats <paths> --format llm
+  pivots:
+  - SubjectUserName / SubjectLogonId -> 4624 on the DC and the workstation that originated the LDAP session
+    (IpAddress)
+  - 'Honeypot AD objects with a SACL give high-fidelity hits: any 4662 on the decoy by a non-admin is
+    suspicious'
+  - Corroborate with DC Directory Service 1644 (expensive/inefficient LDAP searches) and workstation-side
+    Sysmon 3 to 389/636/3268
+  false_positives:
+  - Identity sync (Azure AD Connect MSOL_ accounts), Exchange, directory-integrated apps, admin tooling
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_ad_user_enumeration.yml
+  - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1069-Permission Groups Discovery/ID4662-Domain group
+    enumeration CME.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_ad_user_enumeration.yml
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/4662: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log. || Original notes: Two independent catalogs
+    agree on 4662 (Sigma on read access to user-class objects; EVTX-to-MITRE on SharpHound touching honeypot
+    objects). The user class schema GUID bf967aba-0de6-11d0-a285-00aa003049e2 is from the Sigma rule.
+    The burst threshold (200 in 5m) is a heuristic, tune per environment.'
+- id: FH-DISC-006
+  title: SAM enumeration via handle requests on SAM_USER / SAM_GROUP objects (4661)
+  tactic: discovery
+  attack:
+  - T1087.002
+  - T1069.002
+  - T1201
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4661
+  prerequisites:
+  - Audit SAM (Success) and Audit Kernel Object as needed; very high volume on DCs so usually off by default
+  logic:
+    selection:
+      EventID: 4661
+      ObjectType:
+      - SAM_USER
+      - SAM_GROUP
+      AccessMask: '0x2d'
+    sensitive_rids:
+      ObjectName|startswith: S-1-5-21-
+      ObjectName|endswith:
+      - '-500'
+      - '-512'
+    condition: selection and sensitive_rids or count(distinct ObjectName) by SubjectUserName > 100 within
+      5m
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4661 --field ObjectType=SAM_USER --format llm
+  - forhunt search <paths> --channel Security --event-id 4661 --field ObjectType=SAM_GROUP --format llm
+  pivots:
+  - RID -500 (Administrator) and -512 (Domain Admins) are the classic 'net user administrator /domain'
+    / 'net group "domain admins" /domain' targets
+  - Sequential RIDs in ObjectName across hundreds of events = RID brute-force enumeration (CrackMapExec-style)
+  - SubjectLogonId -> 4624 and source IpAddress (via 4776/4624)
+  false_positives:
+  - Management and inventory tools querying SAM; normal helpdesk lookups
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_susp_net_recon_activity.yml
+  - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0006-Credential Access/T1003-Credential dumping/ID4661-4658 Mimikatz
+    sekurlsa password dump SAM.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_net_recon_activity.yml
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: Security/4661: MITRE CTI data-component log
+    source, Microsoft docs, rule project, real sample log. JPCERT sheets mentioning the same event ids/tools:
+    net-user (informational). || Original notes: Both sources use 4661 with SAM object types; Sigma gives
+    the 0x2d mask and the -500/-512 suffixes. The burst threshold is a heuristic.'
+- id: FH-DISC-007
+  title: SMB named-pipe enumeration (srvsvc, samr, lsarpc, wkssvc) across many hosts (5145)
+  tactic: discovery
+  attack:
+  - T1135
+  - T1087
+  - T1069
+  - T1018
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 5145
+  prerequisites:
+  - Audit Detailed File Share (Success) - very high volume; enable on servers/DCs deliberately
+  logic:
+    selection:
+      EventID: 5145
+      ShareName|endswith: IPC$
+      RelativeTargetName:
+      - srvsvc
+      - samr
+      - lsarpc
+      - wkssvc
+    filter_machine_accounts:
+      SubjectUserName|endswith: $
+    condition: selection and not filter_machine_accounts and count(distinct Computer) by IpAddress > 10
+      within 10m
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 5145 --field ShareName~IPC$ --field RelativeTargetName=srvsvc
+    --format llm
+  - forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName=samr --format
+    llm
+  pivots:
+  - Source IpAddress and SubjectUserName; then Sysmon 3 on the source for the tool process
+  - 'The same pipes are used by remote service/task creation (svcctl, atsvc): look for 7045/4698 on the
+    target'
+  false_positives:
+  - Admin consoles, vulnerability scanners, backup/inventory software
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_smb_file_creation_admin_shares.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0002-Execution/T1047-Windows Management Instrumentation/ID4688-5145-WMIexec
+    execution via SMB.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_lm_namedpipe.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/5145: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: The
+    RelativeTargetName field name and the pipe list are analyst knowledge not confirmed in an opened source.
+    JPCERT sheets mentioning the same event ids/tools: net-user (informational). || Original notes: The
+    catalog confirms 5145 for named-pipe enumeration across hosts (SharpHound); Sigma confirms ShareName,
+    AccessMask, IpAddress, SubjectUserName fields on 5145. The RelativeTargetName field name and the pipe
+    list are analyst knowledge not confirmed in an opened source. Threshold is a heuristic.'
+- id: FH-DISC-008
+  title: Remote enumeration of local group membership (4799)
+  tactic: discovery
+  attack:
+  - T1069.001
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4799
+  prerequisites:
+  - Audit Security Group Management (Success)
+  logic:
+    selection:
+      EventID: 4799
+      TargetUserName:
+      - Administrators
+      - Remote Desktop Users
+      - Remote Management Users
+      - Distributed COM Users
+    filter_expected_callers:
+      CallerProcessName|endswith:
+      - \svchost.exe
+      - \lsass.exe
+    condition: selection and not filter_expected_callers or count(distinct Computer) by SubjectUserName
+      > 10 within 10m
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4799 --format llm
+  pivots:
+  - 'SubjectLogonId -> 4624 LogonType 3 with source IpAddress: SharpHound-style collection enumerates
+    local admins on many machines'
+  - Correlate with 5145 samr/srvsvc activity (DISC-007)
+  false_positives:
+  - Management agents, configuration compliance scanners, Windows itself (noisy on many builds)
+  severity: low
+  sources:
+  - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1069-Permission Groups Discovery/ID4799-4624-Local
+    admin group enumerated by SharpHound.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4799: MITRE CTI data-component
+    log source, rule project, real sample log.  Open: event ids, channel and fields are confirmed (see
+    above) but the detection logic goes beyond what any opened rule/source states: Field names (TargetUserName
+    is the group, CallerProcessName) from analyst knowledge: Microsoft''s page was not readable. || Original
+    notes: The catalog lists 4799 for remote local-group enumeration (SharpHound). Field names (TargetUserName
+    is the group, CallerProcessName) from analyst knowledge: Microsoft''s page was not readable. A web
+    search snippet (not opened) indicated 4798/4799 are noisy in normal operation.'
+- id: FH-DISC-009
+  title: Local group membership of a user enumerated (4798)
+  tactic: discovery
+  attack:
+  - T1069.001
+  - T1087.001
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4798
+  prerequisites:
+  - Audit User Account Management (Success)
+  logic:
+    selection:
+      EventID: 4798
+    filter_system_callers:
+      CallerProcessName|endswith:
+      - \lsass.exe
+      - \svchost.exe
+    condition: selection and not filter_system_callers
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4798 --format llm
+  pivots:
+  - CallerProcessName is the process that asked; a user-writable path or net.exe / powershell.exe is notable
+  - Pair with Sysmon 1 for net.exe localgroup / whoami /groups at the same time
+  false_positives:
+  - 'Very noisy: logon processing, RDP, management software'
+  severity: informational
+  sources:
+  - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
+  - 'sample: EVTX-ATTACK-SAMPLES/Discovery/discovery_local_user_or_group_windows_security_4799_4798.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4798: MITRE CTI data-component
+    log source, real sample log.  Open: event ids, channel and fields are confirmed (see above) but the
+    detection logic goes beyond what any opened rule/source states: No opened source documents the field
+    list; the filter is a baseline suggestion. || Original notes: Use as corroboration only. No opened
+    source documents the field list; the filter is a baseline suggestion.'
+- id: FH-DISC-010
+  title: PowerView / AD PowerShell enumeration in script blocks
+  tactic: discovery
+  attack:
+  - T1087.002
+  - T1069.002
+  - T1482
+  - T1018
+  - T1016
+  channel: Microsoft-Windows-PowerShell/Operational
+  provider: Microsoft-Windows-PowerShell
+  event_ids:
+  - 4104
+  prerequisites:
+  - PowerShell Script Block Logging enabled
+  logic:
+    selection:
+      EventID: 4104
+      ScriptBlockText|contains:
+      - Get-DomainUser
+      - Get-DomainComputer
+      - Get-DomainGroupMember
+      - Get-DomainTrust
+      - Get-NetDomain
+      - Find-LocalAdminAccess
+      - Invoke-ShareFinder
+      - Invoke-UserHunter
+      - Get-ADComputer
+      - Get-ADUser
+      - Get-ADForest
+      - DirectorySearcher
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field
+    ScriptBlockText~Get-DomainUser --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field
+    ScriptBlockText~DirectorySearcher --format llm
+  pivots:
+  - 'Get-AD* only exists where the RSAT/AD module is present: from a non-admin workstation it is unusual
+    (EVTX-to-MITRE catalog flags AD module use from non-admin hosts)'
+  - 'Long scripts are split across several 4104 events (MessageNumber/MessageTotal): reassemble by ScriptBlockId'
+  false_positives:
+  - Admin scripts, Exchange/AD management tooling, inventory scripts
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/powershell/powershell_script/posh_ps_software_discovery.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1016-System Network Configuration Discovery/ID800-4103-4104-Firewall
+    configuration enumerated (PowerShell).evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/powershell/powershell_script/posh_ps_powerview_malicious_commandlets.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-PowerShell/Operational/4104: MITRE CTI
+    data-component log source, rule project, real sample log.  Open: literal value not found in any opened
+    source (Get-ADForest). JPCERT sheets mentioning the same event ids/tools: Find-GPOPasswords, PowerSploit_Invoke-Mimikatz
+    (informational). || Original notes: The catalog confirms 4104/4103/800 for AD and group discovery
+    via PowerShell. The cmdlet list is analyst knowledge of PowerView; no opened source lists it. Sigma''s
+    4104 rule confirms the ScriptBlockText field and the Script Block Logging prerequisite.'
+- id: FH-DISC-011
+  title: SPN enumeration and Kerberos TGS burst from a single source (setspn, SharpHound)
+  tactic: discovery
+  attack:
+  - T1087.002
+  - T1558.003
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4769
+  prerequisites:
+  - Audit Kerberos Service Ticket Operations (Success) on domain controllers
+  logic:
+    selection:
+      EventID: 4769
+    filter_noise:
+      ServiceName|endswith: $
+    condition: selection and not filter_noise and count(distinct ServiceName) by IpAddress > 30 within
+      10m
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4769 --format llm
+  pivots:
+  - 'Check TicketEncryptionType 0x17 (RC4): same burst may be Kerberoasting (credential-access checklist)'
+  - Workstation-side Sysmon 1 for setspn.exe -T / -Q */*
+  false_positives:
+  - Workstations touching many services after logon, jump hosts
+  severity: low
+  sources:
+  - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1087-Account discovery/ID4769-Kerberos TGS host enumeration
+    (Bloodhound).evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_rc4_kerberos.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/4769: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: Threshold
+    and ServiceName filtering are heuristics. || Original notes: The catalog lists single-source host
+    enumeration over TGS (4769) for SharpHound. Threshold and ServiceName filtering are heuristics.'
+- id: FH-DISC-012
+  title: Host-based port scan (Sysmon 3 fan-out)
+  tactic: discovery
+  attack:
+  - T1046
+  - T1018
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 3
+  prerequisites:
+  - Sysmon installed with a config that logs event 3 (disabled by default; often filtered heavily)
+  logic:
+    selection:
+      EventID: 3
+      Initiated: 'true'
+    condition: count(distinct DestinationIp) by Image > 50 within 1m or count(distinct DestinationPort)
+      by Image, DestinationIp > 20 within 1m
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 3 --field Initiated=true
+    --format llm
+  - forhunt stats <paths> --format llm
+  pivots:
+  - Image (unsigned / in user-writable paths, or a renamed scanner) and ProcessGuid -> Sysmon 1 for command
+    line
+  - 'Common targets: 445, 3389, 135, 5985, 22, 1433'
+  false_positives:
+  - Vulnerability scanners, network monitoring, backup discovery, browsers/P2P
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+  - 'sample: EVTX-ATTACK-SAMPLES/Command and Control/DE_sysmon-3-rdp-tun.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/network_connection/net_connection_win_adws_unusual_connection.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/3: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: Event
+    3 semantics confirmed by the Microsoft Sysmon docs; thresholds are heuristics. || Original notes:
+    Event 3 semantics confirmed by the Microsoft Sysmon docs; thresholds are heuristics. Sysmon 3 does
+    not log blocked or failed attempts reliably, so a scanner hitting closed ports may be under-represented.'
+- id: FH-DISC-013
+  title: Host-based port scan seen by Windows Filtering Platform (5156 / 5157)
+  tactic: discovery
+  attack:
+  - T1046
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 5156
+  - 5157
+  prerequisites:
+  - Audit Filtering Platform Connection (Success and Failure); extremely high volume, normally off
+  logic:
+    selection:
+      EventID:
+      - 5156
+      - 5157
+      Direction: '%%14593'
+    condition: count(distinct DestAddress) by Application > 50 within 1m or count(distinct DestPort) by
+      Application, DestAddress > 20 within 1m
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 5156,5157 --format llm
+  pivots:
+  - Application path and ProcessID; 5157 (blocked) bursts reveal scans that hit firewall rules
+  - Correlate with Sysmon 3 if available
+  false_positives:
+  - Scanners, monitoring, backup agents
+  severity: low
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_smb_file_creation_admin_shares.yml
+  - 'sample: EVTX-ATTACK-SAMPLES/Command and Control/DE_RDP_Tunnel_5156.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/Yamato-Security/hayabusa-rules/blob/main/sigma/builtin/placeholder/network_connection/net_connection_win_certsvc_outbound_smb_ldap.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/5156: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log; Security/5157: MITRE CTI data-component
+    log source, Microsoft docs, rule project.  Open: event ids, channel and fields are confirmed (see
+    above) but the detection logic goes beyond what any opened rule/source states: Field names (Application,
+    DestAddress, DestPort, Direction %%14593 = outbound) from analyst knowledge; Microsoft docs unreachable.
+    || Original notes: Field names (Application, DestAddress, DestPort, Direction %%14593 = outbound)
+    from analyst knowledge; Microsoft docs unreachable. The Sigma file cited only confirms Security-log
+    event field style, not 5156 specifics.'
+- id: FH-DISC-014
+  title: Network share discovery - one source touching many shares (5140)
+  tactic: discovery
+  attack:
+  - T1135
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 5140
+  prerequisites:
+  - Audit File Share (Success) on file servers and DCs
+  logic:
+    selection:
+      EventID: 5140
+    filter_machine_accounts:
+      SubjectUserName|endswith: $
+    condition: selection and not filter_machine_accounts and count(distinct ShareName) by IpAddress >
+      10 within 10m
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 5140 --format llm
+  pivots:
+  - Same IpAddress / SubjectUserName -> 5145 for file-level activity, then COLL staging/exfil checks
+  - Access to ADMIN$, C$, IPC$ across many hosts overlaps with lateral movement
+  false_positives:
+  - Backup servers, antivirus scanners, user logon scripts, DFS
+  severity: low
+  sources:
+  - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
+  - 'sample: EVTX-to-MITRE-Attack/EVTX_full_APT_attack_steps/ID5145-4624-DonPAPI full extraction.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/windowsserverdocs/blob/main/WindowsServerDocs/identity/ad-ds/plan/Appendix-L--Events-to-Monitor.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_admin_share_access.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: Security/5140: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: event ids, channel and fields are
+    confirmed (see above) but the detection logic goes beyond what any opened rule/source states: Catalog
+    lists network share discovery mostly by command line; the 5140 aggregation is an analyst design and
+    the threshold is a heuristic. JPCERT sheets mentioning the same event ids/tools: net-user (informational).
+    || Original notes: Catalog lists network share discovery mostly by command line; the 5140 aggregation
+    is an analyst design and the threshold is a heuristic.'
+- id: FH-DISC-015
+  title: Security software discovery (WMI SecurityCenter2, Get-MpComputerStatus, product queries)
+  tactic: discovery
+  attack:
+  - T1518.001
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 1
+  prerequisites:
+  - Sysmon installed with a config that logs event 1; or Security 4688 with command line auditing. For
+    PowerShell variants also 4104 (Script Block Logging)
+  logic:
+    selection_wmic:
+      Image|endswith: \wmic.exe
+      CommandLine|contains:
+      - SecurityCenter2
+      - AntiVirusProduct
+    selection_ps:
+      CommandLine|contains:
+      - SecurityCenter2
+      - Get-MpComputerStatus
+      - AntiVirusProduct
+    condition: selection_wmic or selection_ps
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~SecurityCenter2
+    --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field
+    ScriptBlockText~SecurityCenter2 --format llm
+  pivots:
+  - Typically precedes Defender tampering (IMP-006/007) or tool selection by the actor
+  false_positives:
+  - Inventory/EDR/health-check agents, helpdesk scripts
+  severity: low
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_wmic_recon_product.yml
+  - 'sample: EVTX-ATTACK-SAMPLES/AutomatedTestingTools/PanacheSysmon_vs_AtomicRedTeam01.evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_wmic_recon_product_class.yml
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-Sysmon/Operational/1: MITRE CTI data-component
+    log source, Microsoft docs, rule project, real sample log.  Open: literal value not found in any opened
+    source (Get-MpComputerStatus). JPCERT sheets mentioning the same event ids/tools: wmic (informational).
+    || Original notes: Only the existence of a related Sigma rule (wmic product recon) was confirmed by
+    fetch; its body was not read. The SecurityCenter2 namespace is from the task brief and analyst knowledge.'
+- id: FH-DISC-016
+  title: Installed-software discovery via registry Uninstall keys in script blocks
+  tactic: discovery
+  attack:
+  - T1518
+  channel: Microsoft-Windows-PowerShell/Operational
+  provider: Microsoft-Windows-PowerShell
+  event_ids:
+  - 4104
+  prerequisites:
+  - PowerShell Script Block Logging enabled
+  logic:
+    selection:
+      EventID: 4104
+      ScriptBlockText|contains|all:
+      - Get-ItemProperty
+      - \Software\
+      - Select-Object
+      - Format-Table
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field
+    ScriptBlockText~Uninstall --format llm
+  pivots:
+  - Pair with SecurityCenter2 queries (DISC-015) and AV product enumeration
+  false_positives:
+  - Inventory scripts and admin one-liners
+  severity: informational
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/powershell/powershell_script/posh_ps_software_discovery.yml
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1016-System Network Configuration Discovery/ID800-4103-4104-Firewall
+    configuration enumerated (PowerShell).evtx'
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/powershell/powershell_script/posh_ps_software_discovery.yml
+  verified: true
+  notes: 'VERIFIED 2026-10-21. Confirmations per event id: MW-PowerShell/Operational/4104: MITRE CTI data-component
+    log source, rule project, real sample log.  Note: flipped to true: logic equals the Sigma software-discovery
+    rule (Get-ItemProperty + \software\ + Select-Object + Format-Table in 4104 ScriptBlockText). || Original
+    notes: Single source opened. Low value alone; use as context.'
+- id: FH-DISC-017
+  title: RDP service discovery - one client connecting to many hosts (RdpCoreTS 131)
+  tactic: discovery
+  attack:
+  - T1046
+  - T1021.001
+  channel: Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational
+  provider: Microsoft-Windows-RemoteDesktopServices-RdpCoreTS
+  event_ids:
+  - 131
+  prerequisites:
+  - RdpCoreTS/Operational log enabled (it is by default on current Windows Server and recent client builds;
+    verify)
+  logic:
+    selection:
+      EventID: 131
+    condition: count(distinct Computer) by ClientIP > 5 within 10m
+  forhunt:
+  - forhunt search <paths> --channel "Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational" --event-id
+    131 --format llm
+  pivots:
+  - 'Cross-host: merge logs from many hosts and group by the client IP; then TS-RCM 1149 and Security
+    4624 type 10/3 for successful sessions'
+  false_positives:
+  - RDP gateways, jump hosts, vulnerability scanners
+  severity: low
+  sources:
+  - https://raw.githubusercontent.com/mdecrevoisier/EVTX-to-MITRE-Attack/master/README.md
+  - 'sample: EVTX-to-MITRE-Attack/TA0007-Discovery/T1046-Network Service Scanning/ID131-RDP brutforce
+    (no user info).evtx'
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-21. Confirmations per event id: MW-RemoteDesktopServices-RdpCoreTS/Operational/131:
+    real sample log.  Open: event id / channel pair has fewer than two independent confirmations (ices-RdpCoreTS/131(sample)).
+    || Original notes: The catalog lists event 131 for RDP discovery across multiple hosts. The field
+    name ClientIP is from analyst knowledge, check against samples.'

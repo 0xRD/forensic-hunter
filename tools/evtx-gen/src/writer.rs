@@ -25,6 +25,7 @@ pub enum Ty {
     Sid = 0x13,
     Hex32 = 0x14,
     Hex64 = 0x15,
+    BinXml = 0x21,
 }
 
 /// A substitution value.
@@ -41,6 +42,9 @@ pub enum V {
     Sid(String),
     Hex32(u32),
     Hex64(u64),
+    /// The record payload, written as a nested template instance (BinXML
+    /// value type 0x21), as Windows does for `EventData`.
+    Payload,
 }
 
 impl V {
@@ -57,6 +61,7 @@ impl V {
             V::Sid(_) => Ty::Sid,
             V::Hex32(_) => Ty::Hex32,
             V::Hex64(_) => Ty::Hex64,
+            V::Payload => Ty::BinXml,
         }
     }
 
@@ -74,6 +79,7 @@ impl V {
             V::U64(v) | V::Hex64(v) | V::FileTime(v) => out.extend_from_slice(&v.to_le_bytes()),
             V::Guid(g) => out.extend_from_slice(g),
             V::Sid(s) => encode_sid(s, out),
+            V::Payload => {}
         }
     }
 }
@@ -325,6 +331,63 @@ impl ChunkBuilder {
         off
     }
 
+    /// Writes a fragment header and a `TemplateInstance` (definition inline on
+    /// first use in the chunk) at the current position. Returns false when it
+    /// overflows the chunk.
+    fn instance(
+        &mut self,
+        tidx: usize,
+        t: &Template,
+        values: &[V],
+        payload: Option<(usize, &Template, &[V])>,
+    ) -> bool {
+        self.bytes(&[0x0F, 0x01, 0x01, 0x00]);
+        self.u8(0x0C);
+        self.u8(0x01);
+        self.u32(t.id());
+        let def_at = self.pos;
+        self.u32(0);
+        let def = self.template_def(tidx, t);
+        self.patch_u32(def_at, def);
+        self.u32(values.len() as u32);
+        let desc = self.pos;
+        for _ in values {
+            self.u32(0);
+        }
+        for (i, v) in values.iter().enumerate() {
+            if self.pos + 4096 > self.buf.len() {
+                return false;
+            }
+            let before = self.pos;
+            match (v, payload) {
+                (V::Payload, Some((pt, ptmpl, pvals))) => {
+                    if !self.instance(pt, ptmpl, pvals, None) {
+                        return false;
+                    }
+                    self.u8(0x00);
+                }
+                (V::Payload, None) => {}
+                _ => {
+                    let mut data = Vec::new();
+                    v.encode(&mut data);
+                    if self.pos + data.len() + 8 > self.buf.len() {
+                        return false;
+                    }
+                    self.bytes(&data);
+                }
+            }
+            let size = (self.pos - before) as u16;
+            let at = desc + i * 4;
+            self.buf[at..at + 2].copy_from_slice(&size.to_le_bytes());
+            self.buf[at + 2] = if matches!(v, V::Payload) && payload.is_none() {
+                Ty::Null as u8
+            } else {
+                v.ty() as u8
+            };
+        }
+        self.pos <= CHUNK_SIZE
+    }
+
     /// Appends a record. Returns false (and leaves the chunk unchanged) if
     /// it does not fit.
     pub fn push(
@@ -334,6 +397,7 @@ impl ChunkBuilder {
         tidx: usize,
         t: &Template,
         values: &[V],
+        payload: Option<(usize, &Template, &[V])>,
     ) -> bool {
         let undo = Undo {
             pos: self.pos,
@@ -347,39 +411,10 @@ impl ChunkBuilder {
         self.u32(0);
         self.u64(rid);
         self.u64(filetime);
-        self.bytes(&[0x0F, 0x01, 0x01, 0x00]);
-        self.u8(0x0C);
-        self.u8(0x01);
-        self.u32(t.id());
-        let def_at = self.pos;
-        self.u32(0);
-        let def = if self.templates.contains_key(&tidx) {
-            self.templates[&tidx]
-        } else {
-            let p = self.pos as u32;
-            let off = self.template_def(tidx, t);
-            debug_assert_eq!(off, p);
-            off
-        };
-        self.patch_u32(def_at, def);
-        self.u32(values.len() as u32);
-        let mut data = Vec::new();
-        let mut sizes = Vec::with_capacity(values.len());
-        for v in values {
-            let before = data.len();
-            v.encode(&mut data);
-            sizes.push((data.len() - before) as u16);
-        }
-        for (v, sz) in values.iter().zip(&sizes) {
-            self.u16(*sz);
-            self.u8(v.ty() as u8);
-            self.u8(0);
-        }
-        if self.pos + data.len() + 8 > CHUNK_SIZE {
+        if !self.instance(tidx, t, values, payload) {
             self.rollback(undo);
             return false;
         }
-        self.bytes(&data);
         self.u8(0x00); // end of fragment
         let size = (self.pos - start + 4) as u32;
         self.u32(size);
@@ -484,9 +519,10 @@ impl<W: Write + std::io::Seek> EvtxWriter<W> {
         tidx: usize,
         t: &Template,
         values: &[V],
+        payload: Option<(usize, &Template, &[V])>,
     ) -> std::io::Result<Option<u64>> {
         let rid = self.next_rid;
-        if self.chunk.push(rid, filetime, tidx, t, values) {
+        if self.chunk.push(rid, filetime, tidx, t, values, payload) {
             self.next_rid += 1;
             return Ok(Some(rid));
         }
@@ -497,7 +533,7 @@ impl<W: Write + std::io::Seek> EvtxWriter<W> {
         if self.full() {
             return Ok(None);
         }
-        if !self.chunk.push(rid, filetime, tidx, t, values) {
+        if !self.chunk.push(rid, filetime, tidx, t, values, payload) {
             return Err(std::io::Error::other("record larger than a chunk"));
         }
         self.next_rid += 1;
