@@ -8,6 +8,9 @@
 //! No real log data is involved: every value comes from a seeded generator
 //! or from the fixed attack scenario below.
 
+// Event builders mirror Windows field lists, so they take many arguments.
+#![allow(clippy::too_many_arguments)]
+
 mod events;
 mod writer;
 
@@ -362,7 +365,7 @@ fn noise(channel: &str, ft: u64, rng: &mut Rng, hosts: &[String]) -> Ev {
                     s("File"),
                     s(&format!("10.10.{}.{}", rng.below(4), 20 + rng.below(60))),
                     V::U32(50000 + rng.below(9000) as u32),
-                    s(*rng.pick(&["\\\\*\\SYSVOL", "\\\\*\\NETLOGON", "\\\\*\\IPC$", "\\\\*\\Shared"])),
+                    s(rng.pick(&["\\\\*\\SYSVOL", "\\\\*\\NETLOGON", "\\\\*\\IPC$", "\\\\*\\Shared"])),
                     s("C:\\Windows\\SYSVOL\\sysvol"),
                     V::Hex32(1),
                     s("%%4416\n\t\t\t\t"),
@@ -374,7 +377,7 @@ fn noise(channel: &str, ft: u64, rng: &mut Rng, hosts: &[String]) -> Ev {
             ft,
             host,
             sid: None,
-            data: vec![s(rng.pick(events::SERVICES)), s(*rng.pick(&["running", "stopped"]))],
+            data: vec![s(rng.pick(events::SERVICES)), s(rng.pick(&["running", "stopped"]))],
         },
         events::SYSMON => match rng.below(10) {
             0..=4 => {
@@ -432,7 +435,7 @@ fn noise(channel: &str, ft: u64, rng: &mut Rng, hosts: &[String]) -> Ev {
             data: vec![
                 V::U32(1),
                 V::U32(1),
-                s(*rng.pick(&[
+                s(rng.pick(&[
                     "Get-ChildItem -Path $env:TEMP | Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-7) } | Remove-Item -Force",
                     "Import-Module ActiveDirectory\nGet-ADUser -Filter * -SearchBase 'OU=Staff,DC=contoso,DC=local' | Select-Object Name, Enabled",
                     "$p = Get-Process | Sort-Object CPU -Descending | Select-Object -First 5\n$p | Format-Table -AutoSize",
