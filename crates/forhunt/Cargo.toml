@@ -1,0 +1,37 @@
+[package]
+name = "forhunt"
+description = "Forensic Hunter: very fast Windows artifact (EVTX) parsing, search, stats and timelines for DFIR"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "../../README.md"
+
+[[bin]]
+name = "forhunt"
+path = "src/main.rs"
+
+[dependencies]
+forhunt-core.workspace = true
+forhunt-output.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+crossbeam-channel.workspace = true
+jiff.workspace = true
+mimalloc.workspace = true
+num_cpus.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,20 @@
+[package]
+name = "forhunt-output"
+description = "Output writers (CSV, JSONL, LLM-compact) for Forensic Hunter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+
+[dependencies]
+forhunt-core.workspace = true
+jiff.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

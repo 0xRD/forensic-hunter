@@ -1,0 +1,39 @@
+[package]
+name = "forhunt-core"
+description = "Core event model, artifact parsers and filters for Forensic Hunter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+
+[dependencies]
+evtx.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+blake3.workspace = true
+crossbeam-channel.workspace = true
+globset.workspace = true
+jiff.workspace = true
+memmap2.workspace = true
+rayon.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+memchr = "2"
+toml.workspace = true
+walkdir.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+tempfile.workspace = true
+
+[[bench]]
+name = "decode"
+harness = false
+
+[lints]
+workspace = true

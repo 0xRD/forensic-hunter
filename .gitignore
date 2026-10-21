@@ -1,0 +1,7 @@
+/target
+/corpus/
+/samples/
+/bench-results/
+*.evtx
+!fixtures/**/*.evtx
+.DS_Store

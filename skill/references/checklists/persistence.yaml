@@ -1,0 +1,975 @@
+tactic: persistence
+title: Persistence
+description: 'Persistence in Windows event logs appears as new or modified autostart mechanisms: services (System
+  7045, Security 4697), scheduled tasks (Security 4698-4702, TaskScheduler/Operational), registry autoruns and hijacks
+  (Sysmon 12/13: Run keys, Winlogon, IFEO, AppInit, COM, netsh helpers), Startup-folder file drops (Sysmon 11),
+  WMI permanent event subscriptions (WMI-Activity 5859-5861, Sysmon 19-21), BITS jobs, and new or modified accounts
+  (4720, 4722, 4738). Many of these channels are off by default or need Sysmon; always state which source was missing
+  when a check returns nothing.'
+checks:
+  - id: FH-PER-001
+    title: New service installed with a suspicious ImagePath (System 7045)
+    tactic: persistence
+    attack:
+      - T1543.003
+      - T1569.002
+    channel: System
+    event_ids:
+      - 7045
+    prerequisites:
+      - Service Control Manager writes 7045 by default to the System log; no audit policy needed
+    logic:
+      selection:
+        Provider_Name: Service Control Manager
+        EventID: 7045
+        ImagePath|contains:
+          - \AppData\
+          - \Temp\
+          - \Perflogs\
+          - \ADMIN$\
+          - powershell
+          - cmd.exe /c
+          - '%COMSPEC%'
+          - ' -enc '
+          - ' -nop '
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel System --event-id 7045 --field ImagePath~powershell --format llm
+      - forhunt search <paths> --channel System --event-id 7045 --field ImagePath~Temp --format llm
+      - forhunt search <paths> --channel System --event-id 7045 --format llm --limit 200
+    pivots:
+      - 'ServiceName / AccountName / StartType: auto-start LocalSystem service with random name is typical for PsExec-like
+        or Cobalt Strike tooling'
+      - 4624 LogonType 3 (+ source IpAddress) shortly before, and 5140/5145 ADMIN$ share access for remote service
+        creation
+      - Sysmon 11 / 1 for the binary named in ImagePath; Sysmon 13 under HKLM\System\CurrentControlSet\Services\<name>
+      - 7036 (service entered running state) after the install for execution time
+      - 'System 7045 is also execution evidence (T1569.002): compare with 4697 on the same host'
+    false_positives:
+      - Software installers, AV/EDR agents, driver installs
+      - Remote management agents (PDQ, SCCM, RMM tools) install services legitimately - baseline per environment
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/service_control_manager/win_system_service_install_susp.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/system/service_control_manager/win_system_susp_service_installation_folder.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/System/Sys_7045_Info_SvcInstalled.yml
+    verified: true
+    notes: Event ID, System channel and ImagePath/ServiceName/AccountName/StartType semantics agree between Sigma
+      and Hayabusa (independent rule sets, Hayabusa one is native). Microsoft Learn page for 7045 was not reachable;
+      that gap is why this is only 'verified' by two community sources.
+  - id: FH-PER-002
+    title: Service installed - Security 4697 (service file name check)
+    tactic: persistence
+    attack:
+      - T1543.003
+    channel: Security
+    event_ids:
+      - 4697
+    prerequisites:
+      - Audit Security System Extension (Success) enabled (Advanced Audit Policy > System > Audit Security System
+        Extension)
+    logic:
+      selection:
+        EventID: 4697
+        ServiceFileName|contains:
+          - powershell
+          - cmd.exe
+          - \Temp\
+          - \AppData\
+          - \ADMIN$\
+          - \\127.0.0.1
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4697 --format llm --limit 200
+      - forhunt search <paths> --channel Security --event-id 4697 --field ServiceFileName~powershell --format llm
+    pivots:
+      - SubjectUserName/SubjectLogonId -> 4624 to see how the actor logged on (type 3 = remote service creation)
+      - Same time 7045 in System (ImagePath equals ServiceFileName)
+      - ServiceType 0x10/0x20 and ServiceStartType (2 = auto start)
+    false_positives:
+      - Legitimate software installation by administrators
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_powershell_script_installed_as_service.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/System/SecuritySystemExtension/Sec_4697_Info_SvcInstalled.yml
+    verified: true
+    notes: Field names ServiceName, ServiceFileName, ServiceType, ServiceStartType seen in the Hayabusa sample message
+      and Sigma rule; the Microsoft Learn 4697 page was not reachable. Logging requires the System Extension subcategory,
+      which is off by default.
+  - id: FH-PER-003
+    title: Service start type changed (System 7040) and unexpected service state changes (7036)
+    tactic: persistence
+    attack:
+      - T1543.003
+      - T1562.001
+    channel: System
+    event_ids:
+      - 7040
+      - 7036
+    prerequisites:
+      - Service Control Manager events in System (on by default)
+    logic:
+      selection:
+        EventID: 7040
+        Provider_Name: Service Control Manager
+      note: 'Interesting transitions: disabled/demand start -> auto start for a service you do not recognise, or
+        security services -> disabled'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel System --event-id 7040 --format llm --limit 200
+      - forhunt search <paths> --channel System --event-id 7036 --format llm --limit 500
+    pivots:
+      - Registry change under HKLM\System\CurrentControlSet\Services\<name>\Start (Sysmon 13)
+      - Process that ran 'sc config' (Sysmon 1 / 4688)
+      - 7045/4697 for the original install of the same service
+    false_positives:
+      - Windows Update, Defender and installer activity toggle start types routinely
+    severity: low
+    sources:
+      - https://github.com/stuhli/awesome-event-ids
+    verified: false
+    notes: 'UNVERIFIED: 7040 and 7036 are listed here from general knowledge; I did not read a source describing
+      their parameter layout (param1..param4 in EventData). No Sigma/Hayabusa rule for 7040 found in the paths I
+      read. Treat as context events, not detections.'
+  - id: FH-PER-004
+    title: Scheduled task created - Security 4698
+    tactic: persistence
+    attack:
+      - T1053.005
+    channel: Security
+    event_ids:
+      - 4698
+    prerequisites:
+      - Audit Other Object Access Events (Success) enabled (Advanced Audit Policy > Object Access)
+    logic:
+      selection_eid:
+        EventID: 4698
+      selection_content:
+        TaskContent|contains:
+          - \AppData\
+          - \Users\Public\
+          - \Temp\
+          - \ProgramData\
+          - \Downloads\
+          - powershell
+          - rundll32
+          - regsvr32
+          - mshta
+          - cmd.exe /c
+          - http://
+          - https://
+      condition: selection_eid and selection_content
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4698 --format llm --limit 200
+      - forhunt search <paths> --channel Security --event-id 4698 --field TaskContent~powershell --format llm
+    pivots:
+      - TaskName and the Command/Arguments inside TaskContent (XML); trigger type (logon, boot, one-time) and RunLevel/UserId
+        (SYSTEM)
+      - SubjectUserName/SubjectLogonId -> 4624 for the creator; type 3 logon implies remote creation (atsvc/schtasks
+        /s)
+      - TaskScheduler/Operational 106 and later 200/201 for the actual runs
+      - 4699 delete shortly after = 'run once and clean up' pattern
+    false_positives:
+      - Software updaters (Google, Adobe, Microsoft Office) register tasks routinely
+      - Admin deployment tools
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_scheduled_task_creation.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/ObjectAccess/OtherObjectAccessEvents/Sec_4698_Info_TaskCreated.yml
+    verified: true
+    notes: 'Event 4698 with TaskName and TaskContent fields: Sigma rule plus Hayabusa sample message. Microsoft
+      Learn page not reachable. Only 4698 content is parsed; 4699/4700/4701/4702 are covered in FH-PER-005.'
+  - id: FH-PER-005
+    title: Scheduled task deleted, enabled, disabled or modified - Security 4699/4700/4701/4702
+    tactic: persistence
+    attack:
+      - T1053.005
+      - T1070
+    channel: Security
+    event_ids:
+      - 4699
+      - 4700
+      - 4701
+      - 4702
+    prerequisites:
+      - Audit Other Object Access Events (Success) enabled
+    logic:
+      selection_modify:
+        EventID: 4702
+        TaskContentNew|contains:
+          - \AppData\
+          - \Temp\
+          - \Users\Public\
+          - powershell
+          - rundll32
+          - regsvr32
+      selection_other:
+        EventID:
+          - 4699
+          - 4700
+          - 4701
+      condition: selection_modify or selection_other
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4702 --format llm
+      - forhunt search <paths> --channel Security --event-id 4699,4700,4701 --format llm --limit 200
+    pivots:
+      - Pair 4698 and 4699 for the same TaskName within minutes (ephemeral task)
+      - '4702: compare TaskContentNew with the original 4698 TaskContent (action swap = hijack of an existing task)'
+      - 4701 disabled security/update tasks (Defender, WindowsUpdate) is defense evasion
+    false_positives:
+      - Routine software maintenance
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_scheduled_task_update.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/ObjectAccess/OtherObjectAccessEvents/Sec_4699_Info_TaskDeleted.yml
+    verified: false
+    notes: 4702 field TaskContentNew and 4699 existence are confirmed (Sigma, Hayabusa). The meanings of 4700 (enabled)
+      and 4701 (disabled) are from the standard event-id catalogue and were not re-read in a source I opened; unverified.
+  - id: FH-PER-006
+    title: Scheduled task registered - TaskScheduler/Operational 106
+    tactic: persistence
+    attack:
+      - T1053.005
+    channel: Microsoft-Windows-TaskScheduler/Operational
+    event_ids:
+      - 106
+    prerequisites:
+      - Channel Microsoft-Windows-TaskScheduler/Operational is disabled by default and must be enabled (wevtutil
+        sl or GPO) before the event exists
+    logic:
+      selection:
+        EventID: 106
+      note: Review TaskName and UserContext for tasks that are not part of a known baseline; tasks outside \Microsoft\Windows\
+        are the usual interest
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-TaskScheduler/Operational --event-id 106 --format llm
+        --limit 200
+    pivots:
+      - TaskName -> 200/201 (action started/completed) and 129 (process created) to see execution
+      - Security 4698 (full XML) for the same name
+      - 'UserContext: SYSTEM vs a user account'
+    false_positives:
+      - Third-party updaters and Windows itself register tasks
+    severity: medium
+    sources:
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/TaskScheduler_Op/TaskSch_106_Info_TaskCreated.yml
+      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/persistence/T1053.005 - Scheduled Task
+        was Created.yml
+    verified: true
+    notes: Hayabusa and Chainsaw both key on 106 in this channel with TaskName and UserContext. Task Scheduler Operational
+      is disabled by default per Sigma/Hayabusa log-source notes (Microsoft doc not read).
+  - id: FH-PER-007
+    title: Scheduled task updated or deleted - TaskScheduler/Operational 140/141
+    tactic: persistence
+    attack:
+      - T1053.005
+      - T1070
+    channel: Microsoft-Windows-TaskScheduler/Operational
+    event_ids:
+      - 140
+      - 141
+    prerequisites:
+      - Task Scheduler Operational log enabled
+    logic:
+      selection:
+        EventID:
+          - 140
+          - 141
+      selection_protected:
+        TaskName|contains:
+          - \Microsoft\Windows\Windows Defender\
+          - \Microsoft\Windows\WindowsUpdate\
+          - \Microsoft\Windows\BitLocker
+          - \Microsoft\Windows\SystemRestore\SR
+      condition: selection and selection_protected
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-TaskScheduler/Operational --event-id 140,141 --format
+        llm --limit 200
+    pivots:
+      - 'UserName in the event: who changed/removed it'
+      - Security 4699/4702 for the same task
+    false_positives:
+      - Uninstallers and updaters remove their own tasks
+    severity: low
+    sources:
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/TaskScheduler_Op/TaskSch_141_Info_TaskDeleted.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/TaskScheduler_Op/TaskSch_140_Info_TaskUpdated.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/taskscheduler/win_taskscheduler_susp_schtasks_delete_or_disable.yml
+    verified: true
+    notes: TaskName and UserName fields appear in both Hayabusa details and the Sigma rule. Sigma also treats 142
+      as 'disabled'.
+  - id: FH-PER-008
+    title: Scheduled task running a program from a user-writable path - TaskScheduler/Operational 129/200
+    tactic: persistence
+    attack:
+      - T1053.005
+    channel: Microsoft-Windows-TaskScheduler/Operational
+    event_ids:
+      - 129
+      - 200
+    prerequisites:
+      - Task Scheduler Operational log enabled
+    logic:
+      selection:
+        EventID: 129
+        Path|contains:
+          - \AppData\Local\Temp\
+          - \Users\Public\
+          - \Downloads\
+          - \Desktop\
+          - C:\Windows\Temp\
+          - C:\Temp\
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-TaskScheduler/Operational --event-id 129 --field Path~Temp
+        --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-TaskScheduler/Operational --event-id 200 --format llm
+        --limit 200
+    pivots:
+      - TaskName -> creation event (106 / 4698)
+      - 200 carries ActionName (the executable that ran)
+      - 'Binary at Path: Sysmon 11 creation time, hash'
+    false_positives:
+      - Installers launching a first-run task from Temp
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/taskscheduler/win_taskscheduler_execution_from_susp_locations.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/TaskScheduler_Op/TaskSch_200_Info_TaskExecuted.yml
+    verified: false
+    notes: Sigma uses 129 with field Path; Hayabusa uses 200 with ActionName. Field layouts differ between the two,
+      so I could not confirm that both event ids carry the same path field - verify on a sample EVTX.
+  - id: FH-PER-009
+    title: Run / RunOnce autorun value written (Sysmon 12/13)
+    tactic: persistence
+    attack:
+      - T1547.001
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 12
+      - 13
+    prerequisites:
+      - Sysmon installed with a config that logs event 12/13 (RegistryEvent) with rules covering the Run keys; Sysmon
+        documents these events as useful for autostart monitoring
+    logic:
+      selection:
+        EventID:
+          - 12
+          - 13
+        TargetObject|contains:
+          - \CurrentVersion\Run\
+          - \CurrentVersion\RunOnce\
+          - \CurrentVersion\Policies\Explorer\Run\
+          - \CurrentVersion\RunServices\
+      selection_susp:
+        Details|contains:
+          - \AppData\
+          - \ProgramData\
+          - \Users\Public\
+          - \Temp\
+          - \Perflogs\
+          - '%temp%'
+          - '%appdata%'
+      condition: selection and selection_susp
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 12,13 --field TargetObject~CurrentVersion\Run
+        --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~CurrentVersion\Run
+        --field Details~AppData --format llm
+    pivots:
+      - Image of the writer process (reg.exe, powershell, rundll32 are suspicious)
+      - 'Details points to a binary/script: Sysmon 11 for its creation, hash and signature'
+      - TargetObject under HKU\<SID> = per-user persistence; HKLM = needs admin; WOW6432Node variants for 32-bit
+      - Sysmon 1 for the process that did the write
+    false_positives:
+      - Installers and updaters (Teams, OneDrive, Chrome) write Run entries; baseline by Image
+    severity: medium
+    sources:
+      - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/registry/registry_set/registry_set_susp_run_key_img_folder.yml
+      - https://github.com/mitre-attack/attack-stix-data/blob/master/enterprise-attack/enterprise-attack.json
+    verified: true
+    notes: Microsoft Sysmon page says events 12/13 are useful for monitoring autostart registry locations and documents
+      the HKLM/HKU abbreviations; Sigma confirms TargetObject and Details field names. Sysmon's registry-event Image
+      field is the writing process.
+  - id: FH-PER-010
+    title: Executable or script dropped into a Startup folder (Sysmon 11)
+    tactic: persistence
+    attack:
+      - T1547.001
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 11
+    prerequisites:
+      - Sysmon installed with a config that logs event 11 including a rule for ...\Start Menu\Programs\StartUp
+    logic:
+      selection:
+        EventID: 11
+        TargetFilename|contains: \Microsoft\Windows\Start Menu\Programs\StartUp
+      filter_updates:
+        Image:
+          - C:\Windows\System32\wuauclt.exe
+      condition: selection and not filter_updates
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 11 --field "TargetFilename~Start
+        Menu\Programs\StartUp" --format llm
+    pivots:
+      - 'Image: which process wrote the file (browser/Office = delivery; cmd/powershell = scripted persistence)'
+      - 'File type: .lnk pointing elsewhere, .bat/.vbs/.js, .exe'
+      - 'Next logon of the user: Sysmon 1 with ParentImage explorer.exe starting the dropped file'
+    false_positives:
+      - Software installers creating shortcuts
+      - Per-user vs 'All Users' (C:\ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp) folders both match
+    severity: medium
+    sources:
+      - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_startup_folder_file_write.yml
+      - https://github.com/mitre-attack/attack-stix-data/blob/master/enterprise-attack/enterprise-attack.json
+    verified: true
+    notes: Microsoft Sysmon page states event 11 is useful for monitoring the Startup folder; Sigma gives the path
+      pattern and field names. In forhunt, quoting of spaces in --field values depends on the shell.
+  - id: FH-PER-011
+    title: Winlogon Shell / Userinit / Notify values modified, or userinit spawning a non-explorer shell
+    tactic: persistence
+    attack:
+      - T1547.004
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 12
+      - 13
+    prerequisites:
+      - Sysmon installed with a config that logs event 12/13
+    logic:
+      selection:
+        EventID:
+          - 12
+          - 13
+        TargetObject|endswith:
+          - \Windows NT\CurrentVersion\Winlogon\Shell
+          - \Windows NT\CurrentVersion\Winlogon\Userinit
+          - \Windows NT\CurrentVersion\Winlogon\Notify
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 12,13 --field TargetObject~Winlogon
+        --format llm
+      - forhunt search <paths> --channel Security --event-id 4688 --field ParentProcessName~userinit.exe --format
+        llm
+    pivots:
+      - 'Details: default Shell is explorer.exe; default Userinit is C:\Windows\system32\userinit.exe, (with trailing
+        comma) - extra entries after the comma are persistence'
+      - Security 4688 where ParentProcessName is userinit.exe and NewProcessName is not explorer.exe (Chainsaw logic)
+      - Writer process Image
+    false_positives:
+      - Rare kiosk/shell-replacement configurations that deliberately change Shell
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/registry/registry_set/registry_set_winlogon_notify_key.yml
+      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/persistence/T1547.004 - Winlogon System
+        Shell Changed.yml
+    verified: false
+    notes: Sigma and Chainsaw use different event sources (registry vs process tree), so they corroborate the technique
+      but not a single event. Default value contents are from general knowledge, not from an opened source.
+  - id: FH-PER-012
+    title: Image File Execution Options Debugger / accessibility-feature (sethc, utilman) backdoor
+    tactic: persistence
+    attack:
+      - T1546.012
+      - T1546.008
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 12
+      - 13
+    prerequisites:
+      - Sysmon installed with a config that logs event 12/13
+    logic:
+      selection:
+        EventID:
+          - 12
+          - 13
+        TargetObject|contains: \Image File Execution Options\
+        TargetObject|endswith:
+          - \Debugger
+          - \GlobalFlag
+          - \MonitorProcess
+      selection_sticky:
+        TargetObject|contains:
+          - \sethc.exe\
+          - \utilman.exe\
+          - \osk.exe\
+          - \Magnify.exe\
+          - \Narrator.exe
+          - \DisplaySwitch.exe
+      condition: selection or selection_sticky
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 12,13 --field "TargetObject~Image
+        File Execution Options" --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~sethc.exe
+        --format llm
+    pivots:
+      - Details = debugger command (usually cmd.exe or a payload)
+      - Sysmon 11/23 and 4688 for sethc.exe/utilman.exe being replaced or run as SYSTEM from winlogon
+      - 'Alternative: reg.exe add ... Image File Execution Options in 4688/Sysmon 1 CommandLine'
+    false_positives:
+      - Developers/AV vendors set IFEO Debugger or GlobalFlag for debugging
+      - Application Verifier / appcompat settings
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/registry/registry_event/registry_event_stickykey_like_backdoor.yml
+      - https://github.com/mitre-attack/attack-stix-data/blob/master/enterprise-attack/enterprise-attack.json
+    verified: false
+    notes: Only Sigma read for the IFEO key paths. File-replacement variant of sethc/utilman (copying cmd.exe over
+      the binary) is not covered by a rule I read - see Open questions.
+  - id: FH-PER-013
+    title: AppInit_DLLs or AppCertDlls registry modification
+    tactic: persistence
+    attack:
+      - T1546.010
+      - T1546.009
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 12
+      - 13
+    prerequisites:
+      - Sysmon installed with a config that logs event 12/13
+    logic:
+      selection:
+        EventID:
+          - 12
+          - 13
+        TargetObject|endswith:
+          - \Windows NT\CurrentVersion\Windows\AppInit_DLLs
+          - \Control\Session Manager\AppCertDlls
+      filter_empty:
+        Details: (Empty)
+      condition: selection and not filter_empty
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 12,13 --field TargetObject~AppInit_DLLs
+        --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 12,13 --field TargetObject~AppCertDlls
+        --format llm
+    pivots:
+      - Also LoadAppInit_DLLs (DWORD) being set to 1; Secure Boot disables AppInit loading on modern systems
+      - Sysmon 7 for the DLL being loaded into many processes
+      - Sysmon 11 for the DLL file creation
+    false_positives:
+      - Some legacy accessibility or graphics software uses AppInit_DLLs
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/registry/registry_event/registry_event_new_dll_added_to_appinit_dlls_registry_key.yml
+      - https://github.com/mitre-attack/attack-stix-data/blob/master/enterprise-attack/enterprise-attack.json
+    verified: false
+    notes: Only AppInit path read in Sigma (AppCertDlls path comes from the rule filename and my general knowledge;
+      the ATT&CK technique name T1546.009 'AppCert DLLs' was confirmed). Secure Boot remark is general knowledge,
+      unverified.
+  - id: FH-PER-014
+    title: COM hijacking via InprocServer32 / LocalServer32 / TreatAs changes
+    tactic: persistence
+    attack:
+      - T1546.015
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 12
+      - 13
+    prerequisites:
+      - Sysmon installed with a config that logs event 12/13 with HKCU\Software\Classes\CLSID and HKLM\...\CLSID
+        rules (very noisy without scoping)
+    logic:
+      selection:
+        EventID: 13
+        TargetObject|contains: \CLSID\
+        TargetObject|endswith:
+          - \InprocServer32\(Default)
+          - \LocalServer32\(Default)
+          - \TreatAs\(Default)
+      selection_user_hive:
+        TargetObject|startswith: HKU\
+      condition: selection and selection_user_hive
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~InprocServer32
+        --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~TreatAs
+        --format llm
+    pivots:
+      - Details = DLL path (user-writable path is suspicious)
+      - 'Which process later loads it: Sysmon 7 with ImageLoaded equal to that DLL'
+      - Whether the CLSID exists under HKLM (hijack) or is brand new
+    false_positives:
+      - Per-user COM registrations by installers and some apps (Office add-ins, shell extensions)
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/registry/registry_set/registry_set_persistence_com_hijacking_builtin.yml
+      - https://github.com/mitre-attack/attack-stix-data/blob/master/enterprise-attack/enterprise-attack.json
+    verified: false
+    notes: Scope reasoning (HKU only) is my own design to cut noise. Rule file names and CLSID target patterns read
+      in Sigma; a single source family.
+  - id: FH-PER-015
+    title: Netsh helper DLL registered
+    tactic: persistence
+    attack:
+      - T1546.007
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 1
+      - 13
+    prerequisites:
+      - Sysmon installed with a config that logs event 1 and/or 13 (or Security 4688 with command line)
+    logic:
+      selection_cmd:
+        EventID: 1
+        Image|endswith: \netsh.exe
+        CommandLine|contains|all:
+          - add
+          - helper
+      selection_reg:
+        EventID: 13
+        TargetObject|contains: \SOFTWARE\Microsoft\NetSh
+        Details|contains: .dll
+      condition: selection_cmd or selection_reg
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~netsh.exe
+        --field CommandLine~helper --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~Microsoft\NetSh
+        --format llm
+    pivots:
+      - DLL path in Details/CommandLine -> Sysmon 11 and 7
+      - Later netsh.exe executions load the DLL (Sysmon 7)
+    false_positives:
+      - Windows components registering ipmontr.dll etc. via poqexec during servicing
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_netsh_helper_dll_persistence.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/registry/registry_set/registry_set_netsh_helper_dll_potential_persistence.yml
+      - https://github.com/mitre-attack/attack-stix-data/blob/master/enterprise-attack/enterprise-attack.json
+    verified: false
+    notes: Two Sigma rules, same author family; one source family.
+  - id: FH-PER-016
+    title: Permanent WMI event subscription registered - WMI-Activity/Operational 5861 (and 5859/5860)
+    tactic: persistence
+    attack:
+      - T1546.003
+    channel: Microsoft-Windows-WMI-Activity/Operational
+    event_ids:
+      - 5861
+      - 5859
+      - 5860
+    prerequisites:
+      - Microsoft-Windows-WMI-Activity/Operational log (default on in Windows 10 / Server 2012 R2 and later per
+        Hayabusa/Sigma notes; 5859 and 5861 detection needs those versions)
+    logic:
+      selection_binding:
+        EventID: 5861
+        PossibleCause|contains:
+          - CommandLineEventConsumer
+          - ActiveScriptEventConsumer
+          - CommandLineTemplate
+      selection_filter:
+        EventID: 5859
+      filter_scm:
+        PossibleCause: Permanent
+        Query: select * from MSFT_SCMEventLogEvent
+      condition: (selection_binding or selection_filter) and not filter_scm
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-WMI-Activity/Operational --event-id 5861 --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-WMI-Activity/Operational --event-id 5859,5860,5861 --format
+        llm --limit 200
+    pivots:
+      - 'Consumer script/command line inside the event: ActiveScriptEventConsumer (script text) or CommandLineEventConsumer
+        (command)'
+      - Sysmon 19/20/21 (FH-PER-017) for the same registration with names
+      - 'Sysmon 1: process started by WmiPrvSE.exe or scrcons.exe afterwards'
+      - 5857 (provider loaded) shows WMI provider DLLs loaded in wmiprvse - a malicious provider DLL path is an
+        anomaly
+    false_positives:
+      - Legitimate vendor subscriptions (e.g. HP/Dell health and BIOS tools; SCM Event Provider default subscription)
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/wmi/win_wmi_persistence.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/WMI-Activity_Op/WMI_5861_Info_PermEventConsumerRegistered.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/WMI-Activity_Op/WMI_5860_Info_TempEventConsumerRegistered.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/WMI-Activity_Op/WMI_5857_Info_ProviderStarted.yml
+      - https://github.com/mitre-attack/attack-stix-data/blob/master/enterprise-attack/enterprise-attack.json
+    verified: true
+    notes: 'Event ids and channel confirmed by Sigma and Hayabusa. 5861 = permanent consumer binding, 5860 = temporary
+      consumer (Hayabusa), 5859 = filter registration (Sigma). UserData field names differ by tool (Sigma: PossibleCause/Query/User/Provider;
+      Hayabusa: UserDataConsumer, UserDataNamespace...) so ''PossibleCause'' as the searchable text is the common
+      denominator. 5858 (failures) not used. Microsoft documentation for these events was not available.'
+  - id: FH-PER-017
+    title: WMI filter, consumer and binding created (Sysmon 19/20/21)
+    tactic: persistence
+    attack:
+      - T1546.003
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 19
+      - 20
+      - 21
+    prerequisites:
+      - Sysmon installed with a config that logs event 19, 20 and 21 (WmiEvent rules; e.g. <WmiEvent onmatch="exclude"/>
+        logs all)
+    logic:
+      selection:
+        EventID:
+          - 19
+          - 20
+          - 21
+      selection_susp_dest:
+        Destination|contains:
+          - powershell
+          - cmd.exe
+          - -enc
+          - DownloadString
+          - WScript.Shell
+          - iex(
+      condition: selection and (selection_susp_dest or EventID in (21))
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 19,20,21 --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 20 --field Destination~powershell
+        --format llm
+    pivots:
+      - 'Operation field (Created / Deleted): a Deleted event soon after is cleanup'
+      - Filter Query (event 19) tells what triggers it - e.g. logon, uptime, process start
+      - Consumer Name/Type/Destination (event 20) is the payload; event 21 ties filter to consumer
+      - 'Process/User fields: who registered it (Image, e.g. powershell.exe or wmic.exe or mofcomp.exe)'
+    false_positives:
+      - Vendor management agents that register their own subscriptions
+    severity: high
+    sources:
+      - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/sysmon/Sysmon_19_Info_WmiEventFilterActivity.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/wmi_event/sysmon_wmi_event_subscription.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/wmi_event/sysmon_wmi_susp_scripting.yml
+    verified: true
+    notes: Microsoft Sysmon page defines events 19/20/21 (filter name+expression, consumer name+log+destination,
+      binding consumer+filter path); Hayabusa and Sigma confirm the channel and Destination field. 'Operation' value
+      semantics from Sysmon schema knowledge, not an opened source. Condition syntax 'EventID in (21)' is my shorthand
+      for 'always alert on bindings'.
+  - id: FH-PER-018
+    title: BITS job created or started (Bits-Client/Operational 3, 59, 60) and notify-command persistence
+    tactic: persistence
+    attack:
+      - T1197
+    channel: Microsoft-Windows-Bits-Client/Operational
+    event_ids:
+      - 3
+      - 59
+      - 60
+    prerequisites:
+      - Microsoft-Windows-Bits-Client/Operational is typically enabled by default; Hayabusa and Sigma use it directly
+    logic:
+      selection_job:
+        EventID: 3
+        processPath|endswith:
+          - \bitsadmin.exe
+          - \powershell.exe
+      selection_transfer:
+        EventID: 59
+        Url|contains:
+          - http://
+          - https://
+      condition: selection_job or selection_transfer
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Bits-Client/Operational --event-id 3,59,60 --format llm
+        --limit 200
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~bitsadmin.exe
+        --field CommandLine~SetNotifyCmdLine --format llm
+    pivots:
+      - URL on 59 -> proxy/DNS logs, direct IP or file-sharing domains are suspicious
+      - Event 60 usually indicates a stopped/failed transfer with an error code - compare with 59 to find jobs that
+        never completed (persistent retry jobs)
+      - Sysmon 1 / 4688 for bitsadmin /SetNotifyCmdLine (the command to run after transfer)
+      - Sigma also uses 16403 (LocalName) for transfer to disk with suspicious extension
+    false_positives:
+      - Windows Update, Office, Edge and many third-party updaters use BITS heavily
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/bits_client/win_bits_client_new_job_via_bitsadmin.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/bits_client/win_bits_client_new_transfer_saving_susp_extensions.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/BitsClient_Op/BitsCli_59_Info_BitsJobCreated.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_bitsadmin_potential_persistence.yml
+    verified: false
+    notes: 'CONFLICT: Sigma treats event 3 as new job (field processPath); Hayabusa labels 59 as ''Bits Job Created''
+      with JobTitle/Url. From general knowledge 3 = job created, 59 = transfer started, 60 = transfer stopped, but
+      I did not open Microsoft documentation, so the semantics of 59/60 are unconfirmed.'
+  - id: FH-PER-019
+    title: Local account created - Security 4720 (incl. hidden '$' accounts)
+    tactic: persistence
+    attack:
+      - T1136.001
+    channel: Security
+    event_ids:
+      - 4720
+    prerequisites:
+      - Audit User Account Management (Success) enabled on the host (workstations/servers for local SAM accounts;
+        domain controllers for domain accounts)
+    logic:
+      selection:
+        EventID: 4720
+      selection_hidden:
+        TargetUserName|endswith: $
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4720 --format llm
+      - forhunt search <paths> --channel Security --event-id 4720 --field TargetUserName~$ --format llm
+    pivots:
+      - SubjectUserName/SubjectLogonId -> 4624 for the creator
+      - 'Next: 4722 (enabled), 4728/4732/4756 (group membership - especially Administrators), 4738 (attribute change),
+        4724/4723 (password set)'
+      - Sysmon 1 / 4688 for net.exe user /add or PowerShell New-LocalUser
+      - First 4624 logon by the new TargetUserName
+    false_positives:
+      - IT provisioning, imaging, Autopilot/MDM, first-boot setup accounts
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_user_creation.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_hidden_user_creation.yml
+      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/account_tampering/new_user_created.yml
+      - https://github.com/mitre-attack/attack-stix-data/blob/master/enterprise-attack/enterprise-attack.json
+    verified: true
+    notes: 4720 and TargetUserName/TargetSid confirmed by Sigma and Chainsaw. The '$'-suffix hidden-account heuristic
+      is from one Sigma rule (a computer-account-like name on a user account). Microsoft Learn page not reachable.
+  - id: FH-PER-020
+    title: Account enabled or modified for persistence - Security 4722 / 4738
+    tactic: persistence
+    attack:
+      - T1098
+      - T1136.001
+    channel: Security
+    event_ids:
+      - 4722
+      - 4738
+    prerequisites:
+      - Audit User Account Management (Success) enabled
+    logic:
+      selection_enable:
+        EventID: 4722
+      selection_change:
+        EventID: 4738
+      condition: selection_enable or selection_change
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4722 --format llm
+      - forhunt search <paths> --channel Security --event-id 4738 --format llm --limit 200
+    pivots:
+      - 4738 shows changed attributes (e.g. password-not-required, delegation target, UAC flags, SID history)
+      - Pair with 4720 (new accounts) and 4728/4732 (group adds)
+      - 'Who changed it: SubjectUserName, SubjectLogonId'
+    false_positives:
+      - Routine helpdesk operations (unlock/enable)
+    severity: low
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_alert_ad_user_backdoors.yml
+      - https://github.com/mitre-attack/attack-stix-data/blob/master/enterprise-attack/enterprise-attack.json
+    verified: false
+    notes: 4738 is used in the Sigma rule with the AllowedToDelegateTo field; 4722 'account enabled' meaning is
+      from the standard event catalogue and not confirmed in a source I opened.
+  - id: FH-PER-021
+    title: Logon script / UserInitMprLogonScript registry persistence
+    tactic: persistence
+    attack:
+      - T1037.001
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 13
+    prerequisites:
+      - Sysmon installed with a config that logs event 13
+    logic:
+      selection:
+        EventID: 13
+        TargetObject|contains: UserInitMprLogonScript
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~UserInitMprLogonScript
+        --format llm
+    pivots:
+      - Details = script/command path -> Sysmon 11
+      - 'Next logon of that user: Sysmon 1 with ParentImage userinit.exe/explorer.exe'
+    false_positives:
+      - Administrator-defined logon scripts via registry (rare, GPO logon scripts use other mechanisms)
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/registry/registry_set/registry_set_persistence_logon_scripts_userinitmprlogonscript.yml
+      - https://github.com/mitre-attack/attack-stix-data/blob/master/enterprise-attack/enterprise-attack.json
+    verified: false
+    notes: Single source family.
+  - id: FH-PER-022
+    title: Service DLL / ImagePath registry tampering and sc.exe service creation
+    tactic: persistence
+    attack:
+      - T1543.003
+      - T1574.011
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 1
+      - 13
+    prerequisites:
+      - Sysmon installed with a config that logs event 1 and 13
+    logic:
+      selection_sc:
+        EventID: 1
+        Image|endswith: \sc.exe
+        CommandLine|contains|all:
+          - create
+          - binPath
+      selection_reg:
+        EventID: 13
+        TargetObject|contains: \CurrentControlSet\Services\
+        TargetObject|endswith:
+          - \ServiceDll
+          - \ImagePath
+      condition: selection_sc or selection_reg
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~sc.exe
+        --field CommandLine~binPath --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~ServiceDll
+        --format llm
+    pivots:
+      - System 7045 / Security 4697 for the resulting service
+      - Writer process Image for the registry change (services.exe is normal; reg.exe/powershell is not)
+      - Sysmon 11/7 for ServiceDll payload
+    false_positives:
+      - Installers; parent software installation
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_sc_create_service.yml
+      - https://github.com/mitre-attack/attack-stix-data/blob/master/enterprise-attack/enterprise-attack.json
+    verified: false
+    notes: Sc.exe rule has a Dropbox filter (installer noise). Single source family.
+  - id: FH-PER-023
+    title: WMI event consumer created through wbemcons.dll load or wmic/PowerShell command
+    tactic: persistence
+    attack:
+      - T1546.003
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 7
+      - 1
+    prerequisites:
+      - Sysmon installed with a config that logs event 7 (ImageLoad, off by default) and 1
+    logic:
+      selection_load:
+        EventID: 7
+        Image: C:\Windows\System32\wbem\WmiPrvSE.exe
+        ImageLoaded|endswith: \wbemcons.dll
+      selection_wmic:
+        EventID: 1
+        Image|endswith: \wmic.exe
+        CommandLine|contains|all:
+          - ActiveScriptEventConsumer
+          - ' CREATE '
+      condition: selection_load or selection_wmic
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 7 --field ImageLoaded~wbemcons.dll
+        --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~wmic.exe
+        --field CommandLine~EventConsumer --format llm
+    pivots:
+      - wbemcons.dll in WmiPrvSE means a CommandLineEventConsumer fired - execution, not just registration
+      - Correlate with FH-PER-016/017 and the spawned child process
+    false_positives:
+      - Legitimate CommandLineEventConsumer use is rare
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/image_load/image_load_wmi_persistence_commandline_event_consumer.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_wmic_eventconsumer_creation.yml
+      - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+    verified: false
+    notes: Event 7 is off by default per Microsoft Sysmon page. Single Sigma source for the wbemcons.dll pattern.

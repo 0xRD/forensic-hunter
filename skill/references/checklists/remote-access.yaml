@@ -1,0 +1,673 @@
+tactic: remote-access
+title: Remote Access Services (RDP, WinRM, SMB)
+description: >
+  Remote access services leave their evidence in three layers. For RDP the layers are the
+  service-specific operational logs (TerminalServices-RemoteConnectionManager 1149,
+  LocalSessionManager 21/22/23/24/25, RdpCoreTS), the Security log (4624 type 10, 4778/4779,
+  4634/4647) and, on the machine the user came from, the RDP client log (1024/1102). For WinRM
+  the WinRM/Operational channel records session creation on both ends, with Security 4624 type 3
+  and wsmprovhost.exe on the target. For SMB the Security 5140/5142/5143/5144/5145 family
+  records share and file activity, with SMBServer/SMBClient channels adding authentication
+  failures and signing posture. These logs answer who connected from where and when;
+  they do not by themselves prove malice, so each check lists benign sources to rule out. Most
+  of the RDP-specific events are written by default, whereas 5140/5145 and 5156 need audit
+  policy, and RdpCoreTS and some SMB channels need verification on the actual build. Execution
+  after the connection (service, task, WMI, DCOM) is in lateral-movement.yaml; external
+  exposure and brute force are in initial-access.yaml. Source URLs are files read from shallow
+  git clones; see references/sources/lateral-remote-initial.md.
+checks:
+  - id: FH-RMT-001
+    title: RDP network authentication succeeded (RemoteConnectionManager 1149) with source address
+    tactic: remote-access
+    attack: [T1021.001, T1078]
+    channel: Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational
+    provider: Microsoft-Windows-TerminalServices-RemoteConnectionManager
+    event_ids: [1149]
+    prerequisites:
+      - "Log enabled (default on Windows 7/2008 R2 and later); no audit policy needed"
+    logic:
+      selection:
+        EventID: 1149
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational --event-id 1149 --format llm
+    pivots:
+      - "UserData Param1 = user, Param2 = domain, Param3 = source IP address (or empty user/domain with Restricted Admin)"
+      - "Security 4624 LogonType 10 (or 7 on reconnect) for the same user and IpAddress within seconds, and LocalSessionManager 21/22 for the session id"
+      - "A 1149 with no later 21/4624 means authentication passed at the network (NLA) level but the session never started"
+    false_positives:
+      - "Normal admin and user RDP; jump hosts and RD Gateway servers show the gateway IP as the source"
+    severity: informational
+    sources:
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/TerminalServices-RemoteConnectionManager_Op/RemoteConnManger_1149_Info_RDP-LogonAttempt.yml
+      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/rdp_attacks/event_id_1149.yaml
+      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/mstsc.htm
+    verified: true
+    notes: "Hayabusa documents Param1/Param2/Param3 and says that on Windows 7+/2012+ it is logged only for successful authentication; JPCERT's mstsc sheet lists 1149 as the destination-side record with user, domain and source address. 1149 is NOT a failure log. Third-party descriptions that it implies a completed logon are wrong."
+
+  - id: FH-RMT-002
+    title: RDP session logon, shell start and reconnect (LocalSessionManager 21, 22, 25)
+    tactic: remote-access
+    attack: [T1021.001]
+    channel: Microsoft-Windows-TerminalServices-LocalSessionManager/Operational
+    provider: Microsoft-Windows-TerminalServices-LocalSessionManager
+    event_ids: [21, 22, 25]
+    prerequisites:
+      - "Log enabled (default)"
+    logic:
+      selection:
+        EventID:
+          - 21
+          - 22
+          - 25
+      filter_local:
+        Address: 'LOCAL'
+      condition: selection and not filter_local
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-TerminalServices-LocalSessionManager/Operational --event-id 21,22,25 --format llm
+    pivots:
+      - "UserData User (DOMAIN\\user), SessionID and Address; use SessionID to join 21 -> 22 -> 24/23 for the whole session timeline"
+      - "21 = session logon succeeded, 22 = shell start (explorer appeared), 25 = reconnect to an existing disconnected session"
+      - "Address that is public or unusual for the user -> see FH-INIT-007"
+      - "Security 4624 type 10 on the same host with the same TargetLogonId family; 4778 for reconnects"
+    false_positives:
+      - "Any legitimate RDP user; reconnects after network blips"
+    severity: informational
+    sources:
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/TerminalServices-LocalSessionManager_Op/LocalSessManager_21_Info_RDP-Logon.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/TerminalServices-LocalSessionManager_Op/LocalSessManager_22_Info_RDP-SessStart_Noisy.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/TerminalServices-LocalSessionManager_Op/LocalSessManager_25_Info_RDP-Reconnect.yml
+      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/rdp_attacks/eid_21_rdp_session_logon_succeeded.yml
+      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/rdp_attacks/event_id_25.yaml
+      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/mstsc.htm
+    verified: true
+    notes: "Address is the string LOCAL for console sessions and the client IP for remote ones (Hayabusa). The message text of 21 says 'Session logon succeeded', 22 'Shell start notification received'. JPCERT lists 24 and 25 for mstsc."
+
+  - id: FH-RMT-003
+    title: RDP disconnect and logoff (LocalSessionManager 23, 24, 39, 40)
+    tactic: remote-access
+    attack: [T1021.001, T1563.002]
+    channel: Microsoft-Windows-TerminalServices-LocalSessionManager/Operational
+    provider: Microsoft-Windows-TerminalServices-LocalSessionManager
+    event_ids: [23, 24, 39, 40]
+    prerequisites:
+      - "Log enabled (default)"
+    logic:
+      selection:
+        EventID:
+          - 23
+          - 24
+          - 39
+          - 40
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-TerminalServices-LocalSessionManager/Operational --event-id 23,24,39,40 --format llm
+    pivots:
+      - "23 = logoff, 24 = disconnected (user and Address). Time between 21 and 23 = session duration"
+      - "39: session X disconnected by session Y (the message names both ids) - a hijack or shadowing candidate when Y is a session the user did not start"
+      - "40: disconnect with a reason code; map the code before interpreting it"
+      - "Disconnect without logoff leaves a session alive for later reconnect (25) - a persistence signal on servers"
+    false_positives:
+      - "Closing the RDP window disconnects instead of logging off; users on flaky links"
+    severity: informational
+    sources:
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/TerminalServices-LocalSessionManager_Op/LocalSessManager_24_Info_RDP-Disconnect.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/TerminalServices-LocalSessionManager_Op/LocalSessManager_23_Info_RDP-Logoff.yml
+      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/rdp_attacks/eid_39_rdp_session_disconnected.yml
+      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/rdp_attacks/eid_23_rdp_session_logoff.yml
+    verified: false
+    notes: "23, 24, 39 are present in Hayabusa and/or Chainsaw rules; event 40 and its reason codes are not covered by any source I could open and are listed from memory. Keep verified false until a lab sample or Microsoft documentation confirms event 40."
+
+  - id: FH-RMT-004
+    title: RDP logon in the Security log (4624 LogonType 10, and 7 / 12 on reconnect)
+    tactic: remote-access
+    attack: [T1021.001, T1078]
+    channel: Security
+    provider: Microsoft-Windows-Security-Auditing
+    event_ids: [4624]
+    prerequisites:
+      - "Audit Logon (Success)"
+    logic:
+      selection:
+        EventID: 4624
+        LogonType: 10
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=10 --format llm
+      - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=7 --format llm
+    pivots:
+      - "IpAddress = RDP client; WorkstationName is the client machine name as sent by the client (spoofable)"
+      - "LogonProcessName User32 and AuthenticationPackageName Negotiate/Kerberos/NTLM; ProcessName winlogon.exe"
+      - "Type 10 leaves the credentials in LSASS on the target (credential theft risk if the target is compromised): check Sysmon 10 against lsass afterwards"
+      - "Reconnect to a disconnected session is logged as an unlock-style logon (type 7) together with 4778; confirm in your own lab because JPCERT's reconnect sample did not state the type"
+      - "Compare IpAddress 127.0.0.1 / ::1 -> RDP tunnelling (FH-RMT-006)"
+    false_positives:
+      - "Administrators, helpdesk, jump servers (IpAddress is the jump host)"
+    severity: informational
+    sources:
+      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/mstsc.htm
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/LogonLogoff/Logon/Sec_4624_Info_Logon-Type-10-RemoteInteractive.yml
+      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/rdp_attacks/event_id_4624_logontype_10.yaml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_admin_rdp_login.yml
+    verified: true
+    notes: "Type 10 with LogonProcessName User32 is confirmed by the JPCERT mstsc sheet and three rule sets. The type 7 reconnect claim is unconfirmed (see pivot) and the type 12 CachedRemoteInteractive case is rare. With NLA, failed RDP passwords show up as 4625 LogonType 3 (not 10) on most builds - see FH-INIT-006."
+
+  - id: FH-RMT-005
+    title: RDP session reconnect and disconnect in the Security log (4778, 4779)
+    tactic: remote-access
+    attack: [T1021.001, T1563.002]
+    channel: Security
+    provider: Microsoft-Windows-Security-Auditing
+    event_ids: [4778, 4779]
+    prerequisites:
+      - "Audit Other Logon/Logoff Events (Success)"
+    logic:
+      selection:
+        EventID:
+          - 4778
+          - 4779
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4778,4779 --format llm
+    pivots:
+      - "AccountName, AccountDomain, LogonID, SessionName (RDP-Tcp#N), ClientName and ClientAddress"
+      - "ClientName/ClientAddress at reconnect differing from the original connection means the session was picked up from a different machine"
+      - "ClientAddress of 127.0.0.1 or the server itself can be a tscon-style reconnection (FH-LAT-019)"
+    false_positives:
+      - "Roaming users reconnecting from different devices"
+    severity: low
+    sources:
+      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/mstsc.htm
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/LogonLogoff/OtherLogonLogoffEvents/Sec_4778_Info_RDP-SessReconn.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/LogonLogoff/OtherLogonLogoffEvents/Sec_4779_Info_RDP-SessDisconn.yml
+    verified: true
+    notes: "Field names confirmed from a Hayabusa sample (SessionName, ClientName, ClientAddress); JPCERT lists both events on the destination host. Console reconnects (fast user switching) also produce these events with SessionName Console."
+
+  - id: FH-RMT-006
+    title: RDP through a tunnel - logon or flow from loopback
+    tactic: remote-access
+    attack: [T1021.001, T1090]
+    channel: Security
+    provider: Microsoft-Windows-Security-Auditing
+    event_ids: [4624, 5156]
+    prerequisites:
+      - "Audit Logon (Success); Audit Filtering Platform Connection for the 5156 variant"
+    logic:
+      selection_logon:
+        EventID: 4624
+        LogonType: 10
+        IpAddress:
+          - '127.0.0.1'
+          - '::1'
+      selection_wfp:
+        EventID: 5156
+        SourcePort: 3389
+        DestAddress:
+          - '127.0.0.1'
+          - '::1'
+      condition: selection_logon or selection_wfp
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=10 --field IpAddress=127.0.0.1 --format llm
+      - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=10 --field IpAddress=::1 --format llm
+      - forhunt search <paths> --channel Security --event-id 5156 --field SourcePort=3389 --format llm
+    pivots:
+      - "Process that owns the other end of the tunnel (ssh.exe, plink.exe, ngrok, chisel): Sysmon 3 and 4688"
+      - "RemoteConnectionManager 1149 / LocalSessionManager 21 Address will also show the loopback or tunnel endpoint"
+      - "The actual external endpoint is in the tunnelling tool's outbound connections, not in the RDP logs"
+    false_positives:
+      - "Local testing; some remote support tools proxy RDP over loopback"
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_rdp_localhost_login.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_rdp_reverse_tunnel.yml
+    verified: false
+    notes: "Both patterns are from Sigma (citing FireEye and a public EVTX sample) and not confirmed by a second source I could open."
+
+  - id: FH-RMT-007
+    title: RDP enabled via registry (fDenyTSConnections set to 0)
+    tactic: remote-access
+    attack: [T1021.001, T1112]
+    channel: Microsoft-Windows-Sysmon/Operational
+    provider: Microsoft-Windows-Sysmon
+    event_ids: [13, 4688, 1]
+    prerequisites:
+      - "Sysmon installed with a config that logs event 13 (registry value set) for HKLM\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server"
+      - "Alternatively process creation auditing with command line to catch reg.exe / PowerShell / netsh changes"
+    logic:
+      selection:
+        EventID: 13
+        TargetObject|endswith: '\Control\Terminal Server\fDenyTSConnections'
+        Details: 'DWORD (0x00000000)'
+      selection_cli:
+        CommandLine|contains|all:
+          - 'fDenyTSConnections'
+          - ' add '
+      condition: selection or selection_cli
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~fDenyTSConnections --format llm
+      - forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~fDenyTSConnections --format llm
+    pivots:
+      - "Image / ProcessGuid writing the value: reg.exe, powershell.exe, wmic, or an unknown binary"
+      - "Next in sequence: firewall rule for 3389 (FH-RMT-009), NLA change (FH-RMT-008), new local admin / RDP group membership (4732 for Remote Desktop Users)"
+      - "Timeline: first RDP logon (1149, 4624 type 10) after the change"
+    false_positives:
+      - "Admins enabling RDP via System Properties, GPO or provisioning scripts (writes appear as the GPO client or svchost)"
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/registry/registry_set/registry_set_terminal_server_suspicious.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_reg_rdp_keys_tamper.yml
+      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/mstsc.htm
+    verified: false
+    notes: "fDenyTSConnections = 0 means RDP allowed. Sigma is the only source that documents the exact value semantics; JPCERT confirms Sysmon 13 as a registry-set event but for other keys. A GPO enabling RDP may write the value through the Policies key (Policies\\Microsoft\\Windows NT\\Terminal Services) instead."
+
+  - id: FH-RMT-008
+    title: RDP security weakened - NLA disabled or security layer changed
+    tactic: remote-access
+    attack: [T1021.001, T1112]
+    channel: Microsoft-Windows-Sysmon/Operational
+    provider: Microsoft-Windows-Sysmon
+    event_ids: [13]
+    prerequisites:
+      - "Sysmon installed with a config that logs event 13 for the RDP-Tcp WinStation key"
+    logic:
+      selection_nla:
+        EventID: 13
+        TargetObject|endswith: '\WinStations\RDP-Tcp\UserAuthentication'
+        Details: 'DWORD (0x00000000)'
+      selection_layer:
+        EventID: 13
+        TargetObject|endswith: '\WinStations\RDP-Tcp\SecurityLayer'
+      selection_other:
+        EventID: 13
+        TargetObject|contains: '\Terminal Server'
+        TargetObject|endswith:
+          - '\fSingleSessionPerUser'
+          - '\InitialProgram'
+          - '\Shadow'
+      condition: selection_nla or selection_layer or selection_other
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~UserAuthentication --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~SecurityLayer --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field 'TargetObject~Terminal Server' --format llm
+    pivots:
+      - "Same process and time as FH-RMT-007; after NLA is off, credential-less sessions and the sticky-keys style attack on the logon screen become possible"
+      - "Shadow values 1-4 enable session shadowing (mstsc /shadow ... /noConsentPrompt)"
+      - "InitialProgram runs a program at RDP logon - persistence"
+    false_positives:
+      - "Legacy client compatibility changes made by admins; SecurityLayer to 2 (TLS) is the hardened value and is excluded by common rules"
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/registry/registry_set/registry_set_terminal_server_suspicious.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/registry/registry_set/registry_set_terminal_server_tampering.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_mstsc_rdp_hijack_shadowing.yml
+    verified: false
+    notes: "Single-source (Sigma). UserAuthentication 0 = NLA not required (Sigma comment). The --field with a space in the value may need quoting in your shell: use --field 'TargetObject~Terminal Server'."
+
+  - id: FH-RMT-009
+    title: Firewall opened for RDP (netsh / Windows Firewall rule add for 3389)
+    tactic: remote-access
+    attack: [T1021.001, T1686.003]
+    channel: Security
+    provider: Microsoft-Windows-Security-Auditing
+    event_ids: [4688, 1, 2004]
+    prerequisites:
+      - "Process creation auditing with command line, or Sysmon event 1"
+      - "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall log for rule-added events (2004 and Windows 11 equivalents)"
+    logic:
+      selection:
+        EventID: 4688
+        NewProcessName|endswith: '\netsh.exe'
+        CommandLine|contains|all:
+          - 'firewall'
+          - 'add'
+          - '3389'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4688 --field NewProcessName~netsh.exe --field CommandLine~3389 --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~3389 --field CommandLine~firewall --format llm
+      - forhunt search <paths> --channel 'Microsoft-Windows-Windows Firewall With Advanced Security/Firewall' --event-id 2004 --format llm
+    pivots:
+      - "Window around fDenyTSConnections change (FH-RMT-007) and first RDP logon"
+      - "Also netsh interface portproxy to 3389 (port forwarding to an internal host) and PowerShell New-NetFirewallRule / Enable-NetFirewallRule -DisplayGroup Remote Desktop"
+      - "Firewall channel 2004 carries ApplicationPath, LocalPorts, ModifyingApplication when available"
+    false_positives:
+      - "Provisioning scripts and legitimate admin changes"
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_netsh_fw_allow_rdp.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/firewall_as/win_firewall_as_add_rule.yml
+      - https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json
+    verified: false
+    notes: "Sigma-only. MITRE moved Disable or Modify System Firewall from T1562.004 (now revoked) to T1686 in the CTI data I read (T1686.003 Windows Host Firewall); older tooling and reports still say T1562.004. The Security 4946/4947 (rule added/modified) alternatives require Audit MPSSVC Rule-Level Policy Change and were not verified."
+
+  - id: FH-RMT-010
+    title: RDP shadowing (mstsc /shadow with noConsentPrompt)
+    tactic: remote-access
+    attack: [T1021.001]
+    channel: Security
+    provider: Microsoft-Windows-Security-Auditing
+    event_ids: [4688, 1]
+    prerequisites:
+      - "Process creation auditing with command line, or Sysmon event 1"
+    logic:
+      selection:
+        CommandLine|contains|all:
+          - 'noconsentprompt'
+          - 'shadow:'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~noconsentprompt --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~noconsentprompt --format llm
+    pivots:
+      - "Registry Shadow value on the target (FH-RMT-008) allowing control without consent"
+      - "Session that was shadowed: LocalSessionManager 21/22 for the target session id"
+    false_positives:
+      - "Helpdesk use of RDP shadowing, rare outside RDS environments"
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_mstsc_rdp_hijack_shadowing.yml
+    verified: false
+    notes: "Single-source (Sigma)."
+
+  - id: FH-RMT-011
+    title: RDP client use on the source host (RDPClient 1024 and 1102)
+    tactic: remote-access
+    attack: [T1021.001]
+    channel: Microsoft-Windows-TerminalServices-RDPClient/Operational
+    provider: Microsoft-Windows-TerminalServices-ClientActiveXCore
+    event_ids: [1024, 1102, 1025, 1026, 1029]
+    prerequisites:
+      - "Log enabled (default on client OSes since Windows 7)"
+    logic:
+      selection:
+        EventID:
+          - 1024
+          - 1102
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-TerminalServices-RDPClient/Operational --event-id 1024,1102 --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-TerminalServices-RDPClient/Operational --event-id 1026,1025,1029 --format llm
+    pivots:
+      - "EventData Name/Value pairs: 1024 has Name 'Server Name' and Value = destination host name; 1102 has Name ServerAddress and Value = IP"
+      - "The host's user is the one who pivoted; join with Security 4648 (explicit credentials, ProcessName mstsc.exe) and Sysmon 1/3 for mstsc.exe"
+      - "1029 stores a Base64 SHA-256 of the user name - useful to confirm a candidate user name, not to read it"
+      - "Destination hosts list for this source = next hops to examine (their 1149 / 21 should match)"
+    false_positives:
+      - "Normal admin or user RDP from this machine"
+    severity: informational
+    sources:
+      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/mstsc.htm
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/TerminalServices-RDPClient_Op/RDP-Client_1024_Info_ConnAttempt.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/TerminalServices-RDPClient_Op/RDP-Client_1102_Info_ConnAttempt.yml
+    verified: true
+    notes: "Channel and Name/Value structure confirmed by Hayabusa samples; JPCERT lists 1024, 1025, 1026, 1028, 1029, 1105 on the mstsc source. The provider name in the EVTX is ClientActiveXCore. Event IDs 1026 (disconnect, with reason code) was seen by JPCERT with Reason values that depend on cause."
+
+  - id: FH-RMT-012
+    title: WinRM session established - server side (WinRM/Operational 169, 81, 82, 134)
+    tactic: remote-access
+    attack: [T1021.006]
+    channel: Microsoft-Windows-WinRM/Operational
+    provider: Microsoft-Windows-WinRM
+    event_ids: [169, 81, 82, 134]
+    prerequisites:
+      - "WinRM/Operational log enabled (default on)"
+    logic:
+      selection:
+        EventID:
+          - 169
+          - 81
+          - 82
+          - 134
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-WinRM/Operational --event-id 169,81,82,134 --format llm
+    pivots:
+      - "169 (creating WSMan session on the server) is the authenticated-user event; JPCERT's WinRS sheet also lists 192/193 for virtual-account use"
+      - "81/82/134 record CreateShell request processing; Sysmon/4688 for wsmprovhost.exe or winrshost.exe children give the command"
+      - "Security 4624 LogonType 3 (Kerberos or NTLM) from the connecting IpAddress; WinRM/Operational 91 (inbound session) is described in third-party writeups as carrying the client IP on patched builds - unverified here"
+      - "PowerShell 4103/4104 on the target for script content"
+    false_positives:
+      - "Admin tooling, Exchange/SCCM/Ansible/Server Manager, monitoring using WinRM"
+    severity: informational
+    sources:
+      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/WinRS.htm
+      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/WinRM.htm
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/WinRM_Op/WinRM_6_Info_SessCreated.yml
+    verified: true
+    notes: "169, 81, 82, 134 are documented in Hayabusa's channel_eid_info (https://github.com/Yamato-Security/hayabusa-rules/blob/main/config/channel_eid_info.txt) and appear on the destination host in JPCERT's WinRS sheet. Event 91 and 142/161/168 (see FH-RMT-014) are not covered here."
+
+  - id: FH-RMT-013
+    title: WinRM client activity on the source host (WinRM/Operational 6, 80, 143)
+    tactic: remote-access
+    attack: [T1021.006]
+    channel: Microsoft-Windows-WinRM/Operational
+    provider: Microsoft-Windows-WinRM
+    event_ids: [6, 80, 143]
+    prerequisites:
+      - "WinRM/Operational log enabled (default on)"
+    logic:
+      selection:
+        EventID: 6
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-WinRM/Operational --event-id 6 --format llm
+    pivots:
+      - "Event 6 message holds the connection string (host name / port and PSVersion) - the destination of the remote session"
+      - "Sysmon 3 to 5985/5986 from powershell.exe / winrs.exe and Security 4648 on the same host"
+      - "PowerShell 4104 for Enter-PSSession / Invoke-Command script content on the client"
+    false_positives:
+      - "Local loopback sessions to localhost:5985 by PowerShell itself and tooling"
+    severity: informational
+    sources:
+      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/WinRS.htm
+      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/WinRM.htm
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/WinRM_Op/WinRM_6_Info_SessCreated.yml
+    verified: true
+    notes: "Event 6 is confirmed by JPCERT (source host) and a Hayabusa sample (connection string in the message); 80 and 143 are listed by JPCERT for the WinRM sheet but their semantics were not examined."
+
+  - id: FH-RMT-014
+    title: WinRM authentication or operation failures (WinRM/Operational 161, 142)
+    tactic: remote-access
+    attack: [T1021.006, T1110]
+    channel: Microsoft-Windows-WinRM/Operational
+    provider: Microsoft-Windows-WinRM
+    event_ids: [161, 142]
+    prerequisites:
+      - "WinRM/Operational log enabled (default on)"
+    logic:
+      selection:
+        EventID:
+          - 161
+          - 142
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-WinRM/Operational --event-id 161,142 --format llm
+    pivots:
+      - "Pair with Security 4625 LogonType 3 from the same period to identify the source IpAddress and account"
+      - "Bursts of 161 from a single peer is credential guessing against WinRM (see FH-INIT-001/002)"
+      - "142 is described as an operation failing with an error code - read the message text"
+    false_positives:
+      - "161 also appears for connectivity or configuration problems (cannot reach the destination)"
+    severity: low
+    sources:
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/WinRM_Op/WinRM_6_Info_SessCreated.yml
+    verified: false
+    notes: "The meanings of 161 (authentication failure) and 142 (operation failure) come from web-search result snippets (Graylog content pack summaries, a forum thread), whose pages I did not open; Event 168 could not be identified at all. Confirm on a lab host before relying on these. The source list above supports only the channel name."
+
+  - id: FH-RMT-015
+    title: RDP TCP-level connection events (RdpCoreTS 131 and 98)
+    tactic: remote-access
+    attack: [T1021.001, T1133]
+    channel: Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational
+    provider: Microsoft-Windows-RemoteDesktopServices-RdpCoreTS
+    event_ids: [131, 98]
+    prerequisites:
+      - "RdpCoreTS/Operational log enabled (default on Server 2012 R2+/Windows 8.1+, check on older systems)"
+    logic:
+      selection:
+        EventID:
+          - 131
+          - 98
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational --event-id 131,98 --format llm
+    pivots:
+      - "131 is described as the server accepting a new TCP connection and includes the client IP address; 98 as a TCP connection successfully established"
+      - "Records connection attempts even when authentication never completes, so it shows scanning and brute force that 1149 never will"
+      - "Compare client IPs against 4625 (IpAddress) and 1149 (Param3)"
+    false_positives:
+      - "Port scanners and load-balancer health checks hitting 3389"
+    severity: informational
+    sources:
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/config/channel_abbreviations.txt
+    verified: false
+    notes: "Event meanings come from web-search snippets (Magnet Forensics, SOC Investigation, a vendor KB that disagrees about 131) that I did not open; only the channel name RdpCoreTS/Operational is confirmed by Hayabusa's channel abbreviation list (config/channel_abbreviations.txt). Field names of the EventData are not confirmed. The source above only lists the channel; it does not document 131/98."
+
+  - id: FH-RMT-016
+    title: Network share created, modified or deleted (5142, 5143, 5144)
+    tactic: remote-access
+    attack: [T1021.002, T1135]
+    channel: Security
+    provider: Microsoft-Windows-Security-Auditing
+    event_ids: [5142, 5143, 5144]
+    prerequisites:
+      - "Audit File Share (Success)"
+    logic:
+      selection:
+        EventID:
+          - 5142
+          - 5143
+          - 5144
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 5142,5143,5144 --format llm
+    pivots:
+      - "ShareName and ShareLocalPath of a newly created share, particularly a path covering C:\\ or user folders"
+      - "SubjectUserName / SubjectLogonId -> 4624 for the origin of the net share / WMI Win32_Share.Create"
+      - "Matching 5140 (access) events afterwards from other hosts"
+    false_positives:
+      - "Server provisioning, home-folder or print shares"
+    severity: low
+    sources:
+      - https://github.com/JPCERTCC/ToolAnalysisResultSheet/blob/master/details/wmiexec-vbs.htm
+    verified: false
+    notes: "JPCERT's wmiexec.vbs sheet lists 5142 and 5144 on the destination host (the tool creates and removes a share for its output), but only that one source mentions them and I could not read the Microsoft event pages to confirm field names."
+
+  - id: FH-RMT-017
+    title: One source touching shares or admin shares on many hosts (5140/5145 fan-out)
+    tactic: remote-access
+    attack: [T1021.002, T1135]
+    channel: Security
+    provider: Microsoft-Windows-Security-Auditing
+    event_ids: [5140, 5145]
+    prerequisites:
+      - "Audit File Share and/or Detailed File Share (Success) on many hosts, with logs collected from all of them"
+    logic:
+      selection:
+        EventID:
+          - 5140
+          - 5145
+      filter_machine:
+        SubjectUserName|endswith: '$'
+      condition: count(distinct Computer) by IpAddress, SubjectUserName > 10 within 10m, excluding filter_machine
+    forhunt:
+      - forhunt stats <paths> --format llm
+      - forhunt search <paths> --channel Security --event-id 5140 --format csv
+    pivots:
+      - "Group results by IpAddress then check which hosts later show 7045/4698/WmiPrvSE activity (success of the spread)"
+      - "ShareName values IPC$, ADMIN$, C$ across hosts are typical of worm-like spreading or ransomware deployment"
+    false_positives:
+      - "Backup servers, AV/EDR consoles, inventory and patch systems, vulnerability scanners"
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_admin_share_access.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/ObjectAccess/FileShare/Sec_5140_Info_NetShareAccess.yml
+    verified: false
+    notes: "The aggregation threshold and window are analyst heuristics, not from a source; adjust to environment. forhunt does not compute distinct-count aggregations, so export and aggregate (csv) or use per-host searches."
+
+  - id: FH-RMT-018
+    title: SMB server authentication failures (SMBServer/Security 551)
+    tactic: remote-access
+    attack: [T1021.002, T1110]
+    channel: Microsoft-Windows-SMBServer/Security
+    provider: Microsoft-Windows-SMBServer
+    event_ids: [551]
+    prerequisites:
+      - "Microsoft-Windows-SMBServer/Security log retained (enabled by default on Windows Server and recent clients)"
+    logic:
+      selection:
+        EventID: 551
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-SMBServer/Security --event-id 551 --format llm
+    pivots:
+      - "Event message lists client name, client address, user name, session id and an NT status such as 0xC000006D (logon failure) per web-search snippets"
+      - "Correlate with Security 4625 LogonType 3 (same time) for the failed logon and 4776 on the DC"
+      - "Many 551 from one client against several users = SMB password spraying"
+    false_positives:
+      - "Misconfigured clients, expired passwords, mixed NTLM/Kerberos settings"
+    severity: low
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/smbserver/connectivity/win_smbserver_connectivity_unsigned_and_unencrypted_share_connection.yml
+    verified: false
+    notes: "Event 551 content comes from a search snippet of a Microsoft Q&A thread, not an opened page; no rule set I read uses it. The source above is a Sigma rule on the same provider family (SMBServer/Connectivity 4000) and does NOT document 551. Event IDs in this channel differ by OS build."
+
+  - id: FH-RMT-019
+    title: SMB client events - rejected guest logons (SMBClient/Security 31017)
+    tactic: remote-access
+    attack: [T1021.002]
+    channel: Microsoft-Windows-SmbClient/Security
+    provider: Microsoft-Windows-SmbClient
+    event_ids: [31017]
+    prerequisites:
+      - "SmbClient/Security log retained (default)"
+    logic:
+      selection:
+        EventID: 31017
+        UserName: ''
+        ServerName|startswith: '\1'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-SmbClient/Security --event-id 31017 --format llm
+    pivots:
+      - "ServerName with an external IP address means this host tried to reach a remote SMB server (NTLM leak attempt, PrintNightmare-style staging)"
+      - "Sysmon 3 to port 445 outbound for the originating process"
+    false_positives:
+      - "Users browsing to unreachable or unauthenticated file servers"
+    severity: low
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/smbclient/security/win_smbclient_security_susp_failed_guest_logon.yml
+    verified: false
+    notes: "Single-source (Sigma); Sigma's 'ServerName startswith \\1' selects IP-literal server names and is a narrow rule for one exploit scenario, not a general SMB-client check."
+
+  - id: FH-RMT-020
+    title: Unsigned or unencrypted SMB sessions to admin shares (SMBServer/Connectivity 4000)
+    tactic: remote-access
+    attack: [T1021.002]
+    channel: Microsoft-Windows-SMBServer/Connectivity
+    provider: Microsoft-Windows-SMBServer
+    event_ids: [4000]
+    prerequisites:
+      - "SMBServer/Connectivity log present and enabled (not enabled by default on all builds)"
+    logic:
+      selection:
+        EventID: 4000
+        ShareName|contains:
+          - 'IPC$'
+          - 'ADMIN$'
+          - 'C$'
+      weak:
+        SigningUsed: 'false'
+      condition: selection and weak
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-SMBServer/Connectivity --event-id 4000 --format llm
+    pivots:
+      - "ClientAddress identifies the peer; unsigned sessions allow relay attacks (NTLM relay to SMB)"
+      - "Compare with Security 4624 type 3 from the same address"
+    false_positives:
+      - "Legacy systems and clients without signing"
+    severity: low
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/smbserver/connectivity/win_smbserver_connectivity_unsigned_and_unencrypted_share_connection.yml
+    verified: false
+    notes: "Single-source (Sigma). Sigma notes the EncryptionUsed field name is misspelled (EncyptionUsed) in the real event."

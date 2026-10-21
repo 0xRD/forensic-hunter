@@ -1,0 +1,64 @@
+[workspace]
+resolver = "2"
+members = ["crates/forhunt-core", "crates/forhunt-output", "crates/forhunt", "tools/evtx-gen"]
+default-members = ["crates/forhunt"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/0xRD/forensic-hunter"
+homepage = "https://github.com/0xRD/forensic-hunter"
+authors = ["0xRD"]
+keywords = ["dfir", "forensics", "evtx", "windows", "incident-response"]
+categories = ["command-line-utilities"]
+
+[workspace.dependencies]
+forhunt-core = { path = "crates/forhunt-core", version = "0.1.0" }
+forhunt-output = { path = "crates/forhunt-output", version = "0.1.0" }
+evtx = { version = "=0.12.3", default-features = false }
+anyhow = "1"
+thiserror = "2"
+blake3 = "1"
+clap = { version = "4", features = ["derive", "wrap_help"] }
+crossbeam-channel = "0.5"
+globset = "0.4"
+jiff = { version = "0.2", features = ["tzdb-bundle-platform"] }
+memmap2 = "0.9"
+mimalloc = { version = "0.1", default-features = false }
+num_cpus = "1"
+rayon = "1"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+tempfile = "3"
+toml = "0.9"
+walkdir = "2"
+criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+# Not "abort": a panic inside the EVTX decoder on a malformed chunk is caught
+# per chunk and counted as a bad chunk instead of killing the run (see DECISIONS.md).
+panic = "unwind"
+strip = true
+debug = false
+
+# Same as release but keeps symbols, for profiling (perf, samply).
+[profile.profiling]
+inherits = "release"
+strip = false
+debug = "line-tables-only"
+
+# cargo-dist builds with this profile.
+[profile.dist]
+inherits = "release"

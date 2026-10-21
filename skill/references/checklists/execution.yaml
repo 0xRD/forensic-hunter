@@ -1,0 +1,825 @@
+tactic: execution
+title: Execution
+description: Execution in Windows event logs is mostly visible through process creation (Security 4688 with command
+  line, Sysmon 1), PowerShell logging (4104 script blocks, 4103 module logging, and classic Windows PowerShell 400/600
+  engine events), and the parent/child relationship of the process tree. Attackers favour living-off-the-land binaries
+  (rundll32, regsvr32, mshta, certutil, bitsadmin, wmic, script hosts, msbuild, installutil) and Office or WMI as
+  parent processes. Detections depend heavily on audit configuration; empty results often mean missing logging,
+  not absence of activity.
+checks:
+  - id: FH-EXE-001
+    title: Office application spawning a shell, script host or LOLBin (Sysmon 1)
+    tactic: execution
+    attack:
+      - T1204.002
+      - T1059
+      - T1218
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 1
+    prerequisites:
+      - Sysmon installed with a config that logs event 1
+    logic:
+      selection_parent:
+        ParentImage|endswith:
+          - \WINWORD.EXE
+          - \EXCEL.EXE
+          - \POWERPNT.EXE
+          - \MSPUB.EXE
+          - \VISIO.EXE
+          - \MSACCESS.EXE
+          - \ONENOTE.EXE
+          - \OUTLOOK.EXE
+      selection_child:
+        Image|endswith:
+          - \cmd.exe
+          - \powershell.exe
+          - \pwsh.exe
+          - \wscript.exe
+          - \cscript.exe
+          - \mshta.exe
+          - \rundll32.exe
+          - \regsvr32.exe
+          - \certutil.exe
+          - \bitsadmin.exe
+          - \wmic.exe
+          - \msbuild.exe
+          - \installutil.exe
+          - \schtasks.exe
+      condition: selection_parent and selection_child
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~WINWORD.EXE
+        --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --regex ParentImage='(?i)\\(winword|excel|powerpnt|outlook|onenote)\.exe$'
+        --format llm
+    pivots:
+      - 'Child CommandLine: look for -enc, http(s) URLs, UNC paths, script files in user-writable folders'
+      - Sysmon 3 (network) and 11 (file create) from the child ProcessGuid
+      - 'Sysmon 11: the document that was opened (Zone.Identifier / Downloads / Temp), then 4624 logon of the user
+        around that time'
+      - Hashes of Image to see whether the child binary is renamed (OriginalFileName vs Image)
+    false_positives:
+      - Legitimate Office add-ins or macros that launch cmd/powershell for business automation
+      - Outlook launching rundll32 or msiexec during normal use
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_office_susp_child_processes.yml
+      - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+      - https://github.com/mitre-attack/attack-stix-data/blob/master/enterprise-attack/enterprise-attack.json
+    verified: true
+    notes: Sysmon event 1 meaning from the Microsoft Sysmon page; Office-parent/child pairs and field names (ParentImage,
+      Image, OriginalFileName) from Sigma; list of children is a pragmatic subset. Tune the child list to your environment.
+      Mirrors FH-EXE-002 for hosts without Sysmon.
+  - id: FH-EXE-002
+    title: Office application spawning a shell, script host or LOLBin (Security 4688)
+    tactic: execution
+    attack:
+      - T1204.002
+      - T1059
+      - T1218
+    channel: Security
+    event_ids:
+      - 4688
+    prerequisites:
+      - Audit Process Creation (Success) enabled AND 'Include command line in process creation events' GPO enabled
+        for CommandLine
+      - Without the command-line GPO CommandLine is absent; NewProcessName and ParentProcessName are still present
+        when ParentProcessName auditing is available (Windows 10 / Server 2016+ normally populates it)
+    logic:
+      selection_parent:
+        ParentProcessName|endswith:
+          - \WINWORD.EXE
+          - \EXCEL.EXE
+          - \POWERPNT.EXE
+          - \MSPUB.EXE
+          - \VISIO.EXE
+          - \MSACCESS.EXE
+          - \ONENOTE.EXE
+          - \OUTLOOK.EXE
+      selection_child:
+        NewProcessName|endswith:
+          - \cmd.exe
+          - \powershell.exe
+          - \pwsh.exe
+          - \wscript.exe
+          - \cscript.exe
+          - \mshta.exe
+          - \rundll32.exe
+          - \regsvr32.exe
+          - \certutil.exe
+          - \bitsadmin.exe
+          - \wmic.exe
+          - \msbuild.exe
+          - \installutil.exe
+          - \schtasks.exe
+      condition: selection_parent and selection_child
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4688 --field ParentProcessName~WINWORD.EXE --format
+        llm
+      - forhunt search <paths> --channel Security --event-id 4688 --regex ParentProcessName='(?i)\\(winword|excel|powerpnt|outlook|onenote)\.exe$'
+        --format llm
+    pivots:
+      - CommandLine of the child (if collected)
+      - SubjectLogonId -> 4624 to identify session/logon type
+      - 4688 for the next generation of children (NewProcessId becomes ProcessId of the following event)
+    false_positives:
+      - Business macros / Office automation scripts
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_office_susp_child_processes.yml
+      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/persistence/T1547.004 - Winlogon System
+        Shell Changed.yml
+      - https://github.com/stuhli/awesome-event-ids
+    verified: true
+    notes: Field names NewProcessName, ParentProcessName, CommandLine confirmed by a Chainsaw 4688-based rule; parent/child
+      logic adapted from Sigma. The command-line GPO requirement is linked from awesome-event-ids (Microsoft page
+      itself not opened - see sources file).
+  - id: FH-EXE-003
+    title: PowerShell started with an encoded command (Sysmon 1)
+    tactic: execution
+    attack:
+      - T1059.001
+      - T1027
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 1
+    prerequisites:
+      - Sysmon installed with a config that logs event 1
+    logic:
+      selection_img:
+        Image|endswith:
+          - \powershell.exe
+          - \pwsh.exe
+      selection_flag:
+        CommandLine|contains:
+          - ' -e '
+          - ' -en '
+          - ' -enc '
+          - ' -enco '
+          - ' -encodedcommand '
+      condition: selection_img and selection_flag
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~-enc
+        --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --regex CommandLine='(?i)\s-e(nc|nco|ncodedcommand)?\s+[A-Za-z0-9+/=]{20,}'
+        --format llm
+    pivots:
+      - Base64-decode the argument (UTF-16LE) and read it; then search 4104 for the decoded content
+      - 'ParentImage: who launched it (Office, wmiprvse, services.exe, a scheduled task host)'
+      - 4104 with the same Computer/time for the decoded script block
+    false_positives:
+      - Management agents and installers (SCCM, Intune, some monitoring tools) legitimately use -EncodedCommand
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_powershell_base64_encoded_cmd.yml
+      - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+    verified: false
+    notes: Abbreviations of -EncodedCommand are matched loosely (PowerShell accepts any unambiguous prefix). Sigma
+      additionally looks for typical base64 prefixes of IEX/UTF-16 payloads; not reproduced here. Only one rule
+      source read for the matching logic, hence unverified.
+  - id: FH-EXE-004
+    title: PowerShell started with an encoded command (Security 4688)
+    tactic: execution
+    attack:
+      - T1059.001
+      - T1027
+    channel: Security
+    event_ids:
+      - 4688
+    prerequisites:
+      - Audit Process Creation (Success) enabled AND 'Include command line in process creation events' GPO enabled
+        for CommandLine
+    logic:
+      selection_img:
+        NewProcessName|endswith:
+          - \powershell.exe
+          - \pwsh.exe
+      selection_flag:
+        CommandLine|contains:
+          - ' -e '
+          - ' -en '
+          - ' -enc '
+          - ' -enco '
+          - ' -encodedcommand '
+      condition: selection_img and selection_flag
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4688 --field NewProcessName~powershell --field CommandLine~-enc
+        --format llm
+    pivots:
+      - Decode and read the payload
+      - ParentProcessName and SubjectUserName/SubjectLogonId
+      - 4104 on the same host for the script block content
+    false_positives:
+      - Management agents using -EncodedCommand
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_powershell_base64_encoded_cmd.yml
+      - https://github.com/stuhli/awesome-event-ids
+    verified: false
+    notes: Same logic as FH-EXE-003 on the Security channel; if CommandLine is empty on 4688 events, the GPO was
+      not enabled and this check cannot work.
+  - id: FH-EXE-005
+    title: PowerShell engine started as version 2 while the host is newer (downgrade) - classic 400
+    tactic: execution
+    attack:
+      - T1059.001
+    channel: Windows PowerShell
+    event_ids:
+      - 400
+    prerequisites:
+      - Windows PowerShell 2.0 engine feature present on the host (an attacker can only downgrade if it is installed)
+      - Classic 'Windows PowerShell' log is enabled by default; EventID 400 is an engine-lifecycle info event
+    logic:
+      selection:
+        EventID: 400
+        Data|contains: EngineVersion=2.
+      filter_legit_v2_host:
+        Data|contains: HostVersion=2.
+      condition: selection and not filter_legit_v2_host
+    forhunt:
+      - forhunt search <paths> --channel "Windows PowerShell" --event-id 400 --field Data~EngineVersion=2. --format
+        llm
+    pivots:
+      - HostApplication line in the same event shows the exact command line used
+      - Sysmon 1 / 4688 for powershell.exe with -Version 2
+      - 'No 4104 will exist for v2 sessions (v2 has no script block logging): gap in 4104 around the same time is
+        itself a signal'
+    false_positives:
+      - Very old scripts or legacy products that explicitly require PowerShell 2.0
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/powershell/powershell_classic/posh_pc_downgrade_attack.yml
+      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/powershell/eid_400_powershell_engine_state_available.yml
+    verified: true
+    notes: Event 400 carries a multi-line 'Data' blob (HostName, HostVersion, EngineVersion, HostApplication ...).
+      Chainsaw parses Data[2] as key=value lines; Sigma matches on the blob text. Event 600 (provider lifecycle)
+      is covered separately in FH-EXE-006.
+  - id: FH-EXE-006
+    title: Classic PowerShell provider start (600) revealing host application and engine version
+    tactic: execution
+    attack:
+      - T1059.001
+    channel: Windows PowerShell
+    event_ids:
+      - 600
+    prerequisites:
+      - Classic 'Windows PowerShell' log (default on)
+    logic:
+      selection:
+        EventID: 600
+        Data|contains:
+          - HostApplication=
+          - EngineVersion=2.
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel "Windows PowerShell" --event-id 600 --format llm
+    pivots:
+      - HostApplication=... shows the command line when PowerShell was launched without 4688/Sysmon coverage
+      - Providers started (WSMan, Registry, Alias...) that hint at remoting
+    false_positives:
+      - 'High volume on busy hosts: each PowerShell start emits several 600 events'
+    severity: low
+    sources:
+      - https://github.com/mitre-attack/attack-stix-data/blob/master/enterprise-attack/enterprise-attack.json
+    verified: false
+    notes: NO EVENT-LEVEL SOURCE OPENED for 600 (ATT&CK used only for the technique id). Sigma reuses its classic-start
+      category for 400 and a provider-start category for 600; I did not confirm the exact 600 field layout from
+      a primary source. Use as supplementary host-application evidence only.
+  - id: FH-EXE-007
+    title: PowerShell script block containing a download cradle (4104)
+    tactic: execution
+    attack:
+      - T1059.001
+      - T1105
+    channel: Microsoft-Windows-PowerShell/Operational
+    event_ids:
+      - 4104
+    prerequisites:
+      - 'Script Block Logging enabled (GPO: Administrative Templates > Windows PowerShell > Turn on PowerShell Script
+        Block Logging, or the ScriptBlockLogging registry policy)'
+      - Windows PowerShell 5.1 logs to Microsoft-Windows-PowerShell/Operational; PowerShell 7 logs to PowerShellCore/Operational
+    logic:
+      selection_client:
+        ScriptBlockText|contains:
+          - System.Net.WebClient
+          - Invoke-WebRequest
+          - Net.WebRequest
+          - Start-BitsTransfer
+      selection_method:
+        ScriptBlockText|contains:
+          - .DownloadString(
+          - .DownloadFile(
+          - .DownloadData(
+          - 'iwr '
+          - 'irm '
+          - Invoke-RestMethod
+      condition: selection_client or selection_method
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~DownloadString
+        --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~Net.WebClient
+        --format llm
+    pivots:
+      - 'MessageNumber/MessageTotal: long scripts are split across several 4104 events - reassemble by ScriptBlockId'
+      - URL in the script block -> proxy/DNS logs, Sysmon 3/22
+      - Sysmon 1 / 4688 for the process that hosted it; Sysmon 11 for dropped files
+    false_positives:
+      - Admin and deployment scripts that fetch installers
+      - Module installers (PowerShellGet) downloading packages
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/powershell/powershell_script/posh_ps_susp_download.yml
+      - https://github.com/MicrosoftDocs/PowerShell-Docs/blob/main/reference/7.5/Microsoft.PowerShell.Core/About/about_Logging_Windows.md
+      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/powershell/eid_4104_powershell_script_executed.yml
+    verified: false
+    notes: 4104 and its Operational channel confirmed by Microsoft PowerShell docs (PowerShell 7 page; the 5.1 channel
+      name confirmed by Chainsaw) and Chainsaw. The ScriptBlockText field name is seen only in Sigma, so unverified.
+      Cradle keyword list is my own summary.
+  - id: FH-EXE-008
+    title: AMSI bypass strings in script blocks (4104)
+    tactic: execution
+    attack:
+      - T1562.001
+      - T1059.001
+    channel: Microsoft-Windows-PowerShell/Operational
+    event_ids:
+      - 4104
+    prerequisites:
+      - Script Block Logging enabled
+    logic:
+      selection:
+        ScriptBlockText|contains:
+          - AmsiUtils
+          - amsiInitFailed
+          - AmsiScanBuffer
+          - amsiContext
+          - System.Management.Automation.AmsiUtils
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~amsiInitFailed
+        --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~AmsiUtils
+        --format llm
+    pivots:
+      - Script that follows the bypass (usually the actual payload) in later 4104 events with the same Computer
+        and nearby time
+      - Defender operational log (5001/1116) around the same time
+      - 'Obfuscated variants split the strings: search for char-concatenation patterns and ''#<NULL>'' style padding'
+    false_positives:
+      - Security researchers / red-team tooling and detection-engineering test scripts
+      - Security products that legitimately reference AMSI APIs
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/powershell/powershell_script/posh_ps_amsi_null_bits_bypass.yml
+    verified: false
+    notes: Tactic really belongs to defense evasion; kept here because it identifies the PowerShell execution that
+      follows. String list is a conservative core; real-world bypasses are heavily obfuscated, so absence proves
+      little. Only Sigma read for field/pattern.
+  - id: FH-EXE-009
+    title: PowerShell module logging (4103) showing suspicious cmdlet invocations
+    tactic: execution
+    attack:
+      - T1059.001
+    channel: Microsoft-Windows-PowerShell/Operational
+    event_ids:
+      - 4103
+    prerequisites:
+      - 'Module Logging enabled with module names ''*'' (GPO: Turn on Module Logging)'
+    logic:
+      selection:
+        EventID: 4103
+        ContextInfo|contains:
+          - Invoke-Expression
+          - FromBase64String
+          - DownloadString
+          - Invoke-Mimikatz
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4103 --field ContextInfo~FromBase64String
+        --format llm
+    pivots:
+      - Payload field of the same event holds parameter bindings and output - may expose decoded commands
+      - Compare with 4104 of the same session (same HostApplication in ContextInfo)
+    false_positives:
+      - Common admin cmdlets; 4103 is very high volume when module logging is '*'
+    severity: low
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/powershell/powershell_module/posh_pm_susp_download.yml
+      - https://github.com/MicrosoftDocs/PowerShell-Docs/blob/main/reference/7.5/Microsoft.PowerShell.Core/About/about_Logging_Windows.md
+    verified: false
+    notes: Sigma module rules key on ContextInfo; the Microsoft doc I read documents module logging in general but
+      not per-field names. Field names (ContextInfo, Payload, UserData) not confirmed by a second source.
+  - id: FH-EXE-010
+    title: Mshta executing remote content, inline script or non-HTA file types
+    tactic: execution
+    attack:
+      - T1218.005
+      - T1059.005
+      - T1059.007
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 1
+    prerequisites:
+      - Sysmon installed with a config that logs event 1
+    logic:
+      selection_img:
+        Image|endswith: \mshta.exe
+      selection_cli:
+        CommandLine|contains:
+          - http://
+          - https://
+          - 'vbscript:'
+          - 'javascript:'
+          - .png
+          - .jpg
+          - .txt
+          - .zip
+          - .pdf
+      condition: selection_img and selection_cli
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~mshta.exe
+        --format llm
+    pivots:
+      - Children of mshta (cmd, powershell, rundll32) via ParentProcessGuid
+      - Sysmon 3 network from mshta.exe
+      - ParentImage (Office, browser, script host)
+    false_positives:
+      - Rare legacy HTA-based internal tools
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_mshta_susp_execution.yml
+      - https://github.com/mitre-attack/attack-stix-data/blob/master/enterprise-attack/enterprise-attack.json
+    verified: false
+    notes: Same pattern works on 4688 (swap fields to NewProcessName). Single rule source family (Sigma) for the
+      pattern.
+  - id: FH-EXE-011
+    title: Regsvr32 loading scriptlets, URLs or launched from script hosts
+    tactic: execution
+    attack:
+      - T1218.010
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 1
+    prerequisites:
+      - Sysmon installed with a config that logs event 1
+    logic:
+      selection_img:
+        Image|endswith: \regsvr32.exe
+      selection_cli_a:
+        CommandLine|contains:
+          - scrobj.dll
+          - /i:http
+          - /i:\\
+      selection_parent:
+        ParentImage|endswith:
+          - \wscript.exe
+          - \cscript.exe
+          - \mshta.exe
+          - \powershell.exe
+          - \cmd.exe
+      condition: selection_img and (selection_cli_a or selection_parent)
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~regsvr32.exe
+        --field CommandLine~scrobj --format llm
+      - 'forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~regsvr32.exe
+        --field CommandLine~/i: --format llm'
+    pivots:
+      - Sysmon 3 from regsvr32.exe (network connection is abnormal)
+      - Sysmon 7 scrobj.dll loaded by regsvr32
+      - The DLL/SCT path -> Sysmon 11 for who dropped it
+    false_positives:
+      - Installers registering DLLs from temp folders
+      - Applications using regsvr32 /s for COM registration, often with cmd.exe parent
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_regsvr32_susp_parent.yml
+      - https://github.com/mitre-attack/attack-stix-data/blob/master/enterprise-attack/enterprise-attack.json
+    verified: false
+    notes: cmd.exe parent is noisy; treat as lower confidence than scrobj.dll/URL arguments.
+  - id: FH-EXE-012
+    title: Rundll32 invoked without arguments, with script protocols, or loading odd DLL extensions
+    tactic: execution
+    attack:
+      - T1218.011
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 1
+    prerequisites:
+      - Sysmon installed with a config that logs event 1
+    logic:
+      selection_img:
+        Image|endswith: \rundll32.exe
+      selection_script:
+        CommandLine|contains:
+          - 'javascript:'
+          - 'vbscript:'
+          - mshtml,RunHTMLApplication
+          - \AppData\
+          - \ProgramData\
+          - \Temp\
+      selection_noargs:
+        CommandLine|endswith: rundll32.exe
+      condition: selection_img and (selection_script or selection_noargs)
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~rundll32.exe
+        --field CommandLine~AppData --format llm
+      - 'forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~rundll32.exe
+        --field CommandLine~javascript: --format llm'
+    pivots:
+      - Sysmon 3/10 from rundll32.exe (injection or credential access often follows)
+      - comsvcs.dll MiniDump usage -> credential access checklist
+      - Rundll32 with no arguments is typically a host for injected beacon code
+    false_positives:
+      - Control-panel applets and shell extensions launched via rundll32
+      - Printer and driver installers
+    severity: medium
+    sources:
+      - https://github.com/mitre-attack/attack-stix-data/blob/master/enterprise-attack/enterprise-attack.json
+    verified: false
+    notes: 'Rundll32 abuse is broad; this is only a starting set from general knowledge: I saw the Sigma rundll32
+      rule file names but did not open their bodies. See Sigma rundll32 family for additional patterns (ordinal
+      calls, UNC/WebDAV loads).'
+  - id: FH-EXE-013
+    title: Certutil used to download or decode files
+    tactic: execution
+    attack:
+      - T1105
+      - T1140
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 1
+    prerequisites:
+      - Sysmon installed with a config that logs event 1
+    logic:
+      selection_img:
+        Image|endswith: \certutil.exe
+      selection_download:
+        CommandLine|contains:
+          - urlcache
+          - verifyctl
+      selection_http:
+        CommandLine|contains: http
+      selection_decode:
+        CommandLine|contains:
+          - -decode
+          - -decodehex
+      condition: selection_img and ((selection_download and selection_http) or selection_decode)
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~certutil.exe
+        --field CommandLine~urlcache --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~certutil.exe
+        --field CommandLine~-decode --format llm
+    pivots:
+      - 'Sysmon 11: file written by certutil.exe (output path)'
+      - 'Sysmon 3: network connection from certutil.exe'
+      - Execution of the written file in the following minutes
+    false_positives:
+      - Certificate management scripts fetching CRLs (usually not with -urlcache -f of executables)
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_certutil_download.yml
+      - https://github.com/mitre-attack/attack-stix-data/blob/master/enterprise-attack/enterprise-attack.json
+    verified: false
+    notes: Same pattern on 4688 via NewProcessName/CommandLine.
+  - id: FH-EXE-014
+    title: Bitsadmin command line creating or running transfer jobs
+    tactic: execution
+    attack:
+      - T1197
+      - T1105
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 1
+    prerequisites:
+      - Sysmon installed with a config that logs event 1
+    logic:
+      selection_img:
+        Image|endswith: \bitsadmin.exe
+      selection_cli:
+        CommandLine|contains:
+          - /transfer
+          - /create
+          - /addfile
+          - /SetNotifyCmdLine
+          - /resume
+      condition: selection_img and selection_cli
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~bitsadmin.exe
+        --format llm
+    pivots:
+      - Microsoft-Windows-Bits-Client/Operational events 3 and 59 for the same job/URL (see persistence checklist
+        FH-PER-018)
+      - Destination folder in the command -> Sysmon 11
+      - /SetNotifyCmdLine means the job will run a command on completion (persistence)
+    false_positives:
+      - Legacy deployment scripts still using bitsadmin /transfer
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_bitsadmin_potential_persistence.yml
+    verified: false
+    notes: Bitsadmin is deprecated by Microsoft in favour of PowerShell BITS cmdlets, so any use is uncommon in
+      modern environments; that is context, not a source-confirmed fact.
+  - id: FH-EXE-015
+    title: WMIC creating processes, remote execution or XSL script processing
+    tactic: execution
+    attack:
+      - T1047
+      - T1220
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 1
+    prerequisites:
+      - Sysmon installed with a config that logs event 1
+    logic:
+      selection_img:
+        Image|endswith: \wmic.exe
+      selection_cli:
+        CommandLine|contains:
+          - process call create
+          - '/node:'
+          - .xsl
+          - '/format:'
+      condition: selection_img and selection_cli
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~wmic.exe
+        --field CommandLine~"process call create" --format llm
+      - 'forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~wmic.exe
+        --field CommandLine~/node: --format llm'
+    pivots:
+      - 'Target host: look for the child process under WmiPrvSE.exe (FH-EXE-016)'
+      - 'Source host: 4688/Sysmon 1 parent of wmic.exe'
+      - 4624 type 3 on the target at the same time
+    false_positives:
+      - Inventory and admin scripts using wmic /node for queries (read-only verbs)
+    severity: medium
+    sources:
+      - https://github.com/mitre-attack/attack-stix-data/blob/master/enterprise-attack/enterprise-attack.json
+    verified: false
+    notes: wmic is deprecated on recent Windows 11 builds; absence of wmic.exe does not rule out WMI execution via
+      PowerShell or other tools.
+  - id: FH-EXE-016
+    title: Processes spawned by WmiPrvSE.exe (WMI-based remote execution)
+    tactic: execution
+    attack:
+      - T1047
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 1
+    prerequisites:
+      - Sysmon installed with a config that logs event 1
+    logic:
+      selection_parent:
+        ParentImage|endswith: \WmiPrvSE.exe
+      selection_child:
+        Image|endswith:
+          - \cmd.exe
+          - \powershell.exe
+          - \pwsh.exe
+          - \wscript.exe
+          - \cscript.exe
+          - \mshta.exe
+          - \rundll32.exe
+          - \regsvr32.exe
+      condition: selection_parent and selection_child
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~WmiPrvSE.exe
+        --format llm
+    pivots:
+      - 4624 LogonType 3 on the same host just before (source IpAddress)
+      - Microsoft-Windows-WMI-Activity/Operational 5857-5861 on the same host
+      - CommandLine often redirects output to ADMIN$ file (e.g. __ timestamp) for Impacket-style tools
+    false_positives:
+      - Management software (SCCM, monitoring) running scripts via WMI
+    severity: high
+    sources:
+      - https://github.com/mitre-attack/attack-stix-data/blob/master/enterprise-attack/enterprise-attack.json
+    verified: false
+    notes: Sigma has a WmiPrvSE-spawning rule (file name seen, body not opened); this check is my own adaptation
+      of the well-known pattern. Equivalent on 4688 with ParentProcessName.
+  - id: FH-EXE-017
+    title: Wscript/cscript running scripts with non-script extensions or spawning shells
+    tactic: execution
+    attack:
+      - T1059.005
+      - T1059.007
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 1
+    prerequisites:
+      - Sysmon installed with a config that logs event 1
+    logic:
+      selection_img:
+        Image|endswith:
+          - \wscript.exe
+          - \cscript.exe
+      selection_ext:
+        CommandLine|contains:
+          - .txt
+          - .jpg
+          - .png
+          - .doc
+          - .xls
+          - .dat
+          - .csv
+      selection_path:
+        CommandLine|contains:
+          - \AppData\
+          - \Users\Public\
+          - \Temp\
+          - \Downloads\
+      condition: selection_img and (selection_ext or selection_path)
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~wscript.exe
+        --field CommandLine~AppData --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~cscript.exe
+        --field CommandLine~Temp --format llm
+    pivots:
+      - Children of the script host (powershell, cmd) via ParentProcessGuid
+      - 'Sysmon 11: how the script arrived (mail attachment, browser download, archive extraction)'
+      - ParentImage (explorer.exe = user double-click; Office = macro)
+    false_positives:
+      - Logon scripts and login-time admin VBS from SYSVOL or ProgramData
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_wscript_cscript_uncommon_extension_exec.yml
+    verified: false
+    notes: Pattern covers T1059.005 (VBScript) and T1059.007 (JScript).
+  - id: FH-EXE-018
+    title: Msbuild, InstallUtil or csc launched by unusual parent or with remote content
+    tactic: execution
+    attack:
+      - T1127.001
+      - T1218.004
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 1
+    prerequisites:
+      - Sysmon installed with a config that logs event 1
+    logic:
+      selection_img:
+        Image|endswith:
+          - \MSBuild.exe
+          - \InstallUtil.exe
+      filter_dev_parents:
+        ParentImage|endswith:
+          - \devenv.exe
+          - \msbuild.exe
+          - \nuget.exe
+      selection_remote:
+        CommandLine|contains:
+          - http://
+          - https://
+          - \\
+      condition: (selection_img and not filter_dev_parents) or (selection_img and selection_remote)
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~MSBuild.exe
+        --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~InstallUtil.exe
+        --format llm
+    pivots:
+      - Project file argument (.xml/.csproj/.proj) -> Sysmon 11 for who wrote it
+      - Sysmon 3 network from msbuild.exe on non-build servers
+      - 'ParentImage: Office or script host strongly raises suspicion'
+    false_positives:
+      - Build servers, developer workstations and CI agents (exclude them by Computer name)
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_msbuild_susp_parent_process.yml
+      - https://github.com/mitre-attack/attack-stix-data/blob/master/enterprise-attack/enterprise-attack.json
+    verified: false
+    notes: On non-developer endpoints any msbuild.exe launch is notable.
+  - id: FH-EXE-019
+    title: AMSI DLL loaded into a LOLBin that does not normally scan content
+    tactic: execution
+    attack:
+      - T1218.011
+      - T1059
+    channel: Microsoft-Windows-Sysmon/Operational
+    event_ids:
+      - 7
+    prerequisites:
+      - Sysmon installed with ImageLoad (event 7) enabled; the Sysmon docs state event 7 is off by default and generates
+        large volume, so scope it narrowly (e.g. include amsi.dll)
+    logic:
+      selection:
+        ImageLoaded|endswith: \amsi.dll
+        Image|endswith:
+          - \rundll32.exe
+          - \odbcconf.exe
+          - \ExtExport.exe
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 7 --field ImageLoaded~amsi.dll
+        --field Image~rundll32.exe --format llm
+    pivots:
+      - Sysmon 1 for the same ProcessGuid (CommandLine)
+      - Sysmon 3/10 from the same process
+    false_positives:
+      - Legitimate scripted content scanning by uncommon hosts is rare; investigate each hit
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/image_load/image_load_dll_amsi_suspicious_process.yml
+      - https://github.com/MicrosoftDocs/sysinternals/blob/main/sysinternals/downloads/sysmon.md
+    verified: false
+    notes: Event 7 behaviour (disabled by default, noisy) from Microsoft Sysmon page. Process list is the small
+      set in the Sigma rule; extend with care.

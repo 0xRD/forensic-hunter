@@ -1,0 +1,610 @@
+tactic: collection-exfiltration
+title: Collection and Exfiltration
+description: >
+  Collection and exfiltration in EVTX shows up as archive tooling with password flags, staging
+  directories filling with archives, cloud-sync and transfer tools (rclone, MEGA, WinSCP, curl,
+  bitsadmin), DNS lookups for file-sharing domains or tunnelling, removable media and printing.
+  Blind spot: Windows event logs do not record bytes transferred. Sysmon 3 and WFP 5156 show
+  who connected where and when, not how much, so volume must come from firewall/proxy/NetFlow
+  or EDR telemetry outside EVTX. Command-line checks use Sysmon 1; the same logic applies to
+  Security 4688 with NewProcessName and CommandLine.
+checks:
+  - id: FH-COLL-001
+    title: Archive creation with a password via 7-Zip, WinRAR or rar
+    tactic: collection-exfiltration
+    attack: [T1560.001]
+    channel: Microsoft-Windows-Sysmon/Operational
+    provider: Microsoft-Windows-Sysmon
+    event_ids: [1]
+    prerequisites:
+      - "Sysmon installed with a config that logs event 1; or Security 4688 with command line auditing"
+    logic:
+      selection_img:
+        Image|endswith:
+          - '\7z.exe'
+          - '\7za.exe'
+          - '\7zr.exe'
+          - '\rar.exe'
+          - '\winrar.exe'
+      selection_action:
+        CommandLine|contains:
+          - ' a '
+          - ' u '
+      selection_password:
+        CommandLine|contains:
+          - ' -p'
+          - ' -hp'
+      condition: selection_img and selection_action and selection_password
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~7z --field CommandLine~" -p" --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~rar --field CommandLine~" a " --format llm
+    pivots:
+      - "Output path -> Sysmon 11 for the archive; look for the same path in Sysmon 3/22 uploads (COLL-004 to COLL-007)"
+      - "Source directories in CommandLine (file shares, Documents, finance, mail stores)"
+      - "Parent process and user; renamed 7z binaries: compare OriginalFileName and Description"
+    false_positives:
+      - "Users compressing with a password legitimately; backup scripts"
+    severity: medium
+    sources:
+      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_7zip_password_compression.yml
+      - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1560.001/T1560.001.md
+      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+    verified: true
+    notes: "Sigma (7z password) and Atomic Red Team (7z/rar a -p) agree. The rar/winrar -hp variant (encrypts headers) is from Atomic's rar usage and analyst knowledge."
+
+  - id: FH-COLL-002
+    title: Archive creation with PowerShell Compress-Archive or .NET ZipFile
+    tactic: collection-exfiltration
+    attack: [T1560.001, T1074.001]
+    channel: Microsoft-Windows-PowerShell/Operational
+    provider: Microsoft-Windows-PowerShell
+    event_ids: [4104]
+    prerequisites:
+      - "PowerShell Script Block Logging enabled"
+    logic:
+      selection:
+        EventID: 4104
+        ScriptBlockText|contains:
+          - 'Compress-Archive'
+          - 'System.IO.Compression.ZipFile'
+          - 'CreateFromDirectory'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~Compress-Archive --format llm
+    pivots:
+      - "-DestinationPath value and the directory being compressed; then Sysmon 11 for the archive file"
+    false_positives:
+      - "Admin/backup scripts, build pipelines, log rotation"
+    severity: low
+    sources:
+      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/powershell/powershell_script/posh_ps_software_discovery.yml
+    verified: false
+    notes: "No opened source covers Compress-Archive specifically. The cited file only confirms the 4104/ScriptBlockText/Script Block Logging prerequisite style."
+
+  - id: FH-COLL-003
+    title: Archives or data dumps written to common staging directories (Sysmon 11)
+    tactic: collection-exfiltration
+    attack: [T1074.001, T1074.002]
+    channel: Microsoft-Windows-Sysmon/Operational
+    provider: Microsoft-Windows-Sysmon
+    event_ids: [11]
+    prerequisites:
+      - "Sysmon installed with a config that logs event 11 for these paths and extensions"
+    logic:
+      selection_path:
+        TargetFilename|contains:
+          - '\ProgramData\'
+          - '\PerfLogs\'
+          - '\Windows\Temp\'
+          - '\Users\Public\'
+          - '\$Recycle.Bin\'
+      selection_ext:
+        TargetFilename|endswith:
+          - '.zip'
+          - '.7z'
+          - '.rar'
+          - '.tar'
+          - '.gz'
+          - '.cab'
+          - '.pst'
+          - '.bak'
+          - '.sql'
+      condition: selection_path and selection_ext
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 11 --field TargetFilename~"\PerfLogs\" --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 11 --regex TargetFilename='(?i)\\(ProgramData|Users\\Public|Windows\\Temp)\\.*\.(zip|7z|rar)$' --format llm
+    pivots:
+      - "Image that wrote the file -> command line (COLL-001) and later network activity from the same ProcessGuid"
+      - "Repeated archives with sequential names or sizes (multi-part) indicate bulk staging"
+    false_positives:
+      - "Software installers and updaters, crash dump collectors, backup agents, EDR"
+    severity: medium
+    sources:
+      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/file/file_event/file_event_win_perflogs_susp_files.yml
+      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+    verified: false
+    notes: "A Sigma rule treats archives/executables in C:\\PerfLogs as suspicious (it is tagged execution, not staging). The other directories are analyst choices, tune to the estate."
+
+  - id: FH-COLL-004
+    title: rclone (cloud sync tool) execution
+    tactic: collection-exfiltration
+    attack: [T1567.002, T1048]
+    channel: Microsoft-Windows-Sysmon/Operational
+    provider: Microsoft-Windows-Sysmon
+    event_ids: [1, 11]
+    prerequisites:
+      - "Sysmon installed with a config that logs events 1 and 11; or Security 4688 with command line auditing"
+    logic:
+      selection_img:
+        Image|endswith: '\rclone.exe'
+      selection_cli:
+        CommandLine|contains:
+          - ' copy '
+          - ' sync '
+          - ' config '
+          - '--no-check-certificate'
+          - '--transfers'
+          - 'mega:'
+          - 'pcloud'
+          - ' lsd'
+      selection_config_file:
+        EventID: 11
+        TargetFilename|endswith: '\rclone.conf'
+      condition: selection_img or selection_cli or selection_config_file
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~rclone --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~"--no-check-certificate" --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 11 --field TargetFilename~rclone.conf --format llm
+    pivots:
+      - "Renamed binaries (svchost.exe, conhost.exe copies) are common: check OriginalFileName / Description 'Rsync for cloud storage' and Hashes"
+      - "Sysmon 22 for the remote endpoint (COLL-005/006) and Sysmon 3 volume proxy via connection duration/number"
+      - "Source directory arguments show what was taken"
+    false_positives:
+      - "Authorised rclone-based backup jobs"
+    severity: high
+    sources:
+      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_pua_rclone_execution.yml
+      - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1567.002/T1567.002.md
+    verified: true
+    notes: "Sigma and Atomic Red Team agree on rclone copy/config with a MEGA remote. rclone.conf file name is analyst knowledge."
+
+  - id: FH-COLL-005
+    title: DNS lookups for MEGA user storage
+    tactic: collection-exfiltration
+    attack: [T1567.002]
+    channel: Microsoft-Windows-Sysmon/Operational
+    provider: Microsoft-Windows-Sysmon
+    event_ids: [22]
+    prerequisites:
+      - "Sysmon 10+ with a config that logs event 22 (DNSEvent); Windows 8.1 or later"
+    logic:
+      selection:
+        EventID: 22
+        QueryName|contains: 'userstorage.mega.co.nz'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 22 --field QueryName~mega.co.nz --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 22 --field QueryName~mega.nz --format llm
+    pivots:
+      - "Image in event 22: a non-browser (rclone, MEGAsync, powershell, unknown) is the exfil indicator"
+      - "Sysmon 3 for the same ProcessGuid shows destination IPs and timing"
+    false_positives:
+      - "Users of MEGA in browsers (check Image)"
+    severity: high
+    sources:
+      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/dns_query/dns_query_win_mega_nz.yml
+      - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1567.002/T1567.002.md
+      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+    verified: true
+    notes: "Event 22 per Microsoft Sysmon docs; Sigma gives the QueryName field and MEGA domain; Atomic uses a mega remote with rclone."
+
+  - id: FH-COLL-006
+    title: DNS lookups for file-sharing / cloud storage domains by non-browser processes
+    tactic: collection-exfiltration
+    attack: [T1567.002, T1537]
+    channel: Microsoft-Windows-Sysmon/Operational
+    provider: Microsoft-Windows-Sysmon
+    event_ids: [22, 3]
+    prerequisites:
+      - "Sysmon with event 22 (and 3 for the IP view)"
+    logic:
+      selection:
+        EventID: 22
+        QueryName|contains:
+          - 'mega.nz'
+          - 'mega.co.nz'
+          - 'anonfiles'
+          - 'transfer.sh'
+          - 'file.io'
+          - 'gofile.io'
+          - 'put.io'
+          - 'dropbox.com'
+          - 'drive.google.com'
+          - 'onedrive.live.com'
+          - 'pcloud.com'
+          - 'wetransfer.com'
+          - 'sendspace.com'
+          - 'ngrok'
+          - 'temp.sh'
+      filter_browsers:
+        Image|endswith:
+          - '\chrome.exe'
+          - '\msedge.exe'
+          - '\firefox.exe'
+          - '\OneDrive.exe'
+      condition: selection and not filter_browsers
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 22 --field QueryName~dropbox --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 22 --field QueryName~transfer.sh --format llm
+    pivots:
+      - "Image / ProcessGuid -> Sysmon 1 command line, parent, and 11 events for what the process read or wrote"
+    false_positives:
+      - "Sanctioned sync clients (Dropbox, OneDrive, Google Drive), IT tools, updaters"
+    severity: medium
+    sources:
+      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/dns_query/dns_query_win_mega_nz.yml
+      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+    verified: false
+    notes: "Only the MEGA domain is backed by an opened source. The remaining domain list is analyst knowledge and must be tuned to the organisation's sanctioned services."
+
+  - id: FH-COLL-007
+    title: Upload or transfer tooling by command line (WinSCP, curl, bitsadmin, MEGAcmd, pscp, ftp)
+    tactic: collection-exfiltration
+    attack: [T1048, T1567, T1197, T1105]
+    channel: Microsoft-Windows-Sysmon/Operational
+    provider: Microsoft-Windows-Sysmon
+    event_ids: [1]
+    prerequisites:
+      - "Sysmon installed with a config that logs event 1; or Security 4688 with command line auditing"
+    logic:
+      selection_curl:
+        Image|endswith: '\curl.exe'
+        CommandLine|contains:
+          - ' -T '
+          - '--upload-file'
+          - ' -F '
+          - '--data-binary'
+      selection_winscp:
+        Image|endswith:
+          - '\winscp.exe'
+          - '\winscp.com'
+        CommandLine|contains:
+          - 'put '
+          - '/command'
+          - '/script'
+      selection_bits:
+        Image|endswith: '\bitsadmin.exe'
+        CommandLine|contains:
+          - '/upload'
+          - '/create'
+      selection_other:
+        Image|endswith:
+          - '\pscp.exe'
+          - '\megacmd.exe'
+          - '\MEGAclient.exe'
+          - '\ftp.exe'
+      condition: 1 of selection_*
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~curl --field CommandLine~"--upload-file" --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~winscp --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~bitsadmin --format llm
+    pivots:
+      - "Destination URL/host in CommandLine -> Sysmon 22/3; file argument -> Sysmon 11 for its origin (archive or staging)"
+      - "BITS jobs also appear in Microsoft-Windows-Bits-Client/Operational (job created, transfer started): see eventids.md"
+    false_positives:
+      - "Admins using WinSCP/curl for legitimate transfers; developers; software deployment via BITS"
+    severity: medium
+    sources:
+      - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1560.001/T1560.001.md
+    verified: false
+    notes: "The only opened source uses bitsadmin /transfer for downloading (ingress), not upload. All upload argument patterns here are analyst knowledge; no opened source documents them."
+
+  - id: FH-COLL-008
+    title: DNS tunnelling / exfil - long or high-entropy query names (Sysmon 22)
+    tactic: collection-exfiltration
+    attack: [T1048.003, T1071.004]
+    channel: Microsoft-Windows-Sysmon/Operational
+    provider: Microsoft-Windows-Sysmon
+    event_ids: [22]
+    prerequisites:
+      - "Sysmon with event 22 (DNSEvent); DNS server logs are an alternative source outside Sysmon"
+    logic:
+      selection:
+        EventID: 22
+        QueryName|re: '^[A-Za-z0-9+/=_-]{40,}\.'
+      condition: selection or count(distinct QueryName) by Image, registered_domain > 200 within 10m
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 22 --regex QueryName='^[A-Za-z0-9+/=_-]{40,}\.' --format llm
+      - forhunt stats <paths> --format llm
+    pivots:
+      - "Image making the queries; many unique subdomains under a single parent domain; TXT/NULL record types (QueryType) if recorded"
+      - "QueryResults often empty or NXDOMAIN-heavy"
+    false_positives:
+      - "CDNs, anti-virus cloud lookups, DKIM/SPF, mDNS-style hashes, telemetry endpoints"
+    severity: medium
+    sources:
+      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+    verified: false
+    notes: "Heuristic. Sysmon 22 semantics from Microsoft docs, but the length and uniqueness thresholds are unsourced. 'registered_domain' is a derived value, not an event field."
+
+  - id: FH-COLL-009
+    title: Outbound connections by archive/transfer tools or from staging hosts (Sysmon 3) - volume is not visible
+    tactic: collection-exfiltration
+    attack: [T1041, T1048]
+    channel: Microsoft-Windows-Sysmon/Operational
+    provider: Microsoft-Windows-Sysmon
+    event_ids: [3]
+    prerequisites:
+      - "Sysmon with a config that logs event 3 (disabled by default)"
+    logic:
+      selection:
+        EventID: 3
+        Initiated: 'true'
+        Image|endswith:
+          - '\rclone.exe'
+          - '\winscp.exe'
+          - '\curl.exe'
+          - '\bitsadmin.exe'
+          - '\powershell.exe'
+          - '\7z.exe'
+      filter_internal:
+        DestinationIsIpv6: 'false'
+        DestinationIp|startswith:
+          - '10.'
+          - '192.168.'
+      condition: selection and not filter_internal
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 3 --field Image~rclone --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 3 --field Initiated=true --format llm
+    pivots:
+      - "Blind spot: EVTX has no byte counts. Connection duration (consecutive events), count and timing are the only proxies; ask for proxy/firewall/NetFlow logs for volume"
+      - "Join to Sysmon 22 on ProcessGuid for the domain name"
+    false_positives:
+      - "Legitimate use of the same tools (powershell is extremely noisy), updaters"
+    severity: low
+    sources:
+      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+    verified: false
+    notes: "Sysmon 3 does not contain bytes sent/received. The internal-range filter (RFC1918 172.16/12 omitted) is simplistic. Image list is illustrative."
+
+  - id: FH-COLL-010
+    title: Clipboard capture (Sysmon 24 and PowerShell Get-Clipboard)
+    tactic: collection-exfiltration
+    attack: [T1115]
+    channel: Microsoft-Windows-Sysmon/Operational
+    provider: Microsoft-Windows-Sysmon
+    event_ids: [24]
+    prerequisites:
+      - "Sysmon 13+ with a ClipboardChange rule. Event 24 records clipboard content and may expose secrets; many orgs avoid enabling it"
+    logic:
+      selection:
+        EventID: 24
+      filter_expected:
+        Image|endswith:
+          - '\explorer.exe'
+          - '\chrome.exe'
+          - '\msedge.exe'
+          - '\firefox.exe'
+          - '\WINWORD.EXE'
+          - '\EXCEL.EXE'
+      condition: selection and not filter_expected
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 24 --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~Get-Clipboard --format llm
+    pivots:
+      - "Image: a process that is not interactive (powershell, unknown binary) reading/changing the clipboard"
+      - "Clipboard contents may show passwords, keys, or copied secrets: handle as sensitive"
+    false_positives:
+      - "Normal copy/paste activity; clipboard managers; RDP clipboard redirection"
+    severity: low
+    sources:
+      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+      - https://raw.githubusercontent.com/redcanaryco/atomic-red-team/master/atomics/T1115/T1115.md
+    verified: false
+    notes: "Event 24 exists per Sysmon docs and Atomic tests clipboard access via Get-Clipboard, but neither source describes the Sysmon 24 field list (Image, Session, ClientInfo, Hashes, Archived)."
+
+  - id: FH-COLL-011
+    title: Screen capture and input capture via PowerShell or tools
+    tactic: collection-exfiltration
+    attack: [T1113, T1056.001]
+    channel: Microsoft-Windows-PowerShell/Operational
+    provider: Microsoft-Windows-PowerShell
+    event_ids: [4104]
+    prerequisites:
+      - "PowerShell Script Block Logging enabled"
+    logic:
+      selection:
+        EventID: 4104
+        ScriptBlockText|contains:
+          - 'CopyFromScreen'
+          - 'System.Drawing.Bitmap'
+          - 'GetAsyncKeyState'
+          - 'SetWindowsHookEx'
+          - 'Get-Screenshot'
+          - 'Get-Keystrokes'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~CopyFromScreen --format llm
+    pivots:
+      - "Sysmon 11 for image files (.png/.jpg/.bmp) created in temp/user-writable paths by powershell.exe"
+    false_positives:
+      - "Support and monitoring tools, UI automation, legitimate screen capture scripts"
+    severity: low
+    sources:
+      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+    verified: false
+    notes: "Entirely analyst knowledge on API names; no opened source covers screen capture. Treat as exploratory."
+
+  - id: FH-COLL-012
+    title: Outlook mail store (PST/OST) created or copied (Sysmon 11)
+    tactic: collection-exfiltration
+    attack: [T1114.001, T1114.002]
+    channel: Microsoft-Windows-Sysmon/Operational
+    provider: Microsoft-Windows-Sysmon
+    event_ids: [11]
+    prerequisites:
+      - "Sysmon with event 11 rules including .pst/.ost"
+    logic:
+      selection:
+        EventID: 11
+        TargetFilename|endswith:
+          - '.pst'
+          - '.ost'
+      filter_outlook:
+        Image|endswith: '\OUTLOOK.EXE'
+      condition: selection and not filter_outlook
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 11 --field TargetFilename~.pst --format llm
+    pivots:
+      - "Image creating the PST (powershell, cmd, unknown) and Sysmon 1 command line (New-MailboxExportRequest on Exchange servers is logged elsewhere)"
+      - "PST in staging directory then archive/upload (COLL-003/001)"
+    false_positives:
+      - "Mail migration tools, backups, users exporting archives"
+    severity: medium
+    sources:
+      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+    verified: false
+    notes: "A specific Sigma rule for PST creation was looked for but not found at the guessed path. Check is analyst design. On Exchange the mailbox export request appears in Exchange audit logs, not EVTX."
+
+  - id: FH-COLL-013
+    title: USB mass storage connected (Security 6416)
+    tactic: collection-exfiltration
+    attack: [T1052.001, T1091]
+    channel: Security
+    provider: Microsoft-Windows-Security-Auditing
+    event_ids: [6416]
+    prerequisites:
+      - "Audit PNP Activity (Success) in Detailed Tracking"
+    logic:
+      selection:
+        EventID: 6416
+        ClassName: 'DiskDrive'
+      selection_desc:
+        EventID: 6416
+        DeviceDescription: 'USB Mass Storage Device'
+      condition: selection or selection_desc
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 6416 --format llm
+    pivots:
+      - "DeviceId / HardwareIds for the device serial; SubjectUserName / SubjectLogonId -> 4624 for who was logged in"
+      - "Then 4663 against removable drives if Removable Storage auditing is on (COLL-015)"
+    false_positives:
+      - "Any approved USB drive"
+    severity: low
+    sources:
+      - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_external_device.yml
+    verified: false
+    notes: "Single source. Fields ClassName and DeviceDescription confirmed by that rule; DeviceId and others from analyst knowledge."
+
+  - id: FH-COLL-014
+    title: USB device activity in DriverFrameworks-UserMode/Operational (2003, 2100)
+    tactic: collection-exfiltration
+    attack: [T1052.001, T1091]
+    channel: Microsoft-Windows-DriverFrameworks-UserMode/Operational
+    provider: Microsoft-Windows-DriverFrameworks-UserMode
+    event_ids: [2003, 2100]
+    prerequisites:
+      - "The DriverFrameworks-UserMode/Operational log is disabled by default; it must be enabled before the event"
+    logic:
+      selection:
+        EventID:
+          - 2003
+          - 2100
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel "Microsoft-Windows-DriverFrameworks-UserMode/Operational" --event-id 2003,2100 --format llm
+    pivots:
+      - "Match device serial with SYSTEM registry (USBSTOR) and setupapi.dev.log, which are outside EVTX"
+    false_positives:
+      - "All USB device insertions, including keyboards and phones"
+    severity: informational
+    sources:
+      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+    verified: false
+    notes: "No opened source covers these ids. They are widely used in USB forensics (analyst knowledge) but the exact meaning of 2003/2100 (device-added / PnP-power events) needs confirmation from a primary source."
+
+  - id: FH-COLL-015
+    title: File copy to removable media (Security 4663 with Removable Storage auditing)
+    tactic: collection-exfiltration
+    attack: [T1052.001, T1005]
+    channel: Security
+    provider: Microsoft-Windows-Security-Auditing
+    event_ids: [4663]
+    prerequisites:
+      - "Audit Removable Storage (Success and Failure) in Object Access"
+    logic:
+      selection:
+        EventID: 4663
+        ObjectType: 'File'
+        AccessMask|contains:
+          - '0x2'
+          - '0x6'
+      condition: selection and count(selection) by SubjectUserName > 100 within 10m
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4663 --format llm
+    pivots:
+      - "ObjectName path (drive letter of the removable disk); ProcessName (explorer, robocopy, xcopy, 7z)"
+      - "Connect to 6416 (COLL-013) for the device"
+    false_positives:
+      - "Legitimate transfers to approved removable media"
+    severity: medium
+    sources:
+      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+    verified: false
+    notes: "Written from analyst knowledge: the Removable Storage audit subcategory generates 4663 for removable drives. No opened source documents it, and the AccessMask test is illustrative. Verify on a test system."
+
+  - id: FH-COLL-016
+    title: Printing as exfil (PrintService/Operational 307)
+    tactic: collection-exfiltration
+    attack: [T1052]
+    channel: Microsoft-Windows-PrintService/Operational
+    provider: Microsoft-Windows-PrintService
+    event_ids: [307]
+    prerequisites:
+      - "PrintService/Operational log is disabled by default and must be enabled before the print job"
+    logic:
+      selection:
+        EventID: 307
+      condition: selection and (count(selection) by param3 > 50 within 1h or param2|contains 'password')
+    forhunt:
+      - forhunt search <paths> --channel "Microsoft-Windows-PrintService/Operational" --event-id 307 --format llm
+    pivots:
+      - "Document name, user and printer (print to PDF/virtual or remote printer ports are interesting); pages/size fields"
+    false_positives:
+      - "Normal office printing; print-to-PDF"
+    severity: informational
+    sources:
+      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+    verified: false
+    notes: "No opened source covers 307. The positional param1..param8 layout is from analyst knowledge and should be checked against a real sample. UserData uses DocumentPrinted with fields like Param2 (document), Param3 (user), Param5 (printer)."
+
+  - id: FH-COLL-017
+    title: Bulk copy of files by robocopy / xcopy to staging or network location
+    tactic: collection-exfiltration
+    attack: [T1005, T1039, T1074]
+    channel: Microsoft-Windows-Sysmon/Operational
+    provider: Microsoft-Windows-Sysmon
+    event_ids: [1]
+    prerequisites:
+      - "Sysmon installed with a config that logs event 1; or Security 4688 with command line auditing"
+    logic:
+      selection:
+        Image|endswith:
+          - '\robocopy.exe'
+          - '\xcopy.exe'
+        CommandLine|contains:
+          - ' /e'
+          - ' /s'
+          - ' /mir'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~robocopy --format llm
+    pivots:
+      - "Source and destination paths; destination in ProgramData/PerfLogs/Public or a share (see COLL-003)"
+    false_positives:
+      - "Admin file moves, deployment, backups"
+    severity: low
+    sources:
+      - https://raw.githubusercontent.com/MicrosoftDocs/sysinternals/main/sysinternals/downloads/sysmon.md
+    verified: false
+    notes: "Analyst design; no opened source documents this pattern."

@@ -1,0 +1,752 @@
+tactic: privilege-escalation
+title: Privilege Escalation
+description: 'Privilege escalation in Windows event logs appears as (a) accounts receiving or exercising
+  sensitive privileges (4672, 4673, 4674, 4704) that do not fit the baseline, (b) membership changes to
+  privileged local and domain groups (4728, 4732, 4756), (c) UAC bypasses visible as registry hijacks
+  and auto-elevating binaries spawning children (Sysmon 13 and 1), (d) service-based escalation to SYSTEM
+  (System 7045 with command interpreters or named-pipe echoes), and (e) token and named-pipe impersonation
+  (Sysmon 17/18, 4624 type 9). Most of these need baselining: 4672 and 4673 fire constantly for legitimate
+  admins and system components. Note that current MITRE ATT&CK data places several techniques in both
+  privilege-escalation and the new stealth tactic.'
+checks:
+- id: FH-PRV-001
+  title: Special privileges (4672) assigned to an unexpected account
+  tactic: privilege-escalation
+  attack:
+  - T1078
+  - T1134
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4672
+  prerequisites:
+  - Audit Special Logon (Success) - default on in modern Windows
+  logic:
+    selection:
+      EventID: 4672
+    filter_system_and_machine:
+      SubjectUserName:
+      - SYSTEM
+      - LOCAL SERVICE
+      - NETWORK SERVICE
+      - DefaultAppPool
+      - IUSR
+    filter_machine_accounts:
+      SubjectUserName|endswith: $
+    filter_dwm:
+      SubjectUserName|re: ^(DWM|UMFD)-[0-9]+$
+    condition: selection and not 1 of filter_* and SubjectUserName not in (documented admin accounts)
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4672 --format llm --limit 500
+  - forhunt search <paths> --channel Security --event-id 4672 --field PrivilegeList~SeDebugPrivilege --format
+    llm
+  pivots:
+  - SubjectLogonId -> the matching 4624 (LogonType, IpAddress, LogonProcessName) for the same session
+  - PrivilegeList containing SeDebugPrivilege, SeTcbPrivilege, SeImpersonatePrivilege or SeLoadDriverPrivilege
+    on a non-admin user is the strongest signal
+  - Same SubjectLogonId in 4688 / Sysmon 1 for what the privileged session executed
+  false_positives:
+  - Every interactive or remote logon of a member of Administrators produces 4672, so volume is high;
+    compare against the expected admin roster
+  - Service and scheduled-task accounts that legitimately hold SeImpersonatePrivilege or SeBackupPrivilege
+  - Backup agents running as dedicated accounts
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/Security/LogonLogoff/SpecialLogon/Sec_4672_Info_AdminLogon.yml
+  verified: false
+  notes: Only one independent rule source was read (Hayabusa, which treats it as informational and filters
+    system and machine accounts). It is a baseline-deviation check, not a signature. Microsoft Learn was
+    unreachable from the research sandbox, so field semantics were not checked against the vendor page.
+- id: FH-PRV-002
+  title: Sensitive privilege use (4673) by an unknown or unexpected process
+  tactic: privilege-escalation
+  attack:
+  - T1134
+  - T1068
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4673
+  prerequisites:
+  - Audit Sensitive Privilege Use (Success and Failure) - not enabled by default and very noisy; usually
+    only forwarded from selected hosts
+  logic:
+    selection:
+      EventID: 4673
+    filter_known_processes:
+      ProcessName:
+      - C:\Windows\System32\lsass.exe
+      - C:\Windows\System32\svchost.exe
+      - C:\Windows\explorer.exe
+      - C:\Windows\System32\taskhostw.exe
+    filter_program_files:
+      ProcessName|startswith: C:\Program Files
+    condition: selection and not 1 of filter_*
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4673 --format llm --limit 300
+  - forhunt search <paths> --channel Security --event-id 4673 --field Service~LsaRegisterLogonProcess
+    --format llm
+  pivots:
+  - ProcessName + SubjectLogonId -> 4688 / Sysmon 1 for the launching command line
+  - PrivilegeList (SeTcbPrivilege, SeDebugPrivilege, SeLoadDriverPrivilege) names what was exercised
+  - Service = LsaRegisterLogonProcess() failures with SeTcbPrivilege indicate a tool trying to register
+    as a logon process
+  false_positives:
+  - Dozens of Windows components call privileged services constantly; a short allow-list is mandatory
+  - Security and monitoring agents installed outside Program Files
+  severity: low
+  sources:
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/Security/PrivilegeUse/Sec_4673_Med_PrivSvcCalled_UnknownProcUsedHighPriv.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_user_couldnt_call_priv_service_lsaregisterlogonprocess.yml
+  verified: false
+  notes: Both rules read use 4673 but test different things (process allow-list vs failed LsaRegisterLogonProcess
+    with Keywords 0x8010000000000000 = audit failure). Treat as noisy triage data, not an alert. Microsoft
+    Learn was unreachable from the research sandbox, so field semantics were not checked against the vendor
+    page.
+- id: FH-PRV-003
+  title: 'Privileged object operation (4674): service DACL change or SC manager ownership'
+  tactic: privilege-escalation
+  attack:
+  - T1543.003
+  - T1574.011
+  - T1134
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4674
+  prerequisites:
+  - Audit Sensitive Privilege Use (Success and Failure)
+  logic:
+    selection_service_dacl:
+      EventID: 4674
+      ObjectType: SERVICE OBJECT
+      AccessMask|contains: '%%1539'
+      ProcessName|endswith: \services.exe
+    selection_scm_takeownership:
+      EventID: 4674
+      ObjectType: SC_MANAGER OBJECT
+      ObjectName: servicesactive
+      PrivilegeList: SeTakeOwnershipPrivilege
+    filter_scm_boot:
+      SubjectLogonId: '0x3e4'
+      ProcessName|endswith: :\Windows\System32\services.exe
+    condition: selection_service_dacl or (selection_scm_takeownership and not filter_scm_boot)
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4674 --field ObjectType="SERVICE OBJECT" --format
+    llm
+  - forhunt search <paths> --channel Security --event-id 4674 --field PrivilegeList~SeTakeOwnershipPrivilege
+    --format llm
+  pivots:
+  - SubjectUserName / SubjectLogonId -> 4688 for sc.exe sdset or equivalent
+  - Service name (ObjectName) -> 7045 / 4697 and the registry key HKLM\SYSTEM\CurrentControlSet\Services\<name>
+  false_positives:
+  - Service installers and some management software adjust service security descriptors legitimately
+  - The services.exe boot-time logon (0x3e4 = NETWORK SERVICE session) touches the SC manager normally
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/Security/PrivilegeUse/Sec_4674_Med_OpAttemptOnPrivObj_PossibleHiddenSvcCreationAttempt.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_scm_database_privileged_operation.yml
+  verified: true
+  notes: Hayabusa and SigmaHQ independently use 4674 with ObjectType/AccessMask/PrivilegeList/ProcessName.
+    %%1539 is the rendered WRITE_DAC access string as used by Hayabusa; message-resource ids like %%1539
+    appear literally in EVTX EventData. Microsoft Learn was unreachable from the research sandbox, so
+    field semantics were not checked against the vendor page.
+- id: FH-PRV-004
+  title: Member added to local Administrators (4732)
+  tactic: privilege-escalation
+  attack:
+  - T1098
+  - T1078.003
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4732
+  prerequisites:
+  - Audit Security Group Management (Success) on workstations, servers and domain controllers
+  logic:
+    selection:
+      EventID: 4732
+    selection_group:
+      TargetSid: S-1-5-32-544
+    filter_machine_accounts:
+      SubjectUserName|endswith: $
+    condition: selection and selection_group and not filter_machine_accounts
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4732 --field TargetSid=S-1-5-32-544 --format
+    llm
+  - forhunt search <paths> --channel Security --event-id 4732 --field TargetUserName=Administrators --format
+    llm
+  pivots:
+  - MemberSid (the added principal; the name is often not rendered, resolve the SID) -> 4720 account creation
+    or 4624 first logon
+  - SubjectUserName / SubjectLogonId -> who performed the change and from where (4624)
+  - 4688 net.exe localgroup administrators ... /add around the same time
+  false_positives:
+  - Imaging and provisioning workflows, Intune/MDM enrolment (adds the device owner), Autopilot
+  - Domain join operations adding Domain Admins to the local group
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_user_added_to_local_administrators.yml
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/Security/AccountManagement/SecurityGroupManagement/Sec_4732_High_MemberAddedToLocalGrp_Administrators.yml
+  verified: true
+  notes: Both rules key on 4732 in Security. Matching on TargetSid S-1-5-32-544 is language-independent;
+    TargetUserName text is localised. Hayabusa notes only the SID of the added member is recorded. Microsoft
+    Learn was unreachable from the research sandbox, so field semantics were not checked against the vendor
+    page.
+- id: FH-PRV-005
+  title: Member added to privileged domain groups (4728 / 4732 / 4756)
+  tactic: privilege-escalation
+  attack:
+  - T1098
+  - T1078.002
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4728
+  - 4732
+  - 4756
+  prerequisites:
+  - Audit Security Group Management (Success) on domain controllers (4728 global, 4756 universal, 4732
+    domain-local/local)
+  logic:
+    selection:
+      EventID:
+      - 4728
+      - 4732
+      - 4756
+      TargetUserName:
+      - Domain Admins
+      - Enterprise Admins
+      - Schema Admins
+      - Administrators
+      - Account Operators
+      - Backup Operators
+      - Server Operators
+      - DnsAdmins
+    filter_machine_accounts:
+      SubjectUserName|endswith: $
+    condition: selection and not filter_machine_accounts
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4728,4756 --format llm
+  - forhunt search <paths> --channel Security --event-id 4728 --field TargetUserName="Domain Admins" --format
+    llm
+  - forhunt search <paths> --channel Security --event-id 4756 --field TargetUserName="Enterprise Admins"
+    --format llm
+  pivots:
+  - MemberName / MemberSid -> 4720 (new account) or 4738 (account change) shortly before
+  - SubjectUserName -> 4624 type 3/10 logon source; a member add from a non-admin workstation is suspicious
+  - Subsequent 4672 / 4624 for the added account
+  false_positives:
+  - Planned administrator onboarding and break-glass activation
+  - Group-management tools running as service accounts
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/Security/AccountManagement/SecurityGroupManagement/Sec_4728_High_MemberAddedToGlobalGrp_DomainAdmins.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/account_management/win_security_member_added_security_enabled_global_group.yml
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/Security/AccountManagement/SecurityGroupManagement/Sec_4732_High_MemberAddedToLocalGrp_DomainAdmins.yml
+  verified: false
+  notes: 4728 on Domain Admins is confirmed by Hayabusa and (as a generic 4728 rule) by SigmaHQ. No read
+    source covers 4756 / Enterprise Admins; that part is inferred from the event definitions. The group
+    name list is a starting point; also match well-known SIDs ending -512, -518, -519 on TargetSid. Microsoft
+    Learn was unreachable from the research sandbox, so field semantics were not checked against the vendor
+    page.
+- id: FH-PRV-006
+  title: User right assigned (4704) - dangerous privilege granted
+  tactic: privilege-escalation
+  attack:
+  - T1098
+  - T1484.001
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4704
+  prerequisites:
+  - Audit Authentication Policy Change / Audit Policy Change (Success) - 4704 logs which principal got
+    which right
+  logic:
+    selection:
+      EventID: 4704
+      PrivilegeList|contains:
+      - SeDebugPrivilege
+      - SeTcbPrivilege
+      - SeImpersonatePrivilege
+      - SeLoadDriverPrivilege
+      - SeBackupPrivilege
+      - SeRestorePrivilege
+      - SeTakeOwnershipPrivilege
+      - SeEnableDelegationPrivilege
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4704 --format llm
+  - forhunt search <paths> --channel Security --event-id 4704 --field PrivilegeList~SeDebugPrivilege --format
+    llm
+  pivots:
+  - TargetSid -> who received the right
+  - SubjectLogonId -> 4624 for who made the change
+  - On a DC, 5136 changes to gPCMachineExtensionNames of a GPO (user-rights assignment via GPO)
+  false_positives:
+  - Software installs that grant "Log on as a service" (not in the list above)
+  - Security baseline application via GPO or local policy tools
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_susp_group_policy_abuse_privilege_addition.yml
+  verified: false
+  notes: 4704 itself was not covered by any rule that was read; only the related GPO-abuse pattern (5136)
+    was. Event semantics of 4704 and the field name PrivilegeList are from analyst knowledge and need
+    confirmation against Microsoft Learn. Microsoft Learn was unreachable from the research sandbox, so
+    field semantics were not checked against the vendor page.
+- id: FH-PRV-007
+  title: GPO modified to push user-rights assignment (5136 gPCMachineExtensionNames)
+  tactic: privilege-escalation
+  attack:
+  - T1484.001
+  - T1098
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 5136
+  prerequisites:
+  - Audit Directory Service Changes (Success) on domain controllers
+  logic:
+    selection:
+      EventID: 5136
+      AttributeLDAPDisplayName: gPCMachineExtensionNames
+      AttributeValue|contains:
+      - 827D319E-6EAC-11D2-A4EA-00C04F79F83A
+      - 803E14A0-B4FB-11D0-A0D0-00A0C90F574B
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 5136 --field AttributeLDAPDisplayName=gPCMachineExtensionNames
+    --format llm
+  pivots:
+  - ObjectDN / ObjectGUID -> which GPO, then SYSVOL GptTmpl.inf for the rights granted
+  - SubjectUserName -> 4624 source
+  false_positives:
+  - Legitimate GPO edits by GPO admins; baseline the editing accounts
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_susp_group_policy_abuse_privilege_addition.yml
+  verified: false
+  notes: Single rule source (SigmaHQ). The two GUIDs identify the Security Settings client-side extension
+    and its tool extension. Microsoft Learn was unreachable from the research sandbox, so field semantics
+    were not checked against the vendor page.
+- id: FH-PRV-008
+  title: UAC bypass via registry hijack (eventvwr mscfile, ms-settings, sdclt) - Sysmon 13
+  tactic: privilege-escalation
+  attack:
+  - T1548.002
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 13
+  prerequisites:
+  - Sysmon installed with a config that logs event 13 (RegistryEvent value set) for HKCU\Software\Classes\mscfile,
+    ms-settings, exefile and Folder keys
+  logic:
+    selection_eventvwr:
+      EventID: 13
+      TargetObject|endswith: \mscfile\shell\open\command
+    selection_sdclt:
+      EventID: 13
+      TargetObject|endswith:
+      - Software\Classes\exefile\shell\runas\command\isolatedCommand
+      - Software\Classes\Folder\shell\open\command\SymbolicLinkValue
+    selection_msettings:
+      EventID: 13
+      TargetObject|contains: \Software\Classes\ms-settings\shell\open\command
+    condition: selection_eventvwr or selection_sdclt or selection_msettings
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field 'TargetObject~mscfile\shell\open\command'
+    --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field 'TargetObject~ms-settings\shell\open\command'
+    --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~isolatedCommand
+    --format llm
+  pivots:
+  - Image (writer) and Details (the command planted) -> the payload path
+  - The auto-elevating binary launched seconds later (eventvwr.exe, fodhelper.exe, ComputerDefaults.exe,
+    sdclt.exe) -> child process at High integrity (Sysmon 1)
+  - User/ProcessGuid -> earlier execution chain
+  false_positives:
+  - Software that registers file-type handlers writes under HKCU\Software\Classes but rarely mscfile or
+    ms-settings shell\open\command values
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/registry/registry_set/registry_set_bypass_uac_using_eventviewer.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/registry/registry_set/registry_set_uac_bypass_eventvwr.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/registry/registry_set/registry_set_uac_bypass_sdclt.yml
+  - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/registry-actions.md
+  - https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack.json
+  verified: false
+  notes: 'mscfile and sdclt key paths are confirmed by SigmaHQ and the Sysmon event-13 field semantics
+    (TargetObject, Details) by the TrustedSec Sysmon guide. The ms-settings path (fodhelper / ComputerDefaults
+    hijack) is from analyst knowledge: no registry rule for it could be fetched, so the whole check stays
+    unverified. HKCU writes appear under HKU\<SID>_Classes in TargetObject, so use contains/endswith.'
+- id: FH-PRV-009
+  title: UAC bypass auto-elevated binary spawning a child (fodhelper, ComputerDefaults, cmstp)
+  tactic: privilege-escalation
+  attack:
+  - T1548.002
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 1
+  prerequisites:
+  - Sysmon installed with a config that logs event 1 (process creation)
+  - 'Alternative: Security 4688 with command line auditing (ParentProcessName is available; IntegrityLevel
+    is not, so the ComputerDefaults variant needs Sysmon)'
+  logic:
+    selection_fodhelper_child:
+      EventID: 1
+      ParentImage|endswith: \fodhelper.exe
+    selection_computerdefaults:
+      EventID: 1
+      Image: C:\Windows\System32\ComputerDefaults.exe
+      IntegrityLevel:
+      - High
+      - System
+    filter_computerdefaults_parent:
+      ParentImage|contains:
+      - :\Windows\System32
+      - :\Program Files
+    condition: selection_fodhelper_child or (selection_computerdefaults and not filter_computerdefaults_parent)
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field 'ParentImage~\fodhelper.exe'
+    --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field 'Image~\ComputerDefaults.exe'
+    --format llm
+  - forhunt search <paths> --channel Security --event-id 4688 --field 'ParentProcessName~\fodhelper.exe'
+    --format llm
+  pivots:
+  - Image / CommandLine of the child -> hash and path (Sysmon 1 Hashes)
+  - Sysmon 13 registry write to ms-settings\shell\open\command by the grandparent just before
+  - ParentProcessGuid chain back to the initial foothold
+  false_positives:
+  - fodhelper.exe (Optional Features) legitimately starts only a few Windows settings helpers; any shell,
+    script host or user-writable binary child is suspicious
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_uac_bypass_fodhelper.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_uac_bypass_computerdefaults.yml
+  - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/process-creation.md
+  - https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack.json
+  verified: true
+  notes: SigmaHQ supplies the parent/integrity logic; the TrustedSec guide confirms Sysmon 1 fields (ParentImage,
+    IntegrityLevel, OriginalFileName). Integrity-level values may appear as names or as S-1-16-* SIDs
+    depending on source.
+- id: FH-PRV-010
+  title: Service installed (7045) with cmd / PowerShell / script-host ImagePath
+  tactic: privilege-escalation
+  attack:
+  - T1543.003
+  - T1569.002
+  channel: System
+  provider: Service Control Manager
+  event_ids:
+  - 7045
+  prerequisites:
+  - System log retention sufficient to hold 7045 (logged by default)
+  logic:
+    selection:
+      EventID: 7045
+    susp_imagepath:
+      ImagePath|contains:
+      - powershell
+      - cmd.exe
+      - '%COMSPEC%'
+      - mshta.exe
+      - regsvr32.exe
+      - rundll32.exe
+      - wscript.exe
+      - cscript.exe
+      - certutil.exe
+      - \AppData\
+      - \Users\Public\
+      - \Windows\Temp\
+    susp_base64:
+      ImagePath|re: '[A-Za-z0-9/+=]{50}'
+    condition: selection and (susp_imagepath or susp_base64)
+  forhunt:
+  - forhunt search <paths> --channel System --event-id 7045 --field ImagePath~powershell --format llm
+  - forhunt search <paths> --channel System --event-id 7045 --field ImagePath~cmd --format llm
+  - forhunt search <paths> --channel System --event-id 7045 --field AccountName=LocalSystem --format llm
+  pivots:
+  - ServiceName + ImagePath -> file on disk (Sysmon 11/1) and HKLM\SYSTEM\CurrentControlSet\Services\<name>
+  - Time of 7045 vs 4624 type 3 (remote installation, PsExec/SMBExec pattern) or an interactive admin
+    session (local escalation)
+  - Subsequent 7036 start/stop and a SYSTEM-owned child process
+  false_positives:
+  - Some installers and management agents register services launched via cmd.exe /c wrappers
+  - Legitimate admin tooling (PsExec by IT) - confirm with change records
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/System/Sys_7045_High_ServiceInstalled_SuspiciousServicePath.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/system/service_control_manager/win_system_hack_smbexec.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/system/service_control_manager/win_system_cobaltstrike_service_installs.yml
+  verified: true
+  notes: Hayabusa and SigmaHQ both use System 7045 with ImagePath. The same event is logged in Security
+    as 4697 if Audit Security System Extension is enabled. AccountName=LocalSystem in the third query
+    is a pivot, not a detection.
+- id: FH-PRV-011
+  title: 'getsystem-style service: named-pipe echo or rundll32 ImagePath (7045 / 4688)'
+  tactic: privilege-escalation
+  attack:
+  - T1134.001
+  - T1543.003
+  channel: System
+  provider: Service Control Manager
+  event_ids:
+  - 7045
+  - 4688
+  prerequisites:
+  - 7045 is on by default
+  - '4688 branch: Audit Process Creation (Success) plus GPO "Include command line in process creation
+    events" (4688 CommandLine)'
+  logic:
+    selection_7045_pipe:
+      EventID: 7045
+      ImagePath|contains|all:
+      - /c
+      - echo
+      - \pipe\
+    selection_7045_pipe_interpreter:
+      ImagePath|contains:
+      - cmd
+      - '%COMSPEC%'
+    selection_7045_rundll:
+      EventID: 7045
+      ImagePath|contains|all:
+      - rundll32
+      - .dll,a
+      - '/p:'
+    selection_7045_admin_share:
+      EventID: 7045
+      ImagePath|startswith: \\127.0.0.1\ADMIN$\
+    selection_4688_pipe:
+      EventID: 4688
+      NewProcessName|endswith: cmd.exe
+      CommandLine|contains: \pipe
+    condition: (selection_7045_pipe and selection_7045_pipe_interpreter) or selection_7045_rundll or selection_7045_admin_share
+      or selection_4688_pipe
+  forhunt:
+  - forhunt search <paths> --channel System --event-id 7045 --field 'ImagePath~\pipe\' --format llm
+  - forhunt search <paths> --channel Security --event-id 4688 --field 'CommandLine~\pipe\' --field NewProcessName~cmd.exe
+    --format llm
+  - forhunt search <paths> --channel System --event-id 7045 --field 'ImagePath~ADMIN$' --format llm
+  pivots:
+  - 'Service lifetime is seconds: 7045 followed immediately by a SYSTEM process and service deletion'
+  - Sysmon 17/18 pipe name equal to the random pipe in the ImagePath
+  - Parent process of the service creator (Sysmon 1 / 4688) = the beacon or shell that ran getsystem
+  false_positives:
+  - Very rare; a 7045 whose ImagePath writes into a named pipe is nearly always getsystem technique 1
+  severity: critical
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/system/service_control_manager/win_system_meterpreter_or_cobaltstrike_getsystem_service_installation.yml
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/Security/DetailedTracking/ProcessCreation/Sec_4688_Med_ProcExec_MeterpreterGetSystem.yml
+  - https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack.json
+  verified: true
+  notes: SigmaHQ (7045 patterns) and Hayabusa (4688 cmd.exe with a pipe) independently describe the same
+    getsystem technique across two event types. Newer Meterpreter/Cobalt Strike versions use other variants
+    (token-based), so absence proves little.
+- id: FH-PRV-012
+  title: Service creation with suspicious binary path via sc.exe / New-Service (4688 / Sysmon 1)
+  tactic: privilege-escalation
+  attack:
+  - T1543.003
+  - T1569.002
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4688
+  - 1
+  prerequisites:
+  - Audit Process Creation (Success) plus GPO "Include command line in process creation events" (4688
+    CommandLine)
+  - or Sysmon installed with a config that logs event 1 (process creation)
+  logic:
+    selection_sc:
+      Image|endswith: \sc.exe
+      CommandLine|contains|all:
+      - create
+      - binPath=
+    selection_posh:
+      CommandLine|contains|all:
+      - New-Service
+      - -BinaryPathName
+    susp_binpath:
+      CommandLine|contains:
+      - powershell
+      - mshta
+      - wscript
+      - cscript
+      - cmd.exe /c
+      - cmd /c
+      - rundll32
+      - C:\Users\Public
+      - \Downloads\
+      - \Desktop\
+      - C:\Windows\TEMP\
+      - \AppData\Local\Temp
+    condition: 1 of selection_* and susp_binpath
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~binPath --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~binPath
+    --format llm
+  pivots:
+  - Matching 7045 (System) for the created service and its ImagePath
+  - Parent of sc.exe / powershell.exe (ParentProcessName or ParentImage)
+  - sc.exe sdset / sc config (service binary replacement) in the same session
+  false_positives:
+  - Installers calling sc create with temp paths
+  - IT scripts deploying agents
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_susp_service_creation.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_sc_create_service.yml
+  - https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack.json
+  verified: false
+  notes: Only SigmaHQ rules read; Security 4688 field name for the command line is CommandLine and for
+    the image NewProcessName (use NewProcessName instead of Image in 4688 queries).
+- id: FH-PRV-013
+  title: Named-pipe impersonation tooling (potato / PrintSpoofer / Cobalt Strike pipes) - Sysmon 17/18
+  tactic: privilege-escalation
+  attack:
+  - T1134.001
+  - T1068
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 17
+  - 18
+  prerequisites:
+  - Sysmon installed with a config that logs events 17 and 18 (PipeEvent created/connected) - not on by
+    default in many configs
+  logic:
+    selection_coerced:
+      EventID:
+      - 17
+      - 18
+      PipeName|contains: \coerced\
+    selection_efspotato:
+      EventID:
+      - 17
+      - 18
+      PipeName|contains: \pipe\srvsvc
+    selection_cobalt:
+      EventID:
+      - 17
+      - 18
+      PipeName|startswith:
+      - \postex_
+      - \status_
+      - \msagent_
+      - \MSSE-
+    condition: 1 of selection_* and Image is not the expected owner of the pipe (see notes)
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 17,18 --field PipeName~coerced
+    --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 17 --field PipeName~postex_
+    --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 17 --field 'Image~\Users\'
+    --format llm
+  pivots:
+  - Image of the pipe creator (user-writable path, odd name) -> Sysmon 1 for how it started and with which
+    token
+  - Process running as a service account (SeImpersonatePrivilege) spawning a SYSTEM child within seconds
+  - Spooler / EFS / DCOM coercion traffic (Security 5145 on \pipe\spoolss, \pipe\efsrpc) just before
+  false_positives:
+  - Browsers (mojo_ pipes) and many apps create legitimately named pipes; pipe names alone need the creating
+    Image for context
+  - srvsvc pipes are legitimately hosted by svchost/services
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/pipe_created/pipe_created_hktl_coercedpotato.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/pipe_created/pipe_created_hktl_efspotato.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/pipe_created/pipe_created_hktl_cobaltstrike.yml
+  - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/named-pipes.md
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/sysmon/Sysmon_17_PipeCreated_RuleAlert.yml
+  verified: true
+  notes: 'Event ids and fields (PipeName, Image, ProcessGuid) are confirmed by the Sysmon Community Guide
+    and Hayabusa; the literal pipe names come from SigmaHQ only and tool versions rename pipes, so treat
+    names as indicators, not coverage. The EfsPotato selection above is deliberately loose: SigmaHQ itself
+    notes it needs tuning, hunt by unexpected creating Image rather than the name. PrintSpoofer-specific
+    pipe names could not be confirmed and are not listed.'
+- id: FH-PRV-014
+  title: 'Access-token abuse: logon type 9 with Impersonation level (4624)'
+  tactic: privilege-escalation
+  attack:
+  - T1134.001
+  - T1134.002
+  - T1134.003
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4624
+  prerequisites:
+  - Audit Logon (Success)
+  logic:
+    selection:
+      EventID: 4624
+      LogonType: 9
+      ImpersonationLevel: '%%1833'
+    selection_advapi:
+      LogonProcessName: Advapi
+      AuthenticationPackageName: Negotiate
+    condition: selection and (selection_advapi or SubjectUserName == TargetUserName)
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=9 --format llm
+  - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=9 --field LogonProcessName~Advapi
+    --format llm
+  pivots:
+  - ProcessName / SubjectLogonId -> 4688 / Sysmon 1 for the process using the new logon session (runas
+    /netonly, Cobalt Strike make_token, Rubeus)
+  - TargetLogonId -> subsequent network authentications (4648, 4624 type 3 on other hosts)
+  - NetworkAddress / IpAddress
+  false_positives:
+  - runas /netonly and some admin tools legitimately create type 9 logons
+  - Backup and management software using alternate credentials
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/account_management/win_security_access_token_abuse.yml
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/Security/LogonLogoff/Logon/Sec_4624_Med_Logon-Type9-NewInteractive_PossibleTokenImpersonation.yml
+  verified: true
+  notes: Both rules key on LogonType 9 and ImpersonationLevel %%1833 (rendered "Impersonation"). SubjectUserName
+    equal to TargetUserName is expressed as a field comparison in Hayabusa; do it in post-processing with
+    forhunt output.
+- id: FH-PRV-015
+  title: RottenPotato-like loopback ANONYMOUS LOGON (4624 type 3)
+  tactic: privilege-escalation
+  attack:
+  - T1134.001
+  - T1068
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4624
+  prerequisites:
+  - Audit Logon (Success)
+  logic:
+    selection:
+      EventID: 4624
+      LogonType: 3
+      TargetUserName: ANONYMOUS LOGON
+      WorkstationName: '-'
+      IpAddress:
+      - 127.0.0.1
+      - ::1
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=3 --field TargetUserName="ANONYMOUS
+    LOGON" --field IpAddress=127.0.0.1 --format llm
+  pivots:
+  - 'Within seconds: 4672 + 4688 SYSTEM process spawned by a service account'
+  - Sysmon 1 for the process holding SeImpersonatePrivilege (IIS apppool, MSSQL, service accounts)
+  false_positives:
+  - Some local RPC/SMB loopback activity produces anonymous logons; expect low volume but confirm timing
+    correlation with a service-account process
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/account_management/win_security_susp_rottenpotato.yml
+  verified: false
+  notes: Single source (SigmaHQ). Original RottenPotato behaviour; later potatoes (Juicy, Rogue, Sweet,
+    God) vary in the logon they produce.

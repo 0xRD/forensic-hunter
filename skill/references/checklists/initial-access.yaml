@@ -1,0 +1,662 @@
+tactic: initial-access
+title: Initial Access and Brute Force
+description: >
+  Initial access evidence in EVTX falls into four groups. (1) Credential guessing against
+  exposed services: bursts of Security 4625 on the target, 4776 on a domain controller for NTLM
+  and 4771 for Kerberos pre-authentication failures, lockouts (4740), and the decisive pattern of
+  failures followed by a success from the same source. (2) Valid accounts used from unusual
+  places or times: 4624 type 10 or 3 from public addresses, RD Gateway and RRAS VPN records, and
+  account-restriction failures. (3) Phishing payload execution: Office, Outlook or a browser
+  spawning script hosts, Sysmon file-create with Mark-of-the-Web streams. (4) Exploitation of
+  public-facing applications: IIS worker (w3wp.exe), SQL Server or Tomcat spawning shells. Blind
+  spots: third-party VPN and firewall logs, reverse-proxy and web access logs, and e-mail
+  gateway telemetry are not in EVTX. Thresholds are starting points that need a baseline. All
+  source URLs are files read from shallow git clones; see
+  references/sources/lateral-remote-initial.md.
+checks:
+  - id: FH-INIT-001
+    title: Password spraying - many distinct accounts failing from one source address
+    tactic: initial-access
+    attack: [T1110.003]
+    channel: Security
+    provider: Microsoft-Windows-Security-Auditing
+    event_ids: [4625]
+    prerequisites:
+      - "Audit Logon (Failure) on the targeted servers / domain controllers"
+    logic:
+      selection:
+        EventID: 4625
+        SubStatus:
+          - '0xC000006A'
+          - '0xC0000064'
+      filter_unknown_source:
+        IpAddress: '-'
+      condition: count(distinct TargetUserName) by IpAddress >= 10 within 30m, selection and not filter_unknown_source
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4625 --field SubStatus=0xC000006A --format csv
+      - forhunt search <paths> --channel Security --event-id 4625 --field SubStatus=0xC0000064 --format csv
+      - forhunt stats <paths> --format llm
+    pivots:
+      - "IpAddress, then 4624 from that IP (FH-INIT-005); check whether it is a public address (FH-INIT-006)"
+      - "Few attempts (1-3) per account across many accounts is the spray signature; compare the attempt cadence to lockout threshold"
+      - "WorkstationName values that are random or tool defaults, LogonProcessName NtLmSsp, AuthenticationPackageName NTLM"
+      - "On a DC: 4776 (NTLM) and 4771 (Kerberos) show the same spray from the validating side (FH-INIT-008/009)"
+    false_positives:
+      - "Misconfigured service or mapped drive with a stale password hitting many names is unusual; vulnerability scanners and password-audit tools"
+    severity: high
+    sources:
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/LogonLogoff/Logon/Sec_4625_Med_LogonFail_UserGuessing_Correlation.yml
+      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/login_attacks/account_brute_force.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_susp_failed_logon_source.yml
+      - https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json
+    verified: true
+    notes: "SubStatus 0xC000006A (bad password) and 0xC0000064 (user does not exist) are confirmed by Hayabusa's rule set; the correlation shape (group failures by source in a short window) is used by Hayabusa (5 events / 5 min) and Chainsaw (> 5 per account). The distinct-account threshold of 10 within 30 minutes is my starting point, not from a source. Hayabusa treats 0xC0000064 as user guessing (a separate sibling pattern); count both, but separate them when reporting."
+
+  - id: FH-INIT-002
+    title: Brute force against a single account
+    tactic: initial-access
+    attack: [T1110.001]
+    channel: Security
+    provider: Microsoft-Windows-Security-Auditing
+    event_ids: [4625]
+    prerequisites:
+      - "Audit Logon (Failure)"
+    logic:
+      selection:
+        EventID: 4625
+        SubStatus: '0xC000006A'
+      condition: count(selection) by TargetUserName, IpAddress >= 5 within 5m
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4625 --field SubStatus=0xC000006A --field TargetUserName=<account> --format llm
+      - forhunt search <paths> --channel Security --event-id 4740 --format llm
+    pivots:
+      - "Whether a 4740 lockout occurred (FH-INIT-004) or the attacker stopped just below the lockout threshold"
+      - "Success after the failures from the same IpAddress (FH-INIT-005)"
+      - "LogonType of the failures: 10 (RDP without NLA), 3 (SMB, RDP with NLA, WinRM), 8 (IIS basic), 2 (console)"
+    false_positives:
+      - "Users with changed or expired passwords; services with stale credentials (long runs from one machine at regular intervals)"
+    severity: medium
+    sources:
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/LogonLogoff/Logon/Sec_4625_Med_LogonFail_WrongPW_PW-Guessing_Correlation.yml
+      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/login_attacks/account_brute_force.yml
+      - https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json
+    verified: true
+    notes: "Hayabusa groups by account, domain, source IP, logon type and process over 5 minutes with a threshold of 5; Chainsaw counts per account above 5. Both thresholds are tuning choices."
+
+  - id: FH-INIT-003
+    title: Username enumeration - failures for accounts that do not exist
+    tactic: initial-access
+    attack: [T1110.001, T1087]
+    channel: Security
+    provider: Microsoft-Windows-Security-Auditing
+    event_ids: [4625]
+    prerequisites:
+      - "Audit Logon (Failure)"
+    logic:
+      selection:
+        EventID: 4625
+        SubStatus: '0xC0000064'
+      filter_unknown_source:
+        IpAddress: '-'
+      condition: count(distinct TargetUserName) by IpAddress >= 5 within 5m, selection and not filter_unknown_source
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4625 --field SubStatus=0xC0000064 --format csv
+    pivots:
+      - "Names tried: dictionaries of common names (admin, administrator, sql, test) or harvested names from the organisation"
+      - "A name that later authenticates successfully = guessed or sprayed valid account"
+    false_positives:
+      - "Typos, decommissioned accounts still referenced by scripts or devices"
+    severity: medium
+    sources:
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/LogonLogoff/Logon/Sec_4625_Low_LogonFail_NonExistantUser.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/LogonLogoff/Logon/Sec_4625_Med_LogonFail_UserGuessing_Correlation.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_failed_logon_reasons.yml
+    verified: false
+    notes: "Only Hayabusa documents the 0xC0000064 meaning among the sources I could open (Sigma lists other status codes). Microsoft Learn's 4625 page, the canonical reference for Status/SubStatus, was unreachable."
+
+  - id: FH-INIT-004
+    title: Account lockout (4740) and the callers behind it
+    tactic: initial-access
+    attack: [T1110]
+    channel: Security
+    provider: Microsoft-Windows-Security-Auditing
+    event_ids: [4740]
+    prerequisites:
+      - "Audit User Account Management (Success) on domain controllers; for local accounts, on the member server"
+    logic:
+      selection:
+        EventID: 4740
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4740 --format llm
+    pivots:
+      - "TargetUserName = locked account; TargetDomainName holds the caller computer name that produced the bad attempts"
+      - "On the caller computer: 4625 with the same TargetUserName and IpAddress (the real source address)"
+      - "Many different accounts locked from one caller = spray or brute force; repeated locks of one account at fixed intervals = stale credential"
+    false_positives:
+      - "Mobile devices, mapped drives and services with changed passwords"
+    severity: medium
+    sources:
+      - https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json
+    verified: false
+    notes: "No rule set I could open uses 4740, and Microsoft Learn was unreachable, so the event id and the TargetUserName / TargetDomainName (caller computer name) semantics are from my own knowledge. Treat as unverified until checked against a sample or Microsoft documentation."
+
+  - id: FH-INIT-005
+    title: Successful logon after a failure burst from the same source (guess succeeded)
+    tactic: initial-access
+    attack: [T1110, T1078]
+    channel: Security
+    provider: Microsoft-Windows-Security-Auditing
+    event_ids: [4625, 4624]
+    prerequisites:
+      - "Audit Logon (Success and Failure)"
+    logic:
+      failures:
+        EventID: 4625
+      success:
+        EventID: 4624
+        LogonType:
+          - 3
+          - 10
+          - 8
+      condition: success where exists >= 5 failures with same IpAddress within the previous 30m and (same TargetUserName or any TargetUserName if spraying)
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4625 --field IpAddress=<ip> --format llm
+      - forhunt search <paths> --channel Security --event-id 4624 --field IpAddress=<ip> --format llm
+      - forhunt timeline <paths> --since <start> --until <end> --format llm
+    pivots:
+      - "The successful TargetUserName and TargetLogonId: follow with 4672 (privileges), new processes (4688/Sysmon 1) and 4624 type 3 on other hosts"
+      - "For RDP: LocalSessionManager 21/22 and RemoteConnectionManager 1149 for the same IP"
+      - "Time from last failure to success; a human typo cadence differs from a tool's"
+    false_positives:
+      - "User who mistyped then succeeded; password manager retry"
+    severity: high
+    sources:
+      - https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/LogonLogoff/Logon/Sec_4625_Med_LogonFail_WrongPW_PW-Guessing_Correlation.yml
+    verified: false
+    notes: "This join is an analyst correlation; none of the sources define it as a rule (Hayabusa's correlation only counts failures). Keep it as the headline hunting question for any exposed service, and raise the threshold on NAT'd or proxy source addresses."
+
+  - id: FH-INIT-006
+    title: Failed logons from public IP addresses (RDP / SMB / WinRM exposed to the internet)
+    tactic: initial-access
+    attack: [T1110, T1133]
+    channel: Security
+    provider: Microsoft-Windows-Security-Auditing
+    event_ids: [4625]
+    prerequisites:
+      - "Audit Logon (Failure)"
+    logic:
+      selection:
+        EventID: 4625
+      filter_private:
+        IpAddress|startswith:
+          - '10.'
+          - '192.168.'
+          - '127.'
+          - '169.254.'
+          - '172.16.'
+          - '172.17.'
+          - '172.18.'
+          - '172.19.'
+          - '172.2'
+          - '172.30.'
+          - '172.31.'
+          - '::1'
+          - 'fe80:'
+          - 'fc'
+          - 'fd'
+      filter_empty:
+        IpAddress: '-'
+      condition: selection and not filter_private and not filter_empty
+    forhunt:
+      - forhunt stats <paths> --format llm
+      - forhunt search <paths> --channel Security --event-id 4625 --field LogonType=3 --format csv
+      - forhunt search <paths> --channel Security --event-id 4625 --field LogonType=10 --format csv
+    pivots:
+      - "Group by IpAddress, TargetUserName and LogonType; the dominant LogonType shows the targeted service"
+      - "With NLA enabled, RDP password failures normally appear as LogonType 3 with LogonProcessName NtLmSsp, and without NLA as LogonType 10; the 4625 for a failed RDP attempt may also carry the client's own machine name in WorkstationName"
+      - "Check for a later 4624 from the same address (FH-INIT-005 / FH-INIT-007)"
+      - "RdpCoreTS 131 (if present) shows TCP connections that never authenticated (FH-RMT-015)"
+    false_positives:
+      - "Remote workers behind public addresses, partners, legitimate cloud services; internet scanners (noise, but a sign of exposure)"
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_susp_failed_logon_source.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/LogonLogoff/Logon/Sec_4625_Low_LogonFail_WrongPW.yml
+    verified: false
+    notes: "The filter on private ranges is approximate; the 172.16.0.0/12 block is expanded roughly with prefixes and should be replaced with a CIDR filter when the tooling supports it. The LogonType 3 vs 10 behaviour with NLA is widely observed but not supported by any source I could open; the first source here covers the public-IP filter and the second the 4625 field meanings."
+
+  - id: FH-INIT-007
+    title: Successful interactive or network logon from a public IP (valid accounts, external remote services)
+    tactic: initial-access
+    attack: [T1078, T1133, T1021.001]
+    channel: Security
+    provider: Microsoft-Windows-Security-Auditing
+    event_ids: [4624, 21, 1149]
+    prerequisites:
+      - "Audit Logon (Success)"
+      - "For the RDP variants: TerminalServices LocalSessionManager and RemoteConnectionManager logs (default)"
+    logic:
+      selection:
+        EventID: 4624
+        LogonType:
+          - 10
+          - 3
+      filter_private:
+        IpAddress|startswith:
+          - '10.'
+          - '192.168.'
+          - '127.'
+          - '169.254.'
+          - '::1'
+          - 'fe80:'
+      filter_empty:
+        IpAddress: '-'
+      filter_machine:
+        TargetUserName|endswith: '$'
+      condition: selection and not filter_private and not filter_empty and not filter_machine
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4624 --field LogonType=10 --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-TerminalServices-LocalSessionManager/Operational --event-id 21 --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational --event-id 1149 --format llm
+    pivots:
+      - "IpAddress: geolocate and enrich, then search the whole log set for the same address (4625 history, other hosts)"
+      - "4672 for the same TargetLogonId (admin rights) and what the session ran: 4688/Sysmon 1, 7045, 4698"
+      - "LocalSessionManager 21 Address and RemoteConnectionManager 1149 Param3 show the same client IP independently of Security auditing"
+      - "Time of day / day of week against the user's baseline (FH-INIT-010)"
+    false_positives:
+      - "Remote staff, VPN exit nodes, cloud management services, RD Gateway front-ends (private IP there)"
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_successful_external_remote_rdp_login.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/account_management/win_security_successful_external_remote_smb_login.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/TerminalServices-LocalSessionManager_Op/LocalSessManager_21_Info_RDP-Logon.yml
+      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/rdp_attacks/event_id_4624_logontype_10.yaml
+    verified: true
+    notes: "The Hayabusa 21 sample shows a public client address in the Address field and Sigma defines external RDP/SMB logons by LogonType 10/3 with a non-private IpAddress; Chainsaw also keys on type 10. Public-IP determination is simplistic here (a CIDR filter is better). Kerberos logons over VPN/NAT show private or VPN-pool addresses, so this check does not see VPN-sourced access."
+
+  - id: FH-INIT-008
+    title: NTLM validation failures on a domain controller (4776) - spray and guessing from one workstation
+    tactic: initial-access
+    attack: [T1110.003, T1110.001]
+    channel: Security
+    provider: Microsoft-Windows-Security-Auditing
+    event_ids: [4776]
+    prerequisites:
+      - "Audit Credential Validation (Failure) on domain controllers"
+    logic:
+      selection:
+        EventID: 4776
+        Status:
+          - '0xC000006A'
+          - '0xC0000064'
+      filter_machine:
+        TargetUserName|endswith: '$'
+      condition: count(distinct TargetUserName) by Workstation > 10 within 24h, selection and not filter_machine
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4776 --field Status=0xC000006A --format csv
+      - forhunt search <paths> --channel Security --event-id 4776 --field Status=0xC0000064 --format csv
+    pivots:
+      - "Workstation is the source machine name as sent by the client (spoofable; tool defaults and random 16-char names are signals); trace the real address through 4625 on the member server"
+      - "The same time frame on the member server: 4625 LogonType 3 with IpAddress"
+      - "Success (Status 0x0) from the same Workstation afterwards"
+    false_positives:
+      - "Misconfigured devices; Exchange/ActiveSync clients with stale passwords"
+    severity: medium
+    sources:
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/sigma/builtin/unsupported/win_security_susp_failed_logons_single_source_ntlm.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/sigma/builtin/unsupported/win_security_susp_failed_logons_single_source2.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/Security/AccountLogon/CredentialValidation/Sec_4776_Info_NTLM-Auth.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_metasploit_authentication.yml
+    verified: true
+    notes: "Event 4776 with Status and Workstation fields appears in the Sigma-derived rules (marked unsupported in Hayabusa's mirror because they use aggregation) and Hayabusa's 4776 rule; the thresholds in those rules are 10 distinct users within 24 h (one rule) and 3 (another). 4776 only exists on the DC (or the machine validating a local account) and for NTLM, so Kerberos sprays are invisible here."
+
+  - id: FH-INIT-009
+    title: Kerberos pre-authentication failures (4771, Status 0x18) from one address
+    tactic: initial-access
+    attack: [T1110.003, T1110.001]
+    channel: Security
+    provider: Microsoft-Windows-Security-Auditing
+    event_ids: [4771]
+    prerequisites:
+      - "Audit Kerberos Authentication Service (Failure) on domain controllers"
+    logic:
+      selection:
+        EventID: 4771
+        Status: '0x18'
+      filter_machine:
+        TargetUserName|endswith: '$'
+      condition: count(distinct TargetUserName) by IpAddress > 10 within 24h, selection and not filter_machine
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4771 --field Status=0x18 --format csv
+    pivots:
+      - "IpAddress is the Kerberos client; compare with 4768 successes for the same accounts"
+      - "A similar burst of 4768 with a failure status for unknown users (client not found) is Kerberos user enumeration"
+      - "Machine accounts failing pre-auth (0x18/0x19) point to a different issue (see the threat-hunting rule cited)"
+    false_positives:
+      - "Time skew, stale cached credentials, devices with changed passwords"
+    severity: medium
+    sources:
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/sigma/builtin/unsupported/win_security_susp_failed_logons_single_source_kerberos.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/sigma/builtin/threat-hunting/security/win_security_susp_failed_logon_for_service_account.yml
+    verified: false
+    notes: "Status 0x18 (bad pre-authentication data) is used by two Sigma rules; I have no second independent source for the 4771 field set (TargetUserName, Status, IpAddress). Kerberos sprays are quieter than NTLM ones."
+
+  - id: FH-INIT-010
+    title: Valid-account misuse signals - logons rejected for restriction reasons, and activity outside the account's normal hours
+    tactic: initial-access
+    attack: [T1078, T1078.002, T1078.003]
+    channel: Security
+    provider: Microsoft-Windows-Security-Auditing
+    event_ids: [4625, 4776, 4624]
+    prerequisites:
+      - "Audit Logon and Audit Credential Validation (Failure)"
+      - "For the odd-hours variant: a baseline of working hours and source hosts per account"
+    logic:
+      selection_restrict:
+        EventID: 4625
+        SubStatus:
+          - '0xC0000072'
+          - '0xC000006F'
+          - '0xC0000070'
+          - '0xC000015B'
+      selection_status:
+        EventID: 4776
+        Status:
+          - '0xC0000072'
+          - '0xC000006F'
+          - '0xC0000070'
+          - '0xC000015B'
+      filter_unknown:
+        SubjectUserSid: 'S-1-0-0'
+      condition: (selection_restrict or selection_status) and not filter_unknown
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4625 --field SubStatus=0xC000006F --format llm
+      - forhunt search <paths> --channel Security --event-id 4625 --field SubStatus=0xC0000072 --format llm
+      - forhunt search <paths> --channel Security --event-id 4625 --field SubStatus=0xC0000070 --format llm
+      - forhunt search <paths> --channel Security --event-id 4624 --since <start> --until <end> --format llm
+    pivots:
+      - "0xC000006F = outside authorised hours, 0xC0000070 = from an unauthorised workstation, 0xC0000072 = account disabled, 0xC000015B = logon right not granted for that type (per the cited Sigma rule comments)"
+      - "These prove someone presented credentials for a restricted account; the credentials are valid when the status is a restriction rather than a bad-password code"
+      - "For odd hours: aggregate 4624 per account by hour-of-day and flag first-seen hour/host combinations (analyst heuristic)"
+    false_positives:
+      - "Employees working shifts, travel, or service accounts used from new hosts after a migration"
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_susp_failed_logon_reasons.yml
+      - https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json
+    verified: false
+    notes: "The restriction status codes are defined in the Sigma rule comments (one source). The odd-hours logic has no source and requires a baseline."
+
+  - id: FH-INIT-011
+    title: Phishing payload execution chain - Office, Outlook or other document hosts spawning script hosts and LOLBins
+    tactic: initial-access
+    attack: [T1566.001, T1566.002, T1204.002]
+    channel: Microsoft-Windows-Sysmon/Operational
+    provider: Microsoft-Windows-Sysmon
+    event_ids: [1, 4688]
+    prerequisites:
+      - "Sysmon installed with a config that logs event 1, or Security 4688 with Include command line in process creation events"
+    logic:
+      selection_parent:
+        ParentImage|endswith:
+          - '\WINWORD.EXE'
+          - '\EXCEL.EXE'
+          - '\POWERPNT.EXE'
+          - '\OUTLOOK.EXE'
+          - '\MSPUB.exe'
+          - '\ONENOTE.EXE'
+      selection_child:
+        Image|endswith:
+          - '\cmd.exe'
+          - '\powershell.exe'
+          - '\pwsh.exe'
+          - '\wscript.exe'
+          - '\cscript.exe'
+          - '\mshta.exe'
+          - '\rundll32.exe'
+          - '\regsvr32.exe'
+          - '\msiexec.exe'
+          - '\certutil.exe'
+          - '\bitsadmin.exe'
+          - '\schtasks.exe'
+          - '\wmic.exe'
+      condition: selection_parent and selection_child
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~WINWORD.EXE --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~EXCEL.EXE --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~OUTLOOK.EXE --format llm
+      - forhunt search <paths> --channel Security --event-id 4688 --field ParentProcessName~WINWORD.EXE --format llm
+    pivots:
+      - "Sysmon 11 (FileCreate) just before: the attachment saved under Content.Outlook, Temp, Downloads, INetCache (FH-INIT-012)"
+      - "Sysmon 3 / 22 from the child process: where the payload was fetched"
+      - "Sysmon 7 module loads of vbe7.dll / amsi in the Office process, if configured"
+      - "Persistence after the payload: scheduled tasks, Run keys"
+    false_positives:
+      - "Office add-ins and macros used by legitimate business processes; Outlook launching helper tools"
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_office_susp_child_processes.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_office_outlook_susp_child_processes.yml
+      - https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json
+    verified: false
+    notes: "Both Sigma rules and MITRE describe the pattern, but no independent source I could open confirms the event/field mapping (no Hayabusa or Chainsaw rule for it). Process-ancestry detection is a mature technique; the lower verified status reflects the audit rule, not doubt about the behaviour."
+
+  - id: FH-INIT-012
+    title: Downloaded payloads - Zone.Identifier (Mark-of-the-Web) streams created outside browsers
+    tactic: initial-access
+    attack: [T1204.002, T1566.001, T1105]
+    channel: Microsoft-Windows-Sysmon/Operational
+    provider: Microsoft-Windows-Sysmon
+    event_ids: [15, 11]
+    prerequisites:
+      - "Sysmon installed with a config that logs event 15 (FileCreateStreamHash) and event 11 (FileCreate)"
+    logic:
+      selection:
+        EventID: 15
+        TargetFilename|endswith: ':Zone.Identifier'
+        Contents|startswith: '[ZoneTransfer]  ZoneId=3'
+      selection_type:
+        TargetFilename|contains:
+          - '.exe'
+          - '.dll'
+          - '.lnk'
+          - '.iso'
+          - '.js'
+          - '.vbs'
+          - '.hta'
+          - '.docm'
+          - '.xlsm'
+      filter_browser:
+        Image|endswith:
+          - '\chrome.exe'
+          - '\msedge.exe'
+          - '\firefox.exe'
+          - '\iexplore.exe'
+      condition: selection and selection_type and not filter_browser
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 15 --field TargetFilename~Zone.Identifier --format llm
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 11 --field Image~OUTLOOK.EXE --format llm
+    pivots:
+      - "Contents includes ReferrerUrl / HostUrl for browser downloads in Sysmon 15 - the origin of the file"
+      - "A Sysmon 1 with CurrentDirectory or Image under the same path shortly after: the user ran it"
+      - "A user-writable executable with no MOTW stream at all can mean the user was tricked into extracting it from an archive or ISO (MOTW is not always propagated)"
+    false_positives:
+      - "Legitimate software downloads by non-browser clients (Teams, Slack, update tools, winget)"
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/create_stream_hash/create_stream_hash_creation_internet_file.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/sysmon/Sysmon_15_Info_ADS-Created.yml
+    verified: false
+    notes: "Sysmon event 15 and the Zone.Identifier format come from one Sigma rule plus a Hayabusa generic rule that only shows TargetFilename; the Contents field semantics are single-source. The Hayabusa URL here points at the sysmon directory one level above builtin. MOTW is also dropped by many archive tools, so absence is weak evidence."
+
+  - id: FH-INIT-013
+    title: Exploitation of public-facing applications - web server worker spawning shells and recon tools
+    tactic: initial-access
+    attack: [T1190]
+    channel: Microsoft-Windows-Sysmon/Operational
+    provider: Microsoft-Windows-Sysmon
+    event_ids: [1, 4688]
+    prerequisites:
+      - "Sysmon installed with a config that logs event 1, or Security 4688 with command line"
+    logic:
+      selection_parent:
+        ParentImage|endswith:
+          - '\w3wp.exe'
+          - '\httpd.exe'
+          - '\nginx.exe'
+          - '\php-cgi.exe'
+          - '\tomcat.exe'
+          - '\UMWorkerProcess.exe'
+      selection_child:
+        Image|endswith:
+          - '\cmd.exe'
+          - '\powershell.exe'
+          - '\pwsh.exe'
+          - '\whoami.exe'
+          - '\net.exe'
+          - '\net1.exe'
+          - '\nltest.exe'
+          - '\certutil.exe'
+          - '\bitsadmin.exe'
+          - '\sc.exe'
+          - '\reg.exe'
+          - '\wmic.exe'
+      condition: selection_parent and selection_child
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~w3wp.exe --format llm
+      - forhunt search <paths> --channel Security --event-id 4688 --field ParentProcessName~w3wp.exe --format llm
+    pivots:
+      - "Application pool identity (User): IIS APPPOOL\\<name> or NETWORK SERVICE running reconnaissance commands is a web shell or RCE"
+      - "Sysmon 11: new .aspx/.ashx/.php files under the web root created by w3wp.exe"
+      - "IIS logs (not EVTX) for the request that triggered it: blind spot, collect from C:\\inetpub\\logs"
+      - "Exchange: UMWorkerProcess.exe and w3wp.exe children are the ProxyLogon-era pattern"
+    false_positives:
+      - "Some web applications legitimately shell out (reporting, installers, health checks); ManageEngine and Java-based agents"
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_webshell_susp_process_spawned_from_webserver.yml
+      - https://raw.githubusercontent.com/mitre/cti/master/enterprise-attack/enterprise-attack.json
+    verified: false
+    notes: "Single-source pattern (Sigma, citing an NSA/ASD web-shell guidance PDF that I did not open). Sigma lists many more children; trim to your environment."
+
+  - id: FH-INIT-014
+    title: SQL Server spawning command interpreters (xp_cmdshell abuse after SQL injection)
+    tactic: initial-access
+    attack: [T1190]
+    channel: Microsoft-Windows-Sysmon/Operational
+    provider: Microsoft-Windows-Sysmon
+    event_ids: [1, 4688]
+    prerequisites:
+      - "Sysmon installed with a config that logs event 1, or Security 4688 with command line"
+      - "For the configuration change variant: Application log from the MSSQLSERVER provider (xp_cmdshell enable messages)"
+    logic:
+      selection:
+        ParentImage|endswith: '\sqlservr.exe'
+        Image|endswith:
+          - '\cmd.exe'
+          - '\powershell.exe'
+          - '\pwsh.exe'
+          - '\bash.exe'
+          - '\rundll32.exe'
+          - '\regsvr32.exe'
+          - '\tasklist.exe'
+          - '\systeminfo.exe'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~sqlservr.exe --format llm
+      - forhunt search <paths> --channel Security --event-id 4688 --field ParentProcessName~sqlservr.exe --format llm
+    pivots:
+      - "Application log: SQL Server messages that xp_cmdshell or 'show advanced options' were enabled shortly before"
+      - "Network: 1433 connections from unexpected clients (Sysmon 3 / 5156); SQL login failures 18456 in the Application log"
+      - "Follow-on: new local accounts (4720), service installs, tool downloads"
+    false_positives:
+      - "Maintenance jobs and backup agents invoking cmd from SQL Agent (parent may differ)"
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/process_creation/proc_creation_win_mssql_susp_child_process.yml
+      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/service_tampering/xp_cmdshell_enabled.yml
+    verified: false
+    notes: "Sigma and Chainsaw approach the same abuse from different angles (process ancestry vs log message), so the behaviour is plausible, but neither confirms the other's exact fields. Not independently verified."
+
+  - id: FH-INIT-015
+    title: Windows Remote Access / VPN server logons (RRAS) and RD Gateway sessions - external remote services visible in EVTX
+    tactic: initial-access
+    attack: [T1133, T1078]
+    channel: Microsoft-Windows-TerminalServices-Gateway/Operational
+    provider: Microsoft-Windows-TerminalServices-Gateway
+    event_ids: [302, 303, 20250, 20274]
+    prerequisites:
+      - "RD Gateway role installed (302/303) or Windows Routing and Remote Access role (RemoteAccess provider in the System log, 20250/20274)"
+    logic:
+      selection_gateway:
+        EventID: 302
+        Channel: 'Microsoft-Windows-TerminalServices-Gateway/Operational'
+      selection_rras:
+        EventID:
+          - 20250
+          - 20274
+        Channel: 'System'
+        Provider: 'RemoteAccess'
+      condition: selection_gateway or selection_rras
+    forhunt:
+      - forhunt search <paths> --channel Microsoft-Windows-TerminalServices-Gateway/Operational --event-id 302,303 --format llm
+      - forhunt search <paths> --channel System --event-id 20250,20274 --format llm
+    pivots:
+      - "RD Gateway 302 fields in UserData: Username, IpAddress (the external client), Resource (target host), AuthType and ConnectionProtocol; the target host then shows the gateway as the RDP source (FH-RMT-001)"
+      - "VPN user and assigned inside IP appear in RRAS records; subsequent internal activity from that IP is the VPN user"
+      - "Third-party VPN concentrators and firewalls are not in EVTX: this is a BLIND SPOT, obtain their logs separately"
+    false_positives:
+      - "Normal remote work"
+    severity: informational
+    sources:
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/hayabusa/builtin/TerminalServices-Gateway_Op/RDS_Gateway_302_Info_LogonSuccess.yml
+      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/microsoft_rds_events/rd_gateway/eid_302_rdgw_user_connected_to_resource.yml
+      - https://github.com/WithSecureLabs/chainsaw/blob/master/rules/evtx/microsoft_rasvpn_events/eid_20250_20274_rasvpn_server_logon.yml
+    verified: false
+    notes: "RD Gateway 302 is confirmed by both Hayabusa and Chainsaw (verified for that part); the RRAS 20250/20274 events come only from Chainsaw (Synacktiv-authored rule), and the RD Gateway interpretation that a 302 means a successful connection to a resource is from rule descriptions. Marked false because one half of the check is single-source."
+
+  - id: FH-INIT-016
+    title: Tool-default workstation names on NTLM logons (Metasploit, Ruler, Rdesktop-style clients)
+    tactic: initial-access
+    attack: [T1110, T1078, T1021.002]
+    channel: Security
+    provider: Microsoft-Windows-Security-Auditing
+    event_ids: [4624, 4625, 4776]
+    prerequisites:
+      - "Audit Logon and Audit Credential Validation"
+      - "For the NTLM operational variant: Microsoft-Windows-NTLM/Operational with incoming NTLM auditing enabled (event 8004)"
+    logic:
+      selection_msf:
+        EventID:
+          - 4624
+          - 4625
+        LogonType: 3
+        AuthenticationPackageName: 'NTLM'
+        WorkstationName|re: '^[A-Za-z0-9]{16}$'
+      selection_4776:
+        EventID: 4776
+        Workstation|re: '^[A-Za-z0-9]{16}$'
+      selection_ruler:
+        EventID:
+          - 4624
+          - 4625
+        WorkstationName: 'RULER'
+      condition: selection_msf or selection_4776 or selection_ruler
+    forhunt:
+      - forhunt search <paths> --channel Security --event-id 4624,4625 --regex WorkstationName='^[A-Za-z0-9]{16}$' --format llm
+      - forhunt search <paths> --channel Security --event-id 4776 --regex Workstation='^[A-Za-z0-9]{16}$' --format llm
+      - forhunt search <paths> --channel Security --event-id 4625 --field WorkstationName=RULER --format llm
+    pivots:
+      - "IpAddress is the real peer; the workstation name is client-supplied"
+      - "Metasploit SMB authentication is often followed by 7045 (random service name) - FH-LAT-002"
+    false_positives:
+      - "Some devices randomise hostnames to 16 characters; verify against asset inventory"
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/security/win_security_metasploit_authentication.yml
+      - https://github.com/Yamato-Security/hayabusa-rules/blob/main/sigma/builtin/security/win_security_alert_ruler.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/builtin/ntlm/win_susp_ntlm_brute_force.yml
+    verified: false
+    notes: "Tool-signature checks go stale as tools change. The sources are Sigma rules (and Hayabusa's mirror of them), so they are one lineage; both attackers and defenders can change defaults. The NTLM/Operational 8004 variant (WorkstationName values like Rdesktop, Remmina, Freerdp or default Windows names) is described in Sigma and not listed in logic."

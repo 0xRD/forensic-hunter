@@ -1,0 +1,1260 @@
+tactic: defense-evasion
+title: Defense Evasion and Log Tampering
+description: 'Defense evasion on Windows is visible mainly as (a) log destruction (Security 1102, System
+  104, wevtutil/Clear-EventLog command lines, a stopped Event Log service, record-id gaps), (b) audit
+  and policy weakening (4719, 4907, 4616), (c) security-tool tampering (Defender 5001/5007/5010/5012/5013,
+  service stops 7036/7040, Sysmon 4/16/255, fltMC unload, firewall MPSSVC changes), (d) anti-forensics
+  (Sysmon 2 timestomp, 26 file delete, 25 process tampering) and (e) execution masquerading and evasion
+  in script engines (svchost impersonation, bare rundll32, AMSI/ETW bypass). The most reliable signals
+  are the log-cleared events, which are written even when audit policy is off. Several techniques are
+  intentionally silent in logs, so telemetry gaps are findings in their own right. Note: current MITRE
+  ATT&CK data splits the old Defense Evasion tactic into Stealth and Defense Impairment; attack ids list
+  both the new and legacy ids.'
+checks:
+- id: FH-DEF-001
+  title: Security log cleared (1102)
+  tactic: defense-evasion
+  attack:
+  - T1685.005
+  - T1070.001
+  channel: Security
+  provider: Microsoft-Windows-Eventlog
+  event_ids:
+  - 1102
+  prerequisites:
+  - 'None: 1102 is always written to the Security log when it is cleared, regardless of audit policy'
+  logic:
+    selection:
+      EventID: 1102
+      Channel: Security
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 1102 --format llm
+  - forhunt stats <paths> --format llm
+  pivots:
+  - SubjectUserName / SubjectLogonId (UserData) -> the 4624 for that session, then 4688 / Sysmon 1 for
+    wevtutil.exe, powershell Clear-EventLog, or a custom tool
+  - System 104 for the same time (other logs cleared in the same sweep) and the first Security record
+    id after the clear
+  - 'If 1102 is the first event in the file, everything before it is gone: use forwarded copies (WEF/SIEM),
+    Sysmon, PowerShell and RDP logs, and the $LogFile/USN journal'
+  false_positives:
+  - Authorised maintenance, image preparation, decommissioning, lab resets; verify with change records
+  severity: critical
+  sources:
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/Security/Default/Sec_1102_High_SecLogCleared.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_audit_log_cleared.yml
+  - https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack.json
+  verified: true
+  notes: 'Hayabusa and SigmaHQ both use 1102 in the Security channel; SigmaHQ names the provider Microsoft-Windows-Eventlog
+    (and the legacy id 517 on pre-Vista logs). The actor fields live in UserData (LogFileCleared). Check
+    provider spelling in your EVTX; it varies by rendering. ATT&CK ids: current data (v20) moved the old
+    Defense Evasion tactic into Stealth and Defense Impairment and renumbered several techniques; both
+    the new and the legacy id are listed in attack.'
+- id: FH-DEF-002
+  title: Any event log cleared (System 104)
+  tactic: defense-evasion
+  attack:
+  - T1685.005
+  - T1070.001
+  channel: System
+  provider: Microsoft-Windows-Eventlog
+  event_ids:
+  - 104
+  prerequisites:
+  - 'None: 104 is logged to the System log when any other log (Application, Sysmon, PowerShell, Defender,
+    etc.) is cleared'
+  logic:
+    selection:
+      EventID: 104
+      Provider_Name: Microsoft-Windows-Eventlog
+    selection_important:
+      Channel:
+      - Application
+      - Security
+      - System
+      - Microsoft-Windows-Sysmon/Operational
+      - Microsoft-Windows-PowerShell/Operational
+      - Windows PowerShell
+      - Microsoft-Windows-Windows Defender/Operational
+      - Microsoft-Windows-TaskScheduler/Operational
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel System --event-id 104 --format llm
+  - forhunt search <paths> --channel System --event-id 104 --field Provider_Name=Microsoft-Windows-Eventlog
+    --format llm
+  pivots:
+  - Which log was cleared (the UserData channel name; rendering of this field is tool-dependent) and by
+    which SubjectUserName
+  - 'Cleared log itself: first records after the clear; compare with SIEM copies'
+  - 4688 / Sysmon 1 wevtutil / Clear-EventLog around the same timestamp
+  false_positives:
+  - Scheduled log-maintenance scripts; lab or kiosk systems that reset logs on reboot
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/System/Sys_104_High_ImportantLogCleared.yml
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/System/Sys_104_Med_LogCleared.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/system/microsoft_windows_eventlog/win_system_eventlog_cleared.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/system/microsoft_windows_eventlog/win_system_susp_eventlog_cleared.yml
+  verified: true
+  notes: 'Hayabusa and SigmaHQ agree on System 104 / provider Microsoft-Windows-Eventlog and both distinguish
+    "important" logs from others. The name of the cleared channel is in UserData: Hayabusa maps it to
+    LogFileClearedChannel, SigmaHQ calls it Channel, which collides with the System Channel; in raw EVTX
+    it is the Channel element inside UserData/LogFileCleared. Confirm in a sample before scripting. ATT&CK
+    ids: current data (v20) moved the old Defense Evasion tactic into Stealth and Defense Impairment and
+    renumbered several techniques; both the new and the legacy id are listed in attack.'
+- id: FH-DEF-003
+  title: Log clearing / configuration tampering command lines (wevtutil cl, Clear-EventLog, WMI)
+  tactic: defense-evasion
+  attack:
+  - T1685.005
+  - T1070.001
+  - T1685.001
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4688
+  - 1
+  - 4104
+  prerequisites:
+  - Audit Process Creation (Success) plus GPO "Include command line in process creation events" (4688
+    CommandLine) or Sysmon installed with a config that logs event 1 (process creation)
+  - '4104 branch: PowerShell Script Block Logging'
+  logic:
+    selection_wevtutil_img:
+      NewProcessName|endswith: \wevtutil.exe
+    selection_wevtutil_cmd:
+      CommandLine|contains:
+      - 'clear-log '
+      - ' cl '
+      - 'set-log '
+      - ' sl '
+      - 'lfn:'
+    selection_ps:
+      CommandLine|contains:
+      - 'Clear-EventLog '
+      - 'Remove-EventLog '
+      - 'Limit-EventLog '
+      - 'Clear-WinEvent '
+      - ClearEventLog
+    selection_ps_dotnet:
+      CommandLine|contains|all:
+      - Eventing.Reader.EventLogSession
+      - ClearLog
+    selection_4104:
+      EventID: 4104
+      ScriptBlockText|contains:
+      - Clear-EventLog
+      - Clear-WinEvent
+      - ClearLog
+      - wevtutil cl
+    filter_msiexec:
+      ParentProcessName|endswith: \msiexec.exe
+      CommandLine|contains: ' sl '
+    condition: ((selection_wevtutil_img and selection_wevtutil_cmd) or selection_ps or selection_ps_dotnet
+      or selection_4104) and not filter_msiexec
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4688 --field 'NewProcessName~\wevtutil.exe' --format
+    llm
+  - forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~Clear-EventLog --format
+    llm
+  - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field
+    ScriptBlockText~Clear-EventLog --format llm
+  pivots:
+  - Same-time 1102 / System 104 confirming the clear succeeded; a command line with no 1102 may mean the
+    target log was not Security
+  - Parent process and user -> how the attacker got there
+  - wevtutil sl (set-log) shrinking a log or changing its file name is quieter than clearing
+  false_positives:
+  - Office updates calling wevtutil sl (SigmaHQ filters msiexec parents)
+  - Admin scripts that rotate logs
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_susp_eventlog_clear.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/wmi/win_wmi_activity_nteventlogfile_cleareventlog.yml
+  - https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack.json
+  verified: false
+  notes: 'Command-line patterns are from SigmaHQ (single source). The 4104 branch is analyst knowledge.
+    SigmaHQ also tracks failed WMI clear attempts in Microsoft-Windows-WMI-Activity/Operational event
+    5858 (Win32_NTEventlogFile ClearEventLog). ATT&CK ids: current data (v20) moved the old Defense Evasion
+    tactic into Stealth and Defense Impairment and renumbered several techniques; both the new and the
+    legacy id are listed in attack.'
+- id: FH-DEF-004
+  title: EventLog service stopped or disabled (6006 / 7040 / 1100)
+  tactic: defense-evasion
+  attack:
+  - T1685.001
+  - T1562.002
+  channel: System
+  provider: Service Control Manager
+  event_ids:
+  - 6006
+  - 7040
+  - 7036
+  - 1100
+  prerequisites:
+  - System log (default); 1100 is written to the Security log by the Eventlog provider as the service
+    shuts down
+  logic:
+    selection_startup_disabled:
+      EventID: 7040
+      param1: Windows Event Log
+      param3: disabled
+    selection_stopped:
+      EventID: 6006
+    selection_scm_stopped:
+      EventID: 7036
+      param1: Windows Event Log
+      param2: stopped
+    selection_security_1100:
+      Channel: Security
+      EventID: 1100
+    condition: selection_startup_disabled or ((selection_stopped or selection_scm_stopped or selection_security_1100)
+      and no matching shutdown / reboot sequence)
+  forhunt:
+  - forhunt search <paths> --channel System --event-id 7040 --field param1="Windows Event Log" --format
+    llm
+  - forhunt search <paths> --channel System --event-id 6005,6006,6008 --format llm
+  - forhunt search <paths> --channel Security --event-id 1100 --format llm
+  pivots:
+  - 'Pair 6006 (service stopped) with 6005 (started) and 6009 / 12 / 13 (boot / shutdown): a stop without
+    a reboot is suspicious'
+  - Gap in EventRecordID or timestamps for the interval (see the event-log-gap check)
+  - Who changed startup (7040 shows old/new start type; correlate 4688 sc.exe config eventlog start= disabled)
+  false_positives:
+  - Normal shutdowns and reboots (6006 occurs on every clean shutdown)
+  - Planned patching
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/System/Sys_7040_Med_EventLogServiceStartupDisabled.yml
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/System/Sys_6006_Info_EventLogSvcStopped.yml
+  - https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack.json
+  verified: false
+  notes: 'Hayabusa only for 7040 (param1 / param3) and 6006; param1/param2/param3 are the positional EventData
+    names of SCM events. 1100 (event log service shutdown, Security) and 7036 for the Event Log service
+    were not confirmed by a read source for this purpose; SigmaHQ shows the 7036 param1/param2 pattern
+    only for Defender. The Event Log service normally cannot be stopped manually while running, so a 7040
+    disable followed by reboot is the usual method. ATT&CK ids: current data (v20) moved the old Defense
+    Evasion tactic into Stealth and Defense Impairment and renumbered several techniques; both the new
+    and the legacy id are listed in attack.'
+- id: FH-DEF-005
+  title: Audit policy disabled or changed (4719) and object SACL changed (4907)
+  tactic: defense-evasion
+  attack:
+  - T1685.001
+  - T1562.002
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4719
+  - 4907
+  prerequisites:
+  - Audit Audit Policy Change (Success) for 4719
+  - Audit Policy Change / Audit Authorization Policy Change as applicable; 4907 requires Audit Audit Policy
+    Change and a SACL to be altered
+  logic:
+    selection_removed:
+      EventID: 4719
+      AuditPolicyChanges|contains:
+      - '%%8448'
+      - '%%8450'
+    selection_key_subcategories:
+      SubcategoryGuid:
+      - '{0CCE9210-69AE-11D9-BED3-505054503030}'
+      - '{0CCE922B-69AE-11D9-BED3-505054503030}'
+      - '{0CCE9215-69AE-11D9-BED3-505054503030}'
+      - '{0CCE922F-69AE-11D9-BED3-505054503030}'
+      - '{0CCE9237-69AE-11D9-BED3-505054503030}'
+      - '{0CCE9240-69AE-11D9-BED3-505054503030}'
+    selection_sacl:
+      EventID: 4907
+    condition: (selection_removed) or selection_sacl
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4719 --format llm
+  - forhunt search <paths> --channel Security --event-id 4719 --field AuditPolicyChanges~%%8448 --format
+    llm
+  - forhunt search <paths> --channel Security --event-id 4907 --format llm
+  pivots:
+  - SubcategoryGuid -> which category lost auditing (Process Creation, Logon, Security Group Management
+    are the high-value ones)
+  - Events missing after the 4719 timestamp for that category (e.g. no 4688 afterwards) confirm the effect
+  - SubjectUserName / SubjectLogonId -> 4624 and 4688 for auditpol.exe /set or GPO refresh; 4907 ObjectName
+    shows which file/key lost auditing (often LSASS, SAM or an evtx file)
+  false_positives:
+  - GPO refresh and security-baseline application
+  - Some software and imaging tasks reset audit policy; 4907 occurs on legitimate ACL management
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_disable_event_auditing.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_disable_event_auditing_critical.yml
+  - https://raw.githubusercontent.com/Yamato-Security/EnableWindowsLogSettings/main/README.md
+  verified: false
+  notes: SigmaHQ (two rules, one repo) confirms 4719 with AuditPolicyChanges %%8448 (Success removed)
+    and %%8450 (Failure removed) and the subcategory GUIDs. 4907 has no read source; its semantics are
+    analyst knowledge. The Yamato guide was read for logging-setup context only. Microsoft Learn was unreachable
+    from the research sandbox, so field semantics were not checked against the vendor page.
+- id: FH-DEF-006
+  title: System time changed (4616)
+  tactic: defense-evasion
+  attack:
+  - T1070.006
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4616
+  prerequisites:
+  - Audit Security State Change (Success) - Security System > Audit Security State Change
+  logic:
+    selection:
+      EventID: 4616
+    filter_svchost:
+      ProcessName: C:\Windows\System32\svchost.exe
+      SubjectUserSid: S-1-5-19
+    filter_vm_tools:
+      ProcessName:
+      - C:\Program Files\VMware\VMware Tools\vmtoolsd.exe
+      - C:\Windows\System32\VBoxService.exe
+    condition: selection and not 1 of filter_*
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4616 --format llm
+  pivots:
+  - 'PreviousTime vs NewTime magnitude: large jumps backwards can invalidate timeline ordering and Kerberos'
+  - ProcessName -> 4688 / Sysmon 1 (w32tm, powershell Set-Date, cmd date/time)
+  - Compare EventRecordID order with TimeCreated for out-of-order timestamps after the change
+  false_positives:
+  - W32Time/NTP corrections (svchost under NT AUTHORITY\LOCAL SERVICE), hypervisor guest tools, DST handling
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_susp_time_modification.yml
+  verified: false
+  notes: 'Single source (SigmaHQ), which states the audit-subcategory requirement. Timeline analysis note:
+    if 4616 shows time changes, normalise timestamps before building a timeline. Microsoft Learn was unreachable
+    from the research sandbox, so field semantics were not checked against the vendor page. ATT&CK ids:
+    current data (v20) moved the old Defense Evasion tactic into Stealth and Defense Impairment and renumbered
+    several techniques; both the new and the legacy id are listed in attack.'
+- id: FH-DEF-007
+  title: Defender real-time or scanning protection disabled (5001 / 5010 / 5012)
+  tactic: defense-evasion
+  attack:
+  - T1685
+  - T1562.001
+  channel: Microsoft-Windows-Windows Defender/Operational
+  provider: Microsoft-Windows-Windows Defender
+  event_ids:
+  - 5001
+  - 5010
+  - 5012
+  prerequisites:
+  - Microsoft Defender Antivirus operational log (on by default)
+  logic:
+    selection:
+      EventID:
+      - 5001
+      - 5010
+      - 5012
+    condition: selection
+  forhunt:
+  - forhunt search <paths> --channel "Microsoft-Windows-Windows Defender/Operational" --event-id 5001,5010,5012
+    --format llm
+  pivots:
+  - 5007 config change events just before to see which registry value changed (DisableRealtimeMonitoring,
+    DisableAntiSpyware)
+  - 4688 / Sysmon 1 for Set-MpPreference -DisableRealtimeMonitoring, sc stop WinDefend, or registry edits
+    (Sysmon 13)
+  - Credential-tool or malware execution shortly after the disable (Sysmon 1 / 10)
+  false_positives:
+  - Installation of third-party AV (Defender moves to passive mode)
+  - Deliberate disable during software installs or troubleshooting
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_real_time_protection_disabled.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_virus_scan_disabled.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_malware_and_pua_scan_disabled.yml
+  verified: false
+  notes: 'Single repo (SigmaHQ): 5001 real-time protection disabled, 5010 malware/PUA scanning disabled,
+    5012 virus scanning disabled. The events do not name the actor; correlate. Tamper Protection blocks
+    many of these changes (see next check). Microsoft Learn was unreachable from the research sandbox,
+    so field semantics were not checked against the vendor page.'
+- id: FH-DEF-008
+  title: 'Defender configuration change: exclusions added, protection values altered, tamper protection
+    blocks (5007 / 5013)'
+  tactic: defense-evasion
+  attack:
+  - T1685
+  - T1562.001
+  channel: Microsoft-Windows-Windows Defender/Operational
+  provider: Microsoft-Windows-Windows Defender
+  event_ids:
+  - 5007
+  - 5013
+  prerequisites:
+  - Microsoft Defender Antivirus operational log
+  - 5013 requires Tamper Protection enabled
+  logic:
+    selection_exclusions:
+      EventID: 5007
+      NewValue|contains: \Microsoft\Windows Defender\Exclusions
+    selection_features:
+      EventID: 5007
+      NewValue|contains:
+      - '\Windows Defender\DisableAntiSpyware '
+      - '\Windows Defender\Scan\DisableRemovableDriveScanning '
+      - '\Windows Defender\SpyNet\DisableBlockAtFirstSeen '
+      - '\Real-Time Protection\SpyNetReporting '
+    selection_tamper_blocked:
+      EventID: 5013
+      Value|endswith:
+      - \Real-Time Protection\DisableRealtimeMonitoring
+      - \Real-Time Protection\DisableBehaviorMonitoring
+      - \Windows Defender\DisableAntiSpyware
+      - \Real-Time Protection\DisableIOAVProtection
+      - \Real-Time Protection\DisableScriptScanning
+    condition: 1 of selection_*
+  forhunt:
+  - forhunt search <paths> --channel "Microsoft-Windows-Windows Defender/Operational" --event-id 5007
+    --field NewValue~Exclusions --format llm
+  - forhunt search <paths> --channel "Microsoft-Windows-Windows Defender/Operational" --event-id 5007
+    --format llm --limit 300
+  - forhunt search <paths> --channel "Microsoft-Windows-Windows Defender/Operational" --event-id 5013
+    --format llm
+  pivots:
+  - NewValue / OldValue show the exact exclusion path, extension or process; check whether the excluded
+    path holds attacker tooling
+  - Security 4657 on HKLM\SOFTWARE\Microsoft\Windows Defender\Exclusions (with SACL) or Sysmon 13 for
+    who wrote it
+  - 4688 / 4104 Add-MpPreference / Set-MpPreference (see next check)
+  false_positives:
+  - Administrators adding exclusions for line-of-business software; SCCM/Intune policy pushes (will have
+    a managed source)
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_config_change_exclusion_added.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_suspicious_features_tampering.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_tamper_protection_trigger.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_config_change_exploit_guard_tamper.yml
+  verified: false
+  notes: 'SigmaHQ only. 5007 uses OldValue / NewValue strings of the form <registry path> = <value>; 5013
+    uses Value. These field names come from the SigmaHQ rules. 5007 is very noisy on managed hosts: always
+    filter to the specific values above. Microsoft Learn was unreachable from the research sandbox, so
+    field semantics were not checked against the vendor page.'
+- id: FH-DEF-009
+  title: Defender exclusion or disable via PowerShell / registry (4688, Sysmon 1, Sysmon 13, 4104)
+  tactic: defense-evasion
+  attack:
+  - T1685
+  - T1562.001
+  - T1112
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4688
+  - 1
+  - 13
+  - 4104
+  prerequisites:
+  - Audit Process Creation (Success) plus GPO "Include command line in process creation events" (4688
+    CommandLine) or Sysmon installed with a config that logs event 1 (process creation)
+  - 'Sysmon 13 branch: event 13 logging for HKLM\SOFTWARE\Microsoft\Windows Defender\Exclusions'
+  - '4104 branch: Script Block Logging'
+  logic:
+    selection_cmd:
+      CommandLine|contains:
+      - 'Add-MpPreference '
+      - 'Set-MpPreference '
+    selection_cmd_args:
+      CommandLine|contains:
+      - ' -ExclusionPath '
+      - ' -ExclusionExtension '
+      - ' -ExclusionProcess '
+      - ' -ExclusionIpAddress '
+      - ' -DisableRealtimeMonitoring'
+    selection_registry:
+      EventID: 13
+      TargetObject|contains: \Microsoft\Windows Defender\Exclusions
+    condition: (selection_cmd and selection_cmd_args) or selection_registry
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~Add-MpPreference --format
+    llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field 'TargetObject~Windows
+    Defender\Exclusions' --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field
+    ScriptBlockText~Set-MpPreference --format llm
+  pivots:
+  - Excluded path -> what was dropped there (Sysmon 11) and executed (Sysmon 1)
+  - Parent process and user -> origin of the change
+  - Defender 5007 for the effective change
+  false_positives:
+  - Authorised configuration scripts and deployment tooling
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_powershell_defender_exclusion.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/registry/registry_set/registry_set_defender_exclusions.yml
+  - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/registry-actions.md
+  verified: false
+  notes: Command-line and registry patterns from SigmaHQ; event 13 field semantics from the Sysmon guide.
+    -DisableRealtimeMonitoring and the 4104 branch are analyst additions. Tamper Protection can block
+    the change (5013).
+- id: FH-DEF-010
+  title: Security / logging service stopped or disabled (7036 / 7040, net stop, sc)
+  tactic: defense-evasion
+  attack:
+  - T1685
+  - T1562.001
+  - T1685.001
+  channel: System
+  provider: Service Control Manager
+  event_ids:
+  - 7036
+  - 7040
+  - 4688
+  prerequisites:
+  - System log (default); 4688/Sysmon 1 for net stop / sc commands
+  logic:
+    selection_defender_stopped:
+      EventID: 7036
+      param1: Windows Defender Antivirus Service
+      param2: stopped
+    selection_disabled:
+      EventID: 7040
+      param1:
+      - Windows Defender Antivirus Service
+      - Windows Event Log
+      - Windows Firewall
+      - Sysmon
+      - Sysmon64
+      - Windows Security Center
+      param3: disabled
+    selection_cmd:
+      NewProcessName|endswith:
+      - \net.exe
+      - \net1.exe
+      - \sc.exe
+      CommandLine|contains:
+      - ' stop '
+      - ' config '
+    selection_cmd_target:
+      CommandLine|contains:
+      - WinDefend
+      - Sense
+      - EventLog
+      - MpsSvc
+      - Sysmon
+      - wscsvc
+    condition: selection_defender_stopped or selection_disabled or (selection_cmd and selection_cmd_target)
+  forhunt:
+  - forhunt search <paths> --channel System --event-id 7036 --field param1~Defender --field param2=stopped
+    --format llm
+  - forhunt search <paths> --channel System --event-id 7040 --field param3=disabled --format llm
+  - forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~"stop windefend" --format
+    llm
+  pivots:
+  - 4688 / Sysmon 1 for the actor (net stop, sc config start= disabled, PowerShell Stop-Service)
+  - Events after the stop from the affected product are missing (Defender 1116, Sysmon records)
+  - 'Localised service display names: param1 text is translated (SigmaHQ includes a French variant), match
+    by language or use the service short name where available'
+  false_positives:
+  - Patch windows, AV product replacement (Defender stops when a third-party AV registers), reboots
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/system/service_control_manager/win_system_defender_disabled.yml
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/System/Sys_7040_Med_EventLogServiceStartupDisabled.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_net_stop_service.yml
+  verified: false
+  notes: 7036 param1/param2 are service display name and new state (localised) per SigmaHQ; 7040 param1/param3
+    per Hayabusa. The list of services in selection_disabled beyond Defender and Event Log is analyst
+    knowledge. Sysmon service name varies by installation.
+- id: FH-DEF-011
+  title: Defender detections and history deletion (1116 / 1117 / 1013 / 1015)
+  tactic: defense-evasion
+  attack:
+  - T1685
+  - T1562.001
+  channel: Microsoft-Windows-Windows Defender/Operational
+  provider: Microsoft-Windows-Windows Defender
+  event_ids:
+  - 1116
+  - 1117
+  - 1015
+  - 1013
+  - 1009
+  prerequisites:
+  - Microsoft Defender Antivirus operational log
+  logic:
+    selection_detect:
+      EventID:
+      - 1006
+      - 1015
+      - 1116
+      - 1117
+    selection_history_deleted:
+      EventID: 1013
+    selection_restored:
+      EventID: 1009
+    condition: selection_detect or selection_history_deleted or selection_restored
+  forhunt:
+  - forhunt search <paths> --channel "Microsoft-Windows-Windows Defender/Operational" --event-id 1116,1117
+    --format llm --limit 300
+  - forhunt search <paths> --channel "Microsoft-Windows-Windows Defender/Operational" --event-id 1013
+    --format llm
+  pivots:
+  - Path / threat in 1116 -> file on disk and execution (Sysmon 1, 11)
+  - '1117 action: was it blocked/removed, or allowed/quarantined then restored'
+  - 1009 (item restored from quarantine), 1013 (history deleted) or a detection followed by 5001/5007
+    means the attacker is cleaning up or switching off protection
+  false_positives:
+  - Routine detections of PUA/adware; history cleanup by retention settings
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_threat.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_history_delete.yml
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/builtin/WindowsDefender/Defender_1116_High_Alert.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/windefend/win_defender_restored_quarantine_file.yml
+  verified: true
+  notes: SigmaHQ and Hayabusa both use the Windows Defender/Operational channel and event 1116 (SeverityID
+    in Hayabusa); SigmaHQ lists 1006, 1015, 1116, 1117 as detection events, 1013 as history deletion and
+    1009 as an item restored from quarantine. Credential-tool specific names are in the credential-access
+    checklist.
+- id: FH-DEF-012
+  title: Sysmon service stopped, config changed, or erroring (Sysmon 4 / 16 / 255)
+  tactic: defense-evasion
+  attack:
+  - T1685
+  - T1562.001
+  - T1685.001
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 4
+  - 16
+  - 255
+  prerequisites:
+  - Sysmon installed (events 4, 16 and 255 are generated by Sysmon itself and cannot be excluded in config)
+  logic:
+    selection_state:
+      EventID: 4
+      State: Stopped
+    selection_config:
+      EventID: 16
+    selection_error:
+      EventID: 255
+      Description|contains:
+      - Failed to open service configuration with error
+      - Failed to connect to the driver to update configuration
+    filter_expected_hash:
+      ConfigurationFileHash|contains: SHA256=<hash of your approved config>
+    condition: selection_state or (selection_config and not filter_expected_hash) or selection_error
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 4,16 --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 255 --format llm
+  pivots:
+  - ConfigurationFileHash / Configuration in 16 vs the approved config; a minimal or exclusion-heavy config
+    suggests blinding
+  - Hunt for sysmon -c / -u / fltmc unload sysmon in 4688 and Sysmon 1 (Sysmon 1 may not log it if Sysmon
+    is already stopped)
+  - Sysmon event gap in time while Security continues to log (4688) is the telltale sign
+  - A direct registry edit of the config does not generate event 16 (TrustedSec guide)
+  false_positives:
+  - Planned Sysmon upgrades and config rollouts; reboot sequences (state Stopped/Started)
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/sysmon/sysmon_config_modification.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/sysmon/sysmon_config_modification_status.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/sysmon/sysmon_config_modification_error.yml
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/sysmon/Sysmon_16_Info_SysmonConfigChange.yml
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/sysmon/Sysmon_255_Low_Error.yml
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/sysmon/Sysmon_4_Info_SvcStateChanged.yml
+  - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/configuration.md
+  verified: true
+  notes: SigmaHQ and Hayabusa both use channel Microsoft-Windows-Sysmon/Operational and events 4 (State),
+    16 and 255 (Description); the TrustedSec guide (configuration chapter) states that event 16 is raised
+    when the config is changed via the Sysmon command line.
+- id: FH-DEF-013
+  title: 'Sysmon / EDR sensor tampering: fltMC unload, WINEVT channel disabled in registry'
+  tactic: defense-evasion
+  attack:
+  - T1685
+  - T1562.001
+  - T1562.006
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4688
+  - 1
+  - 4657
+  - 4663
+  prerequisites:
+  - Audit Process Creation (Success) plus GPO "Include command line in process creation events" (4688
+    CommandLine) or Sysmon installed with a config that logs event 1 (process creation)
+  - 'Registry branch: Audit Registry (Success) with a SACL on HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\WINEVT'
+  logic:
+    selection_fltmc:
+      NewProcessName|endswith: \fltMC.exe
+      CommandLine|contains|all:
+      - unload
+      - sysmon
+    selection_channel_disabled:
+      EventID: 4657
+      ObjectName|contains:
+      - WINEVT\Publishers\{5770385f-c22a-43e0-bf4c-06f5698ffbd9}
+      - WINEVT\Channels\Microsoft-Windows-Sysmon/Operational
+      ObjectValueName: Enabled
+      NewValue: 0
+    selection_channel_access:
+      EventID: 4663
+      ObjectName|contains:
+      - WINEVT\Publishers\{5770385f-c22a-43e0-bf4c-06f5698ffbd9}
+      - WINEVT\Channels\Microsoft-Windows-Sysmon/Operational
+      AccessMask: '0x10000'
+    condition: 1 of selection_*
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~fltmc --format llm
+  - forhunt search <paths> --channel Security --event-id 4657 --field ObjectName~WINEVT --format llm
+  pivots:
+  - Last Sysmon event time vs the tamper time; Sysmon 4 (Stopped) and 255 if it logged
+  - Process doing the tamper -> parent and user
+  - Other agents unloaded similarly (EDR filter drivers)
+  false_positives:
+  - Admins unloading the Sysmon filter during upgrade; rare otherwise
+  severity: critical
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_fltmc_unload_driver_sysmon.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_sysmon_channel_reference_deletion.yml
+  verified: false
+  notes: Single repo (SigmaHQ). The Sysmon publisher GUID {5770385f-c22a-43e0-bf4c-06f5698ffbd9} and the
+    4657/4663 requirement for a registry SACL are as stated there. Other agent-specific tamper techniques
+    are out of scope. Microsoft Learn was unreachable from the research sandbox, so field semantics were
+    not checked against the vendor page.
+- id: FH-DEF-014
+  title: Windows Firewall rule added, changed, deleted or reset (MPSSVC 2004 / 2005 / 2006 / 2032 / 2033)
+  tactic: defense-evasion
+  attack:
+  - T1686.003
+  - T1562.004
+  channel: Microsoft-Windows-Windows Firewall With Advanced Security/Firewall
+  provider: Microsoft-Windows-Windows Firewall With Advanced Security
+  event_ids:
+  - 2004
+  - 2005
+  - 2006
+  - 2032
+  - 2033
+  - 2071
+  - 2052
+  - 2059
+  - 2060
+  - 2097
+  prerequisites:
+  - Windows Firewall With Advanced Security operational log (Applications and Services Logs > Microsoft
+    > Windows > Windows Firewall With Advanced Security > Firewall); enabled by default but small
+  logic:
+    selection_add:
+      EventID:
+      - 2004
+      - 2071
+      - 2097
+    selection_delete:
+      EventID:
+      - 2006
+      - 2052
+    selection_delete_all:
+      EventID:
+      - 2033
+      - 2059
+    selection_reset:
+      EventID:
+      - 2032
+      - 2060
+    filter_expected_modifiers:
+      ModifyingApplication|startswith:
+      - C:\Windows\System32\svchost.exe
+      - C:\Windows\WinSxS\
+      - C:\Program Files\
+      - C:\Program Files (x86)\
+    condition: 1 of selection_* and not filter_expected_modifiers
+  forhunt:
+  - forhunt search <paths> --channel "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall"
+    --event-id 2004,2071,2097 --format llm
+  - forhunt search <paths> --channel "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall"
+    --event-id 2033,2059,2032,2060 --format llm
+  - forhunt search <paths> --channel "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall"
+    --event-id 2006,2052 --format llm
+  pivots:
+  - ApplicationPath / ModifyingApplication / ModifyingUser -> which program was allowed and by whom
+  - Allow rules for binaries in user-writable paths (AppData, Temp, Public) or inbound rules for RDP/SMB
+  - 4688 netsh advfirewall ... for the commands
+  false_positives:
+  - Software installers add rules (ModifyingApplication is often the installer); Windows Update and svchost-managed
+    changes are frequent
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/firewall_as/win_firewall_as_add_rule.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/firewall_as/win_firewall_as_delete_rule.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/firewall_as/win_firewall_as_delete_all_rules.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/firewall_as/win_firewall_as_reset_config.yml
+  verified: false
+  notes: 'SigmaHQ only. Windows 11 / newer builds use the alternate ids 2071 (add), 2052 (delete), 2059
+    (delete all), 2060 (reset), 2097 (add, extended). 2005 (rule changed) is per the task brief and was
+    not confirmed by a read source. The exact channel path was taken from the task brief and the SigmaHQ
+    logsource name firewall-as; confirm on a real EVTX. Event provider name is not verified. Microsoft
+    Learn was unreachable from the research sandbox, so field semantics were not checked against the vendor
+    page. ATT&CK ids: current data (v20) moved the old Defense Evasion tactic into Stealth and Defense
+    Impairment and renumbered several techniques; both the new and the legacy id are listed in attack.'
+- id: FH-DEF-015
+  title: Firewall disabled or broadly opened via netsh
+  tactic: defense-evasion
+  attack:
+  - T1686.003
+  - T1562.004
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4688
+  - 1
+  prerequisites:
+  - Audit Process Creation (Success) plus GPO "Include command line in process creation events" (4688
+    CommandLine) or Sysmon installed with a config that logs event 1 (process creation)
+  logic:
+    selection_img:
+      NewProcessName|endswith: \netsh.exe
+    selection_off_advfirewall:
+      CommandLine|contains|all:
+      - advfirewall
+      - set
+      - state
+      - 'off'
+    selection_off_legacy:
+      CommandLine|contains|all:
+      - firewall
+      - set
+      - opmode
+      - disable
+    condition: selection_img and (selection_off_advfirewall or selection_off_legacy)
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4688 --field 'NewProcessName~\netsh.exe' --field
+    CommandLine~advfirewall --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~"opmode
+    disable" --format llm
+  pivots:
+  - Firewall events 2004/2033 and System 7040 for MpsSvc around the same time
+  - Process lineage of netsh.exe
+  false_positives:
+  - Admin troubleshooting; software deployment scripts
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_netsh_fw_disable.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_netsh_fw_set_rule.yml
+  verified: false
+  notes: 'Single repo (SigmaHQ; a companion rule flags netsh advfirewall firewall set rule ... new enable=yes
+    for whole rule groups such as Network Discovery or File and Printer Sharing); also consider Set-NetFirewallProfile
+    -Enabled False and registry edits in 4104/Sysmon 13 (not source-backed here). ATT&CK ids: current
+    data (v20) moved the old Defense Evasion tactic into Stealth and Defense Impairment and renumbered
+    several techniques; both the new and the legacy id are listed in attack.'
+- id: FH-DEF-016
+  title: 'Process image tampering: hollowing / herpaderping (Sysmon 25)'
+  tactic: defense-evasion
+  attack:
+  - T1055.012
+  - T1027
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 25
+  prerequisites:
+  - Sysmon 13.0+ installed with a config that logs event 25 (ProcessTampering); not on by default in many
+    configs
+  logic:
+    selection:
+      EventID: 25
+      Type: Image is replaced
+    filter_program_files:
+      Image|contains:
+      - :\Program Files (x86)
+      - :\Program Files\
+    condition: selection and not filter_program_files
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 25 --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 25 --field Type="Image
+    is replaced" --format llm
+  pivots:
+  - Image (the victim process) + ProcessGuid -> Sysmon 1 for the creator, Sysmon 8/10 for injection into
+    it
+  - Network connections from that process (Sysmon 3) and child processes
+  - '"Image is locked for access" is the lower-confidence herpaderping indicator'
+  false_positives:
+  - Some browsers (Opera, Edge) and developer tools legitimately tamper; SigmaHQ filters Program Files
+    and a few named paths
+  - Sysmon guide notes 10-50 events per day on typical systems from known software
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/process-tampering.md
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_tampering/proc_tampering_susp_process_hollowing.yml
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/sysmon/Sysmon_25_Med_ProcessTampering.yml
+  verified: true
+  notes: The TrustedSec guide, SigmaHQ and Hayabusa all describe Sysmon event 25 with a Type field ("Image
+    is replaced"). Not all hollowing variants are detected (guide).
+- id: FH-DEF-017
+  title: File deletion of logs, tools or Sysmon-tracked paths (Sysmon 26 / 23)
+  tactic: defense-evasion
+  attack:
+  - T1070.004
+  - T1685.005
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 26
+  - 23
+  prerequisites:
+  - Sysmon 13.10+ with a config that logs event 26 (FileDeleteDetected, no archive) or 23 (FileDelete,
+    archives the file); both are off unless a rule includes the paths
+  logic:
+    selection_evtx:
+      EventID:
+      - 26
+      - 23
+      TargetFilename|endswith:
+      - .evtx
+      - \Windows\System32\winevt\Logs\*
+    selection_temp_tools:
+      EventID:
+      - 26
+      - 23
+      TargetFilename|contains:
+      - \Windows\Temp\
+      - \Users\Public\
+      - \AppData\Local\Temp\
+    condition: selection_evtx or (selection_temp_tools and Image is a script host or the same Image that
+      created the file)
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 26 --format llm --limit
+    300
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 26,23 --field TargetFilename~.evtx
+    --format llm
+  pivots:
+  - Image (deleter) -> Sysmon 1; event 23 may hold an archived copy of the deleted tool in the Sysmon
+    archive directory
+  - Deletion immediately after execution (Sysmon 1 for the same filename) = self-cleanup
+  - Mass deletion bursts also indicate ransomware/wiper (Impact)
+  false_positives:
+  - Temp-file cleanup by installers and browsers is constant; this check only works with a tight Sysmon
+    include rule
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/file_delete_detected.md
+  - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/file-delete.md
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/sysmon/Sysmon_26_Med_FileDeleted_RuleAlert.yml
+  verified: false
+  notes: Event ids and the 23/26 difference are confirmed by the TrustedSec guide and Hayabusa; the path
+    heuristics are analyst additions and not from any rule, hence unverified. Windows itself deletes .evtx
+    only via the clear APIs (which produce 1102/104); direct deletion of evtx files requires the service
+    to be stopped.
+- id: FH-DEF-018
+  title: 'Timestomping: file creation time changed (Sysmon 2) and PowerShell timestamp edits (4104)'
+  tactic: defense-evasion
+  attack:
+  - T1070.006
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 2
+  - 4104
+  prerequisites:
+  - Sysmon installed with a config that logs event 2 (FileCreateTime); only creation time is covered,
+    not last-write time
+  - '4104 branch: PowerShell Script Block Logging'
+  logic:
+    selection_sysmon:
+      EventID: 2
+    filter_expected_updaters:
+      Image|endswith:
+      - \OneDrive.exe
+      - \msiexec.exe
+      - \TrustedInstaller.exe
+      - \svchost.exe
+    selection_ps:
+      EventID: 4104
+      ScriptBlockText|contains:
+      - .CreationTime =
+      - .LastWriteTime =
+      - .LastAccessTime =
+      - '[IO.File]::SetCreationTime'
+      - '[IO.File]::SetLastWriteTime'
+    condition: (selection_sysmon and not filter_expected_updaters) or selection_ps
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 2 --format llm --limit
+    300
+  - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field
+    ScriptBlockText~SetCreationTime --format llm
+  pivots:
+  - 'CreationUtcTime vs PreviousCreationUtcTime: a change to a date long before the file first appeared
+    (Sysmon 11 for the same TargetFilename) is the stomp'
+  - Image that changed it -> Sysmon 1
+  - File then executed or loaded (Sysmon 1/7) from System32-lookalike locations
+  false_positives:
+  - Installers, archive extractors and sync clients (OneDrive, Dropbox) set creation times
+  - Backup/restore tools preserving original timestamps
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/file-create-time-change.md
+  - https://raw.githubusercontent.com/Yamato-Security/hayabusa-rules/main/hayabusa/sysmon/Sysmon_2_Low_PossibleTimestomping.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/powershell/powershell_script/posh_ps_timestomp.yml
+  verified: true
+  notes: The TrustedSec guide and Hayabusa confirm Sysmon event 2 and its CreationUtcTime / PreviousCreationUtcTime
+    fields; SigmaHQ supplies the PowerShell script-block strings. Event 2 is typically noisy and rated
+    low by Hayabusa. Timestomping of $FILE_NAME or last-write times is not seen by Sysmon 2; use MFT analysis
+    for that.
+- id: FH-DEF-019
+  title: PowerShell AMSI bypass in script blocks (4104)
+  tactic: defense-evasion
+  attack:
+  - T1685
+  - T1562.001
+  channel: Microsoft-Windows-PowerShell/Operational
+  provider: Microsoft-Windows-PowerShell
+  event_ids:
+  - 4104
+  prerequisites:
+  - PowerShell Script Block Logging enabled (4104 is also written for suspicious blocks even without it
+    on PowerShell 5+, but not reliably)
+  logic:
+    selection_reflection:
+      EventID: 4104
+      ScriptBlockText|contains|all:
+      - '[Ref].Assembly.GetType'
+      - SetValue($null,$true)
+      - NonPublic,Static
+    selection_names:
+      EventID: 4104
+      ScriptBlockText|contains:
+      - amsiInitFailed
+      - AmsiUtils
+      - amsiContext
+      - AmsiScanBuffer
+    condition: selection_reflection or selection_names
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field
+    ScriptBlockText~AmsiUtils --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field
+    ScriptBlockText~amsiInitFailed --format llm
+  pivots:
+  - Same ScriptBlockId / process (Execution ProcessID) -> what ran after AMSI was disabled in that process
+  - Defender 1116 absent while the following payload is known-bad
+  - Parent process of powershell.exe (Sysmon 1 / 4688); the bypass often precedes download-and-execute
+  false_positives:
+  - Security research scripts, red-team tooling, AMSI test samples; the strings also appear in blog snippets
+    pasted into scripts
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/powershell/powershell_script/posh_ps_amsi_bypass_pattern_nov22.yml
+  - https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack.json
+  verified: false
+  notes: The reflection pattern is from SigmaHQ (single source); the string list (AmsiUtils, amsiInitFailed,
+    AmsiScanBuffer) is analyst knowledge. Heavy obfuscation (string concatenation, base64) defeats keyword
+    matching; 4104 logs the deobfuscated script block only for blocks that PowerShell itself compiled.
+- id: FH-DEF-020
+  title: 'ETW tampering: .NET ETW disabled via registry or environment variable (4657 / Sysmon 13) and
+    script text'
+  tactic: defense-evasion
+  attack:
+  - T1685
+  - T1562.006
+  - T1685.001
+  channel: Security
+  provider: Microsoft-Windows-Security-Auditing
+  event_ids:
+  - 4657
+  - 13
+  - 4104
+  prerequisites:
+  - '4657: Audit Registry (Success) with SACL on HKLM\SOFTWARE\Microsoft\.NETFramework and user Environment
+    keys'
+  - or Sysmon event 13 for the same keys
+  - 4104 for script-based patching (EtwEventWrite)
+  logic:
+    selection_4657_global:
+      EventID: 4657
+      ObjectName|endswith: \SOFTWARE\Microsoft\.NETFramework
+      ObjectValueName: ETWEnabled
+      NewValue: 0
+    selection_4657_env:
+      EventID: 4657
+      ObjectName|contains: \Environment
+      ObjectValueName:
+      - COMPlus_ETWEnabled
+      - COMPlus_ETWFlags
+      NewValue: 0
+    selection_sysmon13:
+      EventID: 13
+      TargetObject|contains:
+      - \.NETFramework\ETWEnabled
+      - \Environment\COMPlus_ETWEnabled
+      Details: DWORD (0x00000000)
+    selection_4104:
+      EventID: 4104
+      ScriptBlockText|contains:
+      - EtwEventWrite
+      - PSEtwLogProvider
+      - etwProvider
+    condition: 1 of selection_*
+  forhunt:
+  - forhunt search <paths> --channel Security --event-id 4657 --field ObjectValueName=ETWEnabled --format
+    llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~ETWEnabled
+    --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field
+    ScriptBlockText~EtwEventWrite --format llm
+  pivots:
+  - Process that wrote the value (ProcessName / Image) and what ran in .NET afterwards (execute-assembly,
+    Seatbelt-like loaders)
+  - Sysmon image-load (event 7) of clr.dll/clrjit.dll in unexpected processes
+  - A drop in ETW-based telemetry (e.g. Defender for Endpoint, PowerShell 4104 for that process) after
+    the change
+  false_positives:
+  - Very rare in normal operations
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/builtin/security/win_security_dot_net_etw_tamper.yml
+  - https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack.json
+  verified: false
+  notes: '4657 registry pattern from SigmaHQ (single source); in-memory EtwEventWrite patching leaves
+    no registry or log trace, only 4104 text at best. 4104 strings and the Sysmon 13 branch are analyst
+    knowledge. ATT&CK ids: current data (v20) moved the old Defense Evasion tactic into Stealth and Defense
+    Impairment and renumbered several techniques; both the new and the legacy id are listed in attack.'
+- id: FH-DEF-021
+  title: 'Event log gaps: record-id discontinuities and silent intervals'
+  tactic: defense-evasion
+  attack:
+  - T1685.005
+  - T1070.001
+  - T1685.001
+  channel: Security
+  event_ids:
+  - 1102
+  - 104
+  - 1100
+  - 4616
+  prerequisites:
+  - EVTX files that include EventRecordID in System metadata (always); comparison logs (other channels,
+    forwarded copies) to locate where the gap sits
+  logic:
+    selection_gap:
+      EventRecordID: jumps by more than 1 between consecutive records of the same channel and the same
+        file
+    condition: record-id discontinuity not explained by log rotation, or a channel that goes quiet while
+      other channels continue
+  forhunt:
+  - forhunt stats <paths> --format llm
+  - forhunt timeline <paths> --since <window start> --until <window end> --format llm
+  - forhunt search <paths> --channel Security --event-id 1102,104,1100 --format llm
+  pivots:
+  - Use forhunt stats gap output per channel and note start/end timestamps of each gap
+  - Compare gaps with 1102 / 104 / 1100 and 6005/6006/6008 (boot and shutdown) to separate clearing, reboot
+    and tampering
+  - Record ids after a clear do not necessarily reset in Security logs; consult the cleared log first
+    record id
+  - Selective deletion by third-party tools can leave single-record gaps without 1102
+  false_positives:
+  - Log rotation / overwriting of oldest events (the first record id is not 1)
+  - Event filtering at collection, WEF subscriptions that skip events, and audit policies that exclude
+    categories
+  - Different EVTX files from different times merged into one analysis set
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/Yamato-Security/EnableWindowsLogSettings/main/README.md
+  verified: false
+  notes: 'This is the researcher method suggested for forhunt, not a source-backed detection: no vendor
+    or community source read defines gap thresholds. Yamato Security guide read for log-size/retention
+    context only. Whether Windows keeps or resets EventRecordID after a clear should be confirmed on a
+    sample before relying on it (open question).'
+- id: FH-DEF-022
+  title: Process masquerading as svchost.exe (wrong path or no service arguments)
+  tactic: defense-evasion
+  attack:
+  - T1036.005
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 1
+  - 4688
+  prerequisites:
+  - Sysmon installed with a config that logs event 1 (process creation) (OriginalFileName helps)
+  - 'Audit Process Creation (Success) plus GPO "Include command line in process creation events" (4688
+    CommandLine) (4688 branch: NewProcessName)'
+  logic:
+    selection_name:
+      Image|endswith: \svchost.exe
+    filter_legit_path:
+      Image:
+      - C:\Windows\System32\svchost.exe
+      - C:\Windows\SysWOW64\svchost.exe
+    filter_legit_ofn:
+      OriginalFileName: svchost.exe
+    selection_no_args:
+      CommandLine|endswith: svchost.exe
+      Image|endswith: \svchost.exe
+    condition: (selection_name and not filter_legit_path and not filter_legit_ofn) or selection_no_args
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field 'Image~\svchost.exe'
+    --format llm --limit 500
+  - forhunt search <paths> --channel Security --event-id 4688 --field 'NewProcessName~\svchost.exe' --format
+    llm --limit 500
+  pivots:
+  - 'ParentImage: genuine svchost is started by services.exe (a different parent is suspicious)'
+  - Hashes / signature of the binary vs the system svchost.exe
+  - Network connections (Sysmon 3) from the same ProcessGuid; no -k service group argument is typical
+    for fake or injected copies
+  false_positives:
+  - A few third-party tools have used svchost.exe-named helpers in odd locations (rare)
+  severity: high
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_svchost_masqueraded_execution.yml
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_svchost_execution_with_no_cli_flags.yml
+  - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/process-creation.md
+  verified: true
+  notes: SigmaHQ supplies both patterns (path/OriginalFileName mismatch and a bare svchost.exe command
+    line); the Sysmon guide confirms Image / OriginalFileName / ParentImage fields. Extend the same logic
+    to other masqueraded names (lsass.exe, csrss.exe, services.exe) with their expected paths.
+- id: FH-DEF-023
+  title: rundll32.exe launched without arguments
+  tactic: defense-evasion
+  attack:
+  - T1218.011
+  - T1055
+  channel: Microsoft-Windows-Sysmon/Operational
+  provider: Microsoft-Windows-Sysmon
+  event_ids:
+  - 1
+  - 4688
+  prerequisites:
+  - Sysmon installed with a config that logs event 1 (process creation)
+  - Audit Process Creation (Success) plus GPO "Include command line in process creation events" (4688
+    CommandLine)
+  logic:
+    selection:
+      CommandLine|endswith:
+      - \rundll32.exe
+      - \rundll32.exe"
+      - \rundll32
+    filter_parent:
+      ParentImage|contains:
+      - \AppData\Local\
+      - \Microsoft\Edge\
+    condition: selection and not filter_parent
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field 'Image~\rundll32.exe'
+    --format llm --limit 500
+  - forhunt search <paths> --channel Security --event-id 4688 --field 'NewProcessName~\rundll32.exe' --format
+    llm --limit 500
+  pivots:
+  - 'Child-of-rundll32 with no arguments is typically a sacrificial process for injection (Cobalt Strike
+    spawnto default): Sysmon 8/10 targeting it, Sysmon 3 network from it'
+  - Parent process and user
+  - Image path (should be System32 or SysWOW64)
+  false_positives:
+  - Occasional Edge/Office-related launches (SigmaHQ excludes parents in AppData\Local and Edge)
+  severity: medium
+  sources:
+  - https://raw.githubusercontent.com/SigmaHQ/sigma/master/rules/windows/process_creation/proc_creation_win_rundll32_no_params.yml
+  - https://raw.githubusercontent.com/trustedsec/SysmonCommunityGuide/master/chapters/process-creation.md
+  verified: false
+  notes: 'Single rule source (SigmaHQ); the Cobalt Strike spawnto interpretation is analyst knowledge.
+    Weak on its own: pair with injection or network telemetry.'

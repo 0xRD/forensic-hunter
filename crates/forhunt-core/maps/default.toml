@@ -1,0 +1,770 @@
+# Forensic Hunter field map, format version 1.
+#
+# [channels]  short channel aliases, used in compact output and accepted by --channel.
+# [fields]    short names for payload fields in the `llm` format.
+# [[event]]   per (channel, id): a title and the ordered list of fields kept in
+#             the `llm` format. Events without an entry keep all non-blank fields.
+#
+# A custom map (same format) can be passed with --map; its entries extend and
+# override these.
+
+version = 1
+
+[channels]
+"Security" = "Sec"
+"System" = "Sys"
+"Application" = "App"
+"Microsoft-Windows-Sysmon/Operational" = "Sysmon"
+"Microsoft-Windows-PowerShell/Operational" = "PS"
+"Windows PowerShell" = "PSClassic"
+"Microsoft-Windows-WMI-Activity/Operational" = "WMI"
+"Microsoft-Windows-TaskScheduler/Operational" = "Task"
+"Microsoft-Windows-TerminalServices-LocalSessionManager/Operational" = "TS-LSM"
+"Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational" = "TS-RCM"
+"Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational" = "RdpCoreTS"
+"Microsoft-Windows-WinRM/Operational" = "WinRM"
+"Microsoft-Windows-Windows Defender/Operational" = "Defender"
+"Microsoft-Windows-Bits-Client/Operational" = "BITS"
+"Microsoft-Windows-Windows Firewall With Advanced Security/Firewall" = "Firewall"
+"Microsoft-Windows-SMBServer/Security" = "SMBServer"
+"Microsoft-Windows-NTLM/Operational" = "NTLM"
+"Microsoft-Windows-CodeIntegrity/Operational" = "CodeIntegrity"
+"Directory Service" = "DS"
+"ForwardedEvents" = "Fwd"
+
+[fields]
+SubjectUserName = "s_user"
+SubjectDomainName = "s_dom"
+SubjectUserSid = "s_sid"
+SubjectLogonId = "s_lid"
+TargetUserName = "user"
+TargetDomainName = "dom"
+TargetUserSid = "sid"
+TargetLogonId = "lid"
+TargetSid = "sid"
+LogonType = "lt"
+IpAddress = "ip"
+IpPort = "port"
+WorkstationName = "wks"
+AuthenticationPackageName = "auth"
+LogonProcessName = "lproc"
+LmPackageName = "lm"
+KeyLength = "keylen"
+ElevatedToken = "elev"
+ProcessName = "proc"
+NewProcessName = "img"
+ParentProcessName = "pimg"
+CommandLine = "cmd"
+ParentCommandLine = "pcmd"
+Image = "img"
+ParentImage = "pimg"
+OriginalFileName = "orig"
+TokenElevationType = "tet"
+MandatoryLabel = "il"
+IntegrityLevel = "il"
+User = "user"
+ProcessId = "pid"
+NewProcessId = "pid"
+ParentProcessId = "ppid"
+ProcessGuid = "pguid"
+Hashes = "hash"
+Status = "status"
+SubStatus = "substatus"
+FailureReason = "reason"
+ServiceName = "svc"
+ServiceFileName = "svc_path"
+ImagePath = "svc_path"
+ServiceType = "svc_type"
+StartType = "start"
+AccountName = "acct"
+TaskName = "task"
+TaskContent = "task_xml"
+ShareName = "share"
+ShareLocalPath = "share_path"
+RelativeTargetName = "target"
+ObjectName = "obj"
+ObjectType = "obj_type"
+AccessMask = "mask"
+AccessList = "access"
+Properties = "props"
+TicketEncryptionType = "enc"
+TicketOptions = "topts"
+PreAuthType = "preauth"
+MemberName = "member"
+MemberSid = "member_sid"
+PrivilegeList = "privs"
+SourceAddress = "src"
+SourcePort = "sport"
+DestinationAddress = "dst"
+DestinationPort = "dport"
+SourceIp = "src"
+DestinationIp = "dst"
+DestinationHostname = "dst_host"
+Protocol = "proto"
+TargetObject = "key"
+Details = "value"
+EventType = "etype"
+TargetFilename = "file"
+QueryName = "query"
+QueryResults = "answers"
+SourceImage = "src_img"
+TargetImage = "dst_img"
+GrantedAccess = "access"
+CallTrace = "trace"
+ImageLoaded = "dll"
+Signed = "signed"
+Signature = "sig"
+ScriptBlockText = "script"
+ScriptBlockId = "sbid"
+Path = "path"
+MessageNumber = "msgno"
+MessageTotal = "msgtotal"
+HostApplication = "host_app"
+Payload = "payload"
+ContextInfo = "ctx"
+Operation = "op"
+Consumer = "consumer"
+PossibleCause = "cause"
+ESS = "ess"
+CONSUMER = "consumer"
+Param1 = "p1"
+Param2 = "p2"
+Param3 = "p3"
+Address = "addr"
+SessionID = "session"
+SessionId = "session"
+Threat_Name = "threat"
+"Threat Name" = "threat"
+"Process Name" = "proc"
+"Detection User" = "det_user"
+Action_Name = "action"
+"Action Name" = "action"
+Severity_Name = "sev"
+"Severity Name" = "sev"
+Old_Value = "old"
+"Old Value" = "old"
+New_Value = "new"
+"New Value" = "new"
+url = "url"
+jobTitle = "job"
+fileTime = "ftime"
+AttributeLDAPDisplayName = "attr"
+AttributeValue = "attr_val"
+OperationType = "op"
+ObjectDN = "dn"
+ObjectClass = "class"
+SamAccountName = "sam"
+UserAccountControl = "uac"
+OldUacValue = "old_uac"
+NewUacValue = "new_uac"
+AllowedToDelegateTo = "deleg"
+SidHistory = "sid_hist"
+CategoryId = "cat"
+SubcategoryGuid = "subcat"
+AuditPolicyChanges = "changes"
+PreviousTime = "prev_time"
+NewTime = "new_time"
+CallerProcessName = "caller"
+RuleName = "rule"
+ApplicationPath = "app"
+Direction = "dir"
+LocalAddress = "laddr"
+RemoteAddress = "raddr"
+LocalPort = "lport"
+RemotePort = "rport"
+Channel = "log"
+BackupPath = "backup"
+TargetServerName = "server"
+TargetInfo = "tinfo"
+TargetOutboundUserName = "out_user"
+TargetOutboundDomainName = "out_dom"
+VirtualAccount = "virt"
+LinkedLogonId = "linked_lid"
+RestrictedAdminMode = "restricted_admin"
+ImpersonationLevel = "imp"
+
+# ---------------------------------------------------------------- Security
+
+[[event]]
+channel = "Security"
+id = 1100
+title = "Event logging service shut down"
+keep = []
+
+[[event]]
+channel = "Security"
+id = 1102
+title = "Security audit log cleared"
+keep = ["SubjectUserName", "SubjectDomainName", "SubjectLogonId"]
+
+[[event]]
+channel = "Security"
+id = 4616
+title = "System time changed"
+keep = ["SubjectUserName", "PreviousTime", "NewTime", "ProcessName"]
+
+[[event]]
+channel = "Security"
+id = 4624
+title = "Logon success"
+keep = ["TargetUserName", "TargetDomainName", "LogonType", "IpAddress", "IpPort", "WorkstationName", "AuthenticationPackageName", "LmPackageName", "LogonProcessName", "TargetLogonId", "ProcessName", "ElevatedToken", "SubjectUserName", "TargetOutboundUserName", "RestrictedAdminMode", "KeyLength"]
+
+[[event]]
+channel = "Security"
+id = 4625
+title = "Logon failure"
+keep = ["TargetUserName", "TargetDomainName", "LogonType", "IpAddress", "IpPort", "WorkstationName", "Status", "SubStatus", "FailureReason", "AuthenticationPackageName", "LogonProcessName", "ProcessName"]
+
+[[event]]
+channel = "Security"
+id = 4634
+title = "Logoff"
+keep = ["TargetUserName", "TargetDomainName", "LogonType", "TargetLogonId"]
+
+[[event]]
+channel = "Security"
+id = 4647
+title = "User initiated logoff"
+keep = ["TargetUserName", "TargetDomainName", "TargetLogonId"]
+
+[[event]]
+channel = "Security"
+id = 4648
+title = "Logon with explicit credentials"
+keep = ["SubjectUserName", "SubjectDomainName", "TargetUserName", "TargetDomainName", "TargetServerName", "TargetInfo", "ProcessName", "IpAddress", "IpPort"]
+
+[[event]]
+channel = "Security"
+id = 4656
+title = "Handle to an object requested"
+keep = ["SubjectUserName", "ObjectType", "ObjectName", "ProcessName", "AccessMask", "AccessList"]
+
+[[event]]
+channel = "Security"
+id = 4657
+title = "Registry value modified"
+keep = ["SubjectUserName", "ObjectName", "ObjectValueName", "OperationType", "OldValue", "NewValue", "ProcessName"]
+
+[[event]]
+channel = "Security"
+id = 4661
+title = "Handle to an object requested (SAM/DS)"
+keep = ["SubjectUserName", "ObjectType", "ObjectName", "ProcessName", "AccessMask"]
+
+[[event]]
+channel = "Security"
+id = 4662
+title = "Operation performed on an AD object"
+keep = ["SubjectUserName", "SubjectDomainName", "ObjectServer", "ObjectType", "ObjectName", "OperationType", "AccessMask", "Properties"]
+
+[[event]]
+channel = "Security"
+id = 4663
+title = "Object access attempt"
+keep = ["SubjectUserName", "ObjectType", "ObjectName", "ProcessName", "AccessMask", "AccessList"]
+
+[[event]]
+channel = "Security"
+id = 4672
+title = "Special privileges assigned to new logon"
+keep = ["SubjectUserName", "SubjectDomainName", "SubjectLogonId", "PrivilegeList"]
+
+[[event]]
+channel = "Security"
+id = 4673
+title = "Privileged service called"
+keep = ["SubjectUserName", "ProcessName", "PrivilegeList", "Service"]
+
+[[event]]
+channel = "Security"
+id = 4688
+title = "Process created"
+keep = ["SubjectUserName", "SubjectDomainName", "TargetUserName", "NewProcessName", "CommandLine", "ParentProcessName", "NewProcessId", "ProcessId", "TokenElevationType", "MandatoryLabel", "SubjectLogonId"]
+
+[[event]]
+channel = "Security"
+id = 4689
+title = "Process exited"
+keep = ["SubjectUserName", "ProcessName", "ProcessId", "Status"]
+
+[[event]]
+channel = "Security"
+id = 4697
+title = "Service installed"
+keep = ["SubjectUserName", "SubjectDomainName", "ServiceName", "ServiceFileName", "ServiceType", "ServiceStartType", "ServiceAccount"]
+
+[[event]]
+channel = "Security"
+id = 4698
+title = "Scheduled task created"
+keep = ["SubjectUserName", "SubjectDomainName", "TaskName", "TaskContent"]
+
+[[event]]
+channel = "Security"
+id = 4699
+title = "Scheduled task deleted"
+keep = ["SubjectUserName", "TaskName"]
+
+[[event]]
+channel = "Security"
+id = 4700
+title = "Scheduled task enabled"
+keep = ["SubjectUserName", "TaskName"]
+
+[[event]]
+channel = "Security"
+id = 4701
+title = "Scheduled task disabled"
+keep = ["SubjectUserName", "TaskName"]
+
+[[event]]
+channel = "Security"
+id = 4702
+title = "Scheduled task updated"
+keep = ["SubjectUserName", "TaskName", "TaskContentNew"]
+
+[[event]]
+channel = "Security"
+id = 4719
+title = "System audit policy changed"
+keep = ["SubjectUserName", "CategoryId", "SubcategoryId", "SubcategoryGuid", "AuditPolicyChanges"]
+
+[[event]]
+channel = "Security"
+id = 4720
+title = "User account created"
+keep = ["SubjectUserName", "SubjectDomainName", "TargetUserName", "TargetDomainName", "TargetSid", "SamAccountName", "UserAccountControl"]
+
+[[event]]
+channel = "Security"
+id = 4722
+title = "User account enabled"
+keep = ["SubjectUserName", "TargetUserName", "TargetDomainName"]
+
+[[event]]
+channel = "Security"
+id = 4723
+title = "Password change attempt"
+keep = ["SubjectUserName", "TargetUserName", "TargetDomainName"]
+
+[[event]]
+channel = "Security"
+id = 4724
+title = "Password reset attempt"
+keep = ["SubjectUserName", "TargetUserName", "TargetDomainName"]
+
+[[event]]
+channel = "Security"
+id = 4725
+title = "User account disabled"
+keep = ["SubjectUserName", "TargetUserName", "TargetDomainName"]
+
+[[event]]
+channel = "Security"
+id = 4726
+title = "User account deleted"
+keep = ["SubjectUserName", "TargetUserName", "TargetDomainName"]
+
+[[event]]
+channel = "Security"
+id = 4728
+title = "Member added to global security group"
+keep = ["SubjectUserName", "MemberName", "MemberSid", "TargetUserName", "TargetDomainName"]
+
+[[event]]
+channel = "Security"
+id = 4732
+title = "Member added to local security group"
+keep = ["SubjectUserName", "MemberName", "MemberSid", "TargetUserName", "TargetDomainName"]
+
+[[event]]
+channel = "Security"
+id = 4738
+title = "User account changed"
+keep = ["SubjectUserName", "TargetUserName", "TargetDomainName", "SamAccountName", "UserAccountControl", "OldUacValue", "NewUacValue", "AllowedToDelegateTo", "SidHistory", "UserPrincipalName"]
+
+[[event]]
+channel = "Security"
+id = 4740
+title = "Account locked out"
+keep = ["TargetUserName", "TargetDomainName", "SubjectUserName"]
+
+[[event]]
+channel = "Security"
+id = 4741
+title = "Computer account created"
+keep = ["SubjectUserName", "TargetUserName", "SamAccountName", "DnsHostName", "UserAccountControl"]
+
+[[event]]
+channel = "Security"
+id = 4742
+title = "Computer account changed"
+keep = ["SubjectUserName", "TargetUserName", "SamAccountName", "ServicePrincipalNames", "UserAccountControl", "OldUacValue", "NewUacValue", "AllowedToDelegateTo"]
+
+[[event]]
+channel = "Security"
+id = 4756
+title = "Member added to universal security group"
+keep = ["SubjectUserName", "MemberName", "MemberSid", "TargetUserName", "TargetDomainName"]
+
+[[event]]
+channel = "Security"
+id = 4768
+title = "Kerberos TGT requested"
+keep = ["TargetUserName", "TargetDomainName", "IpAddress", "Status", "TicketEncryptionType", "PreAuthType", "TicketOptions", "CertIssuerName"]
+
+[[event]]
+channel = "Security"
+id = 4769
+title = "Kerberos service ticket requested"
+keep = ["TargetUserName", "TargetDomainName", "ServiceName", "IpAddress", "Status", "TicketEncryptionType", "TicketOptions"]
+
+[[event]]
+channel = "Security"
+id = 4771
+title = "Kerberos pre-authentication failed"
+keep = ["TargetUserName", "IpAddress", "Status", "PreAuthType", "ServiceName"]
+
+[[event]]
+channel = "Security"
+id = 4776
+title = "NTLM credential validation"
+keep = ["TargetUserName", "Workstation", "Status", "PackageName"]
+
+[[event]]
+channel = "Security"
+id = 4778
+title = "Session reconnected"
+keep = ["AccountName", "AccountDomain", "ClientName", "ClientAddress", "SessionName"]
+
+[[event]]
+channel = "Security"
+id = 4779
+title = "Session disconnected"
+keep = ["AccountName", "AccountDomain", "ClientName", "ClientAddress", "SessionName"]
+
+[[event]]
+channel = "Security"
+id = 4798
+title = "User's local group membership enumerated"
+keep = ["SubjectUserName", "TargetUserName", "CallerProcessName"]
+
+[[event]]
+channel = "Security"
+id = 4799
+title = "Local group membership enumerated"
+keep = ["SubjectUserName", "TargetUserName", "CallerProcessName"]
+
+[[event]]
+channel = "Security"
+id = 5136
+title = "Directory service object modified"
+keep = ["SubjectUserName", "ObjectDN", "ObjectClass", "AttributeLDAPDisplayName", "AttributeValue", "OperationType"]
+
+[[event]]
+channel = "Security"
+id = 5140
+title = "Network share accessed"
+keep = ["SubjectUserName", "SubjectDomainName", "IpAddress", "ShareName", "ShareLocalPath", "AccessMask"]
+
+[[event]]
+channel = "Security"
+id = 5145
+title = "Network share object checked"
+keep = ["SubjectUserName", "SubjectDomainName", "IpAddress", "ShareName", "RelativeTargetName", "AccessMask", "AccessList"]
+
+[[event]]
+channel = "Security"
+id = 5156
+title = "WFP allowed connection"
+keep = ["Application", "Direction", "SourceAddress", "SourcePort", "DestAddress", "DestPort", "Protocol"]
+
+# ---------------------------------------------------------------- System
+
+[[event]]
+channel = "System"
+id = 104
+title = "Event log cleared"
+keep = ["SubjectUserName", "SubjectDomainName", "Channel", "BackupPath"]
+
+[[event]]
+channel = "System"
+id = 7034
+title = "Service crashed"
+keep = ["param1", "param2"]
+
+[[event]]
+channel = "System"
+id = 7036
+title = "Service state changed"
+keep = ["param1", "param2"]
+
+[[event]]
+channel = "System"
+id = 7040
+title = "Service start type changed"
+keep = ["param1", "param2", "param3", "param4"]
+
+[[event]]
+channel = "System"
+id = 7045
+title = "Service installed"
+keep = ["ServiceName", "ImagePath", "ServiceType", "StartType", "AccountName"]
+
+# ---------------------------------------------------------------- Sysmon
+
+[[event]]
+channel = "Microsoft-Windows-Sysmon/Operational"
+id = 1
+title = "Process created"
+keep = ["User", "Image", "CommandLine", "ParentImage", "ParentCommandLine", "OriginalFileName", "IntegrityLevel", "ProcessId", "ParentProcessId", "Hashes", "CurrentDirectory", "LogonId"]
+
+[[event]]
+channel = "Microsoft-Windows-Sysmon/Operational"
+id = 3
+title = "Network connection"
+keep = ["User", "Image", "Protocol", "Initiated", "SourceIp", "SourcePort", "DestinationIp", "DestinationHostname", "DestinationPort"]
+
+[[event]]
+channel = "Microsoft-Windows-Sysmon/Operational"
+id = 7
+title = "Image loaded"
+keep = ["Image", "ImageLoaded", "Signed", "Signature", "SignatureStatus", "Hashes"]
+
+[[event]]
+channel = "Microsoft-Windows-Sysmon/Operational"
+id = 8
+title = "CreateRemoteThread"
+keep = ["SourceImage", "TargetImage", "StartAddress", "StartModule", "StartFunction"]
+
+[[event]]
+channel = "Microsoft-Windows-Sysmon/Operational"
+id = 10
+title = "Process accessed"
+keep = ["SourceImage", "TargetImage", "GrantedAccess", "CallTrace", "SourceUser", "TargetUser"]
+
+[[event]]
+channel = "Microsoft-Windows-Sysmon/Operational"
+id = 11
+title = "File created"
+keep = ["User", "Image", "TargetFilename"]
+
+[[event]]
+channel = "Microsoft-Windows-Sysmon/Operational"
+id = 12
+title = "Registry object added or deleted"
+keep = ["User", "EventType", "Image", "TargetObject"]
+
+[[event]]
+channel = "Microsoft-Windows-Sysmon/Operational"
+id = 13
+title = "Registry value set"
+keep = ["User", "EventType", "Image", "TargetObject", "Details"]
+
+[[event]]
+channel = "Microsoft-Windows-Sysmon/Operational"
+id = 19
+title = "WMI event filter"
+keep = ["User", "Operation", "EventNamespace", "Name", "Query"]
+
+[[event]]
+channel = "Microsoft-Windows-Sysmon/Operational"
+id = 20
+title = "WMI event consumer"
+keep = ["User", "Operation", "Name", "Type", "Destination"]
+
+[[event]]
+channel = "Microsoft-Windows-Sysmon/Operational"
+id = 21
+title = "WMI consumer bound to filter"
+keep = ["User", "Operation", "Consumer", "Filter"]
+
+[[event]]
+channel = "Microsoft-Windows-Sysmon/Operational"
+id = 22
+title = "DNS query"
+keep = ["User", "Image", "QueryName", "QueryStatus", "QueryResults"]
+
+[[event]]
+channel = "Microsoft-Windows-Sysmon/Operational"
+id = 23
+title = "File deleted (archived)"
+keep = ["User", "Image", "TargetFilename", "Hashes"]
+
+[[event]]
+channel = "Microsoft-Windows-Sysmon/Operational"
+id = 25
+title = "Process tampering"
+keep = ["User", "Image", "Type"]
+
+[[event]]
+channel = "Microsoft-Windows-Sysmon/Operational"
+id = 26
+title = "File deleted"
+keep = ["User", "Image", "TargetFilename"]
+
+# ---------------------------------------------------------------- PowerShell
+
+[[event]]
+channel = "Microsoft-Windows-PowerShell/Operational"
+id = 4103
+title = "PowerShell module logging"
+keep = ["ContextInfo", "Payload"]
+
+[[event]]
+channel = "Microsoft-Windows-PowerShell/Operational"
+id = 4104
+title = "PowerShell script block"
+keep = ["ScriptBlockText", "Path", "MessageNumber", "MessageTotal", "ScriptBlockId"]
+
+[[event]]
+channel = "Windows PowerShell"
+id = 400
+title = "PowerShell engine started"
+keep = ["Data[3]"]
+
+[[event]]
+channel = "Windows PowerShell"
+id = 600
+title = "PowerShell provider started"
+keep = ["Data[3]"]
+
+# ---------------------------------------------------------------- WMI, tasks, RDP, WinRM, Defender, BITS
+
+[[event]]
+channel = "Microsoft-Windows-WMI-Activity/Operational"
+id = 5857
+title = "WMI provider loaded"
+keep = ["ProviderName", "Code", "HostProcess", "ProviderPath"]
+
+[[event]]
+channel = "Microsoft-Windows-WMI-Activity/Operational"
+id = 5860
+title = "WMI temporary event subscription"
+keep = ["NamespaceName", "Query", "User", "processid", "PossibleCause"]
+
+[[event]]
+channel = "Microsoft-Windows-WMI-Activity/Operational"
+id = 5861
+title = "WMI permanent event subscription"
+keep = ["Namespace", "ESS", "CONSUMER", "PossibleCause"]
+
+[[event]]
+channel = "Microsoft-Windows-TaskScheduler/Operational"
+id = 106
+title = "Scheduled task registered"
+keep = ["TaskName", "UserContext"]
+
+[[event]]
+channel = "Microsoft-Windows-TaskScheduler/Operational"
+id = 140
+title = "Scheduled task updated"
+keep = ["TaskName", "UserName"]
+
+[[event]]
+channel = "Microsoft-Windows-TaskScheduler/Operational"
+id = 141
+title = "Scheduled task deleted"
+keep = ["TaskName", "UserName"]
+
+[[event]]
+channel = "Microsoft-Windows-TaskScheduler/Operational"
+id = 200
+title = "Scheduled task action started"
+keep = ["TaskName", "ActionName", "TaskInstanceId"]
+
+[[event]]
+channel = "Microsoft-Windows-TaskScheduler/Operational"
+id = 201
+title = "Scheduled task action completed"
+keep = ["TaskName", "ActionName", "ResultCode"]
+
+[[event]]
+channel = "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational"
+id = 21
+title = "RDP session logon"
+keep = ["User", "SessionID", "Address"]
+
+[[event]]
+channel = "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational"
+id = 22
+title = "RDP shell start"
+keep = ["User", "SessionID", "Address"]
+
+[[event]]
+channel = "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational"
+id = 23
+title = "RDP session logoff"
+keep = ["User", "SessionID"]
+
+[[event]]
+channel = "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational"
+id = 24
+title = "RDP session disconnected"
+keep = ["User", "SessionID", "Address"]
+
+[[event]]
+channel = "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational"
+id = 25
+title = "RDP session reconnected"
+keep = ["User", "SessionID", "Address"]
+
+[[event]]
+channel = "Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational"
+id = 1149
+title = "RDP user authentication succeeded"
+keep = ["Param1", "Param2", "Param3"]
+
+[[event]]
+channel = "Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational"
+id = 131
+title = "RDP connection accepted"
+keep = ["ConnType", "ClientIP"]
+
+[[event]]
+channel = "Microsoft-Windows-WinRM/Operational"
+id = 91
+title = "WinRM session created"
+keep = ["resourceUri", "shellId"]
+
+[[event]]
+channel = "Microsoft-Windows-WinRM/Operational"
+id = 168
+title = "WinRM authentication"
+keep = []
+
+[[event]]
+channel = "Microsoft-Windows-Windows Defender/Operational"
+id = 1116
+title = "Defender malware detected"
+keep = ["Threat Name", "Severity Name", "Category Name", "Path", "Process Name", "Detection User"]
+
+[[event]]
+channel = "Microsoft-Windows-Windows Defender/Operational"
+id = 1117
+title = "Defender action taken"
+keep = ["Threat Name", "Severity Name", "Path", "Action Name", "Process Name", "Detection User"]
+
+[[event]]
+channel = "Microsoft-Windows-Windows Defender/Operational"
+id = 5001
+title = "Defender real-time protection disabled"
+keep = []
+
+[[event]]
+channel = "Microsoft-Windows-Windows Defender/Operational"
+id = 5007
+title = "Defender configuration changed"
+keep = ["Old Value", "New Value"]
+
+[[event]]
+channel = "Microsoft-Windows-Bits-Client/Operational"
+id = 59
+title = "BITS transfer started"
+keep = ["name", "url", "fileTime"]
+
+[[event]]
+channel = "Microsoft-Windows-Bits-Client/Operational"
+id = 60
+title = "BITS transfer stopped"
+keep = ["name", "url", "hr"]
