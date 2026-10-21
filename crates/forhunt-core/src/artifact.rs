@@ -78,6 +78,10 @@ pub trait Source: Send + Sync {
         None
     }
     fn parse_unit(&self, unit: usize, sink: &mut dyn Sink) -> UnitReport;
+    /// The record in its native textual form (XML for EVTX), if supported.
+    fn raw_record(&self, _unit: usize, _record: u64) -> Option<anyhow::Result<String>> {
+        None
+    }
     /// Problems found while opening (truncated tail, bad file header, ...).
     fn open_warnings(&self) -> &[String] {
         &[]

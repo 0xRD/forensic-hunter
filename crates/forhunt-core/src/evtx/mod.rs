@@ -104,10 +104,9 @@ impl EvtxSource {
                 bytes.len()
             );
         }
+        // A "dirty" header flag is normal for a log copied from a live system,
+        // so it is not reported.
         match evtx::EvtxFileHeader::from_bytes(bytes) {
-            Ok(h) if h.flags.contains(evtx::HeaderFlags::DIRTY) => {
-                warnings.push("file header marked dirty (log was not closed cleanly)".into())
-            }
             Ok(_) => {}
             Err(e) => {
                 if !bytes.starts_with(MAGIC) && !bytes[FILE_HEADER_SIZE..].starts_with(CHUNK_MAGIC)
@@ -260,6 +259,23 @@ impl Source for EvtxSource {
             .ok()
             .map(|h| (h.first_event_record_id, h.last_event_record_id))
     }
+    fn raw_record(&self, unit: usize, record: u64) -> Option<anyhow::Result<String>> {
+        let raw = self.chunk_bytes(unit);
+        let mut buf = raw.to_vec();
+        buf.resize(CHUNK_SIZE, 0);
+        let res = catch_unwind(AssertUnwindSafe(|| -> Option<anyhow::Result<String>> {
+            let mut chunk = EvtxChunkData::new(buf, false).ok()?;
+            let mut parsed = chunk.parse(Arc::clone(&self.settings)).ok()?;
+            for rec in parsed.iter().flatten() {
+                if rec.event_record_id == record {
+                    return Some(rec.into_xml().map(|r| r.data).map_err(anyhow::Error::from));
+                }
+            }
+            None
+        }));
+        res.unwrap_or_else(|_| Some(Err(anyhow::anyhow!("decoder panicked on chunk {unit}"))))
+    }
+
     fn parse_unit(&self, unit: usize, sink: &mut dyn Sink) -> UnitReport {
         let mut rep = UnitReport::default();
         let res = catch_unwind(AssertUnwindSafe(|| self.parse_chunk(unit, sink, &mut rep)));

@@ -72,6 +72,10 @@ pub struct EventView<'a> {
     /// `Security/@UserID`: the SID the event was logged under.
     pub user_sid: Cow<'a, str>,
     pub activity_id: Cow<'a, str>,
+    /// `System/EventRecordID`. Equal to `id.record` (the record header id) in
+    /// native logs; differs in exported or filtered logs, where headers are
+    /// renumbered but this keeps the original value (what Hayabusa reports).
+    pub event_record_id: u64,
     pub fields: Vec<Field<'a>>,
 }
 
@@ -128,6 +132,7 @@ impl<'a> EventView<'a> {
             thread_id: self.thread_id,
             user_sid: o(self.user_sid),
             activity_id: o(self.activity_id),
+            event_record_id: self.event_record_id,
             fields: self
                 .fields
                 .into_iter()

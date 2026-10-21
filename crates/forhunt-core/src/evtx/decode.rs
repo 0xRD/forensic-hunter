@@ -149,6 +149,7 @@ fn system<'a>(p: &mut P<'a>, ev: &mut EventView<'a>) -> R<()> {
             "Task" => ev.task = num(p)? as u32,
             "Opcode" => ev.opcode = num(p)? as u32,
             "Keywords" => ev.keywords = str_of(p.scalar_or_skip()?),
+            "EventRecordID" => ev.event_record_id = num(p)?,
             "TimeCreated" => attrs(p, |n, v| {
                 if n == "SystemTime"
                     && let Some(t) = Ts::parse(v.as_str())

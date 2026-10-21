@@ -19,6 +19,10 @@ pub fn write(w: &Writer<'_>, ev: &EventView<'_>, out: &mut Vec<u8>) {
     json::u64(out, ev.event_id as u64);
     out.extend_from_slice(b",\"record_id\":");
     json::u64(out, ev.id.record);
+    if ev.event_record_id != ev.id.record && ev.event_record_id != 0 {
+        out.extend_from_slice(b",\"event_record_id\":");
+        json::u64(out, ev.event_record_id);
+    }
     out.extend_from_slice(b",\"level\":");
     json::u64(out, ev.level as u64);
     out.extend_from_slice(b",\"task\":");
