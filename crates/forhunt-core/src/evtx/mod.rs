@@ -164,6 +164,23 @@ impl EvtxSource {
                 return;
             }
         };
+        // A damaged string table makes the whole chunk unparseable, but names
+        // can still be resolved by offset: retry with the table index cleared.
+        if chunk.parse(Arc::clone(&self.settings)).is_err() {
+            let mut retry = Vec::with_capacity(CHUNK_SIZE);
+            retry.extend_from_slice(raw);
+            retry.resize(CHUNK_SIZE, 0);
+            retry[128..384].fill(0);
+            if let Ok(mut c) = EvtxChunkData::new(retry, false)
+                && c.parse(Arc::clone(&self.settings)).is_ok()
+            {
+                rep.bad_unit = true;
+                rep.note(|| {
+                    format!("chunk {unit}: damaged string table, recovered records by offset")
+                });
+                chunk = c;
+            }
+        }
         let mut parsed = match chunk.parse(Arc::clone(&self.settings)) {
             Ok(p) => p,
             Err(e) => {
@@ -186,6 +203,13 @@ impl EvtxSource {
                 }
             };
             let record_id = rec.event_record_id;
+            // In a truncated chunk, anything reaching past the real data was
+            // decoded from the zero padding.
+            if partial && rec.binxml_offset as usize + rec.binxml_size as usize + 4 > raw.len() {
+                rep.bad_records += 1;
+                rep.note(|| format!("chunk {unit}: record {record_id} cut by truncation"));
+                break;
+            }
             if !sink.want_time(Ts::from_jiff(rec.timestamp)) {
                 rep.records += 1;
                 continue;

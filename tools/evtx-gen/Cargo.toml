@@ -9,6 +9,10 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+crc32fast = "1"
+
+[dev-dependencies]
+evtx.workspace = true
 
 [lints]
 workspace = true
