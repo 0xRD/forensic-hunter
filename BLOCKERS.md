@@ -8,3 +8,8 @@ Items that need a human or a different environment. Work continues around them.
 | B-002 | Homebrew tap integration deferred (user decision): `gh` is not usable in this container. | Release workflow contains the tap job but it is skipped until `HOMEBREW_TAP_TOKEN` exists. | Create a fine-grained PAT with `contents: write` on `0xRD/homebrew-tap`, then `gh secret set HOMEBREW_TAP_TOKEN -R 0xRD/forensic-hunter`. Fallback: `scripts/update-tap.sh` with a local `gh` login. |
 | B-003 | `brew search forhunt` could not be run (no Homebrew, API blocked). | Name clash in Homebrew core unverified. | Run `brew search forhunt` once on a Mac. |
 | B-004 | EvtxECmd cannot be benchmarked here: the .NET runtime and Eric Zimmerman's download site are unreachable from the build container. | No EvtxECmd column in the README benchmark table. | Run `EVTXECMD=/path/EvtxECmd.dll scripts/bench.sh` on a machine with `dotnet`. |
+
+## B-005 — tag push refused from the build session (worked around)
+`git push origin v0.1.0` returns HTTP 403 from the session's git proxy while
+branch pushes work. Workaround: Actions -> Release -> Run workflow with
+`tag: vX.Y.Z` (D-035). From a normal machine, `git push origin vX.Y.Z` works.

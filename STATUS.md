@@ -35,8 +35,11 @@ Last update: 2026-10-22 (session 1)
 - Final benchmarks in README (2 GiB corpus); P-010 event-id pre-check
 - Release dry run: all 5 targets built and packaged
 
+- v0.1.0 released (2026-10-22): 5 archives + .sha256 + SHA256SUMS, tag on
+  833e577, CI green on that commit
+
 ## In progress
-- Tag v0.1.0
+- (none)
 
 ## Next
 - install.sh against the real release once the repository is public
