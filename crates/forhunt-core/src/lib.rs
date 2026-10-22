@@ -2,7 +2,8 @@
 //! parallel engine that drives them.
 //!
 //! The design keeps a single hot path: an artifact [`Source`](artifact::Source)
-//! splits its input into independent units (EVTX chunks), the
+//! splits its input into independent units (EVTX chunks, runs of MFT
+//! records, journal blocks), the
 //! [`engine`] runs units on a rayon pool and hands each decoded
 //! [`EventView`](event::EventView) to a caller-supplied closure while it still
 //! borrows the decoder's buffer. Nothing is materialised unless the caller
@@ -15,7 +16,9 @@ pub mod evtx;
 pub mod filter;
 pub mod id;
 pub mod input;
+pub(crate) mod io;
 pub mod normalize;
+pub mod ntfs;
 pub mod time;
 
 pub use artifact::{Artifact, Source, UnitReport};

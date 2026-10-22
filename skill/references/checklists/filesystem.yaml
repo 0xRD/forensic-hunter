@@ -1,0 +1,296 @@
+tactic: filesystem
+title: File System (NTFS $MFT and $UsnJrnl)
+description: >
+  What the NTFS metadata shows when event logs are missing, cleared or not
+  detailed enough: files created, renamed and deleted ($UsnJrnl:$J), and the
+  timestamps, names, sizes, alternate data streams and deleted-but-not-reused
+  records of the master file table ($MFT). forhunt exposes $MFT records as
+  channel MFT (event id 16 = $STANDARD_INFORMATION timestamps, 48 =
+  $FILE_NAME timestamps, MACB tells which timestamps share the event time)
+  and journal entries as channel UsnJrnl (1 created, 2 deleted, 3 renamed,
+  4 data changed, 5 metadata changed, 6 closed). Paths start with `.\` (the
+  volume root; the drive letter is not recorded). Neither source records the
+  host name: scope by evidence folder, not --computer.
+checks:
+  - id: FH-FS-001
+    title: Timestomping - $STANDARD_INFORMATION created before $FILE_NAME created
+    tactic: filesystem
+    attack: [T1070.006]
+    channel: MFT
+    event_ids: [16]
+    prerequisites:
+      - "$MFT collected from the volume (raw copy: KAPE, Velociraptor, FTK Imager)"
+    logic:
+      selection:
+        EventID: 16
+        SiLtFn: 'true'
+      executable:
+        Path|re: '\.(exe|dll|sys|ps1|bat|cmd|vbs|js|hta|scr)$'
+      condition: selection and executable
+    forhunt:
+      - forhunt search <paths> --channel MFT --event-id 16 --field SiLtFn=true --regex 'Path=\.(exe|dll|sys|ps1|bat|cmd|vbs|js|hta|scr)$' --format llm
+    pivots:
+      - "Compare the $FN times (Created0x30) with event logs: process creation, service install (7045), logons in the same minutes"
+      - "UsnJrnl FileCreate/BasicInfoChange for the same EntryNumber: the real creation time and the moment the timestamps were changed"
+      - "Other files with the same $FN creation minute: the rest of the toolkit"
+    false_positives:
+      - "Files copied or extracted with their original times kept (installers, archives, robocopy /COPY:T)"
+      - "Windows system files laid down from installation media show $SI older than $FN on every file of the install date"
+    severity: high
+    sources:
+      - https://attack.mitre.org/techniques/T1070/006/
+      - https://learn.microsoft.com/en-us/windows/win32/fileio/master-file-table
+    verified: false
+    notes: "Written from the NTFS format (a user-mode timestomp tool can set $SI times but not $FN times); sources cited, not re-read in this session (BLOCKERS.md B-001). Exercised by the fixture scenario (PSEXESVC.exe)."
+
+  - id: FH-FS-002
+    title: Timestamps with zero sub-seconds on executables
+    tactic: filesystem
+    attack: [T1070.006]
+    channel: MFT
+    event_ids: [16]
+    prerequisites:
+      - "$MFT collected from the volume"
+    logic:
+      selection:
+        EventID: 16
+        uSecZeros: 'true'
+        Path|re: '\.(exe|dll|sys|ps1|bat)$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel MFT --event-id 16 --field uSecZeros=true --regex 'Path=\.(exe|dll|sys|ps1|bat)$' --format llm
+    pivots:
+      - "Combine with FH-FS-001: zero sub-seconds plus $SI earlier than $FN is a strong timestomp signal"
+    false_positives:
+      - "Files extracted from ZIP/CAB archives (DOS timestamps have 2-second resolution)"
+      - "Files whose times were set by legitimate deployment tools"
+    severity: medium
+    sources:
+      - https://attack.mitre.org/techniques/T1070/006/
+    verified: false
+    notes: "uSecZeros looks at the $SI creation time only. Sources cited, not re-read in this session (B-001)."
+
+  - id: FH-FS-003
+    title: Executables or scripts created in user-writable staging folders
+    tactic: filesystem
+    attack: [T1105, T1036.005]
+    channel: UsnJrnl
+    event_ids: [1]
+    prerequisites:
+      - "$UsnJrnl:$J collected (retention is limited: days to weeks on a busy volume)"
+      - "$MFT next to the journal for full paths (otherwise match on FileName)"
+    logic:
+      selection:
+        Channel: UsnJrnl
+        EventID: 1
+        Path|re: '\\(users\\public|programdata|windows\\temp|perflogs|appdata\\local\\temp)\\[^\\]+\.(exe|dll|ps1|bat|cmd|vbs|js|hta|scr)$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=\\(users\\public|programdata|windows\\temp|perflogs|appdata\\local\\temp)\\[^\\]+\.(exe|dll|ps1|bat|cmd|vbs|js|hta|scr)$' --format llm
+      - forhunt search <paths> --channel MFT --event-id 48 --regex 'Path=\\(users\\public|programdata|windows\\temp|perflogs)\\[^\\]+\.(exe|dll|ps1|bat|cmd|vbs|js|hta|scr)$' --format llm
+    pivots:
+      - "Process creation (4688 / Sysmon 1) of the same path, and its parent"
+      - "Zone.Identifier of the file (FH-FS-004): where it was downloaded from"
+      - "Network logons or RDP sessions just before the creation time"
+    false_positives:
+      - "Installers and updaters that unpack to Temp; software deployment agents writing to ProgramData"
+    severity: medium
+    sources:
+      - https://attack.mitre.org/techniques/T1105/
+      - https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ns-winioctl-usn_record_v2
+    verified: false
+    notes: "Expect noise in Temp folders; sort by time and look for clusters next to suspicious logons. Sources cited, not re-read in this session (B-001)."
+
+  - id: FH-FS-004
+    title: Files downloaded from the internet (Zone.Identifier with a URL)
+    tactic: filesystem
+    attack: [T1105, T1204.002]
+    channel: MFT
+    event_ids: [16, 48]
+    prerequisites:
+      - "$MFT collected; the Zone.Identifier stream is read only when resident (small, the usual case)"
+    logic:
+      selection:
+        ZoneIdContents|contains: 'HostUrl='
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel MFT --event-id 48 --field ZoneIdContents~HostUrl --format llm
+    pivots:
+      - "HostUrl / ReferrerUrl domains and IPs: proxy, DNS (Sysmon 22) and firewall logs"
+      - "Execution of the downloaded file (4688 / Sysmon 1 / Prefetch) after its creation time"
+    false_positives:
+      - "Normal browser and mail attachment downloads: judge by URL, file type and timing"
+    severity: low
+    sources:
+      - https://attack.mitre.org/techniques/T1105/
+      - https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fscc/6e3f7352-d11c-4d76-8c39-2516a9df36e8
+    verified: false
+    notes: "Files fetched by PowerShell/certutil/curl usually have no Zone.Identifier: absence proves nothing. Sources cited, not re-read in this session (B-001)."
+
+  - id: FH-FS-005
+    title: Memory dump files (credential dumping output)
+    tactic: filesystem
+    attack: [T1003.001]
+    channel: UsnJrnl
+    event_ids: [1, 2]
+    prerequisites:
+      - "$UsnJrnl:$J and/or $MFT collected"
+    logic:
+      selection:
+        FileName|re: '\.(dmp|mdmp)$'
+      filter_wer:
+        Path|contains: '\ProgramData\Microsoft\Windows\WER\'
+      condition: selection and not filter_wer
+    forhunt:
+      - forhunt search <paths> --channel UsnJrnl --regex 'FileName=\.(dmp|mdmp)$' --format llm
+      - forhunt search <paths> --channel MFT --event-id 48 --regex 'Path=\.(dmp|mdmp)$' --format llm
+    pivots:
+      - "Process access to lsass (Sysmon 10) or rundll32 comsvcs.dll MiniDump command lines at the same time"
+      - "Deletion of the dump (UsnJrnl event 2) and archive creation or outbound transfer after it"
+    false_positives:
+      - "Windows Error Reporting and application crash dumps (WER, CrashDumps folders); administrators debugging"
+    severity: high
+    sources:
+      - https://attack.mitre.org/techniques/T1003/001/
+    verified: false
+    notes: "A file named lsass*.dmp outside WER is almost always malicious. Sources cited, not re-read in this session (B-001)."
+
+  - id: FH-FS-006
+    title: Executables, scripts or archives deleted (cleanup)
+    tactic: filesystem
+    attack: [T1070.004]
+    channel: UsnJrnl
+    event_ids: [2]
+    prerequisites:
+      - "$UsnJrnl:$J collected"
+    logic:
+      selection:
+        Channel: UsnJrnl
+        EventID: 2
+        FileName|re: '\.(exe|dll|ps1|bat|cmd|vbs|zip|7z|rar|dmp)$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel UsnJrnl --event-id 2 --regex 'FileName=\.(exe|dll|ps1|bat|cmd|vbs|zip|7z|rar|dmp)$' --format llm
+    pivots:
+      - "The same EntryNumber in $MFT: a deleted record still holds name, size and timestamps until reused"
+      - "Creation of the same name (UsnJrnl event 1): how long the file lived"
+    false_positives:
+      - "Installers, updaters and browsers deleting their temporary executables"
+    severity: medium
+    sources:
+      - https://attack.mitre.org/techniques/T1070/004/
+    verified: false
+    notes: "Short-lived executables in staging folders right after a suspicious logon are the interesting ones. Sources cited, not re-read in this session (B-001)."
+
+  - id: FH-FS-007
+    title: Event log files or Prefetch files deleted
+    tactic: filesystem
+    attack: [T1070.001, T1070.004]
+    channel: UsnJrnl
+    event_ids: [2]
+    prerequisites:
+      - "$UsnJrnl:$J collected"
+    logic:
+      selection:
+        Channel: UsnJrnl
+        EventID: 2
+        FileName|re: '\.(evtx|pf)$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel UsnJrnl --event-id 2 --regex 'FileName=\.(evtx|pf)$' --format llm
+    pivots:
+      - "Security 1102 / System 104 log clearing at the same time"
+      - "The account logged on at that time (4624) and the process (4688) that deleted them"
+    false_positives:
+      - "Prefetch housekeeping keeps a fixed number of .pf files and deletes old ones one at a time; mass deletion is the signal"
+    severity: high
+    sources:
+      - https://attack.mitre.org/techniques/T1070/001/
+      - https://attack.mitre.org/techniques/T1070/004/
+    verified: false
+    notes: "Sources cited, not re-read in this session (B-001)."
+
+  - id: FH-FS-008
+    title: Mass renames to one new extension or ransom notes (ransomware)
+    tactic: filesystem
+    attack: [T1486]
+    channel: UsnJrnl
+    event_ids: [3, 1]
+    prerequisites:
+      - "$UsnJrnl:$J collected"
+    logic:
+      renames:
+        Channel: UsnJrnl
+        EventID: 3
+        Reason|contains: RenameNewName
+      notes:
+        EventID: 1
+        FileName|re: '(readme|decrypt|restore|recover|how_to).*\.(txt|html|hta)$'
+      condition: count(renames) by extension of FileName > 500 within 10m or notes
+    forhunt:
+      - forhunt search <paths> --channel UsnJrnl --event-id 3 --field Reason~RenameNewName --limit 50 --format llm
+      - forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'FileName=(readme|decrypt|restore|recover|how_to).*\.(txt|html|hta)$' --format llm
+    pivots:
+      - "First renamed file and the process creation just before it; shadow copy deletion (vssadmin, wmic) in event logs"
+    false_positives:
+      - "Bulk renames by backup, sync or photo software (no single foreign extension, no notes)"
+    severity: critical
+    sources:
+      - https://attack.mitre.org/techniques/T1486/
+    verified: false
+    notes: "The summary line's top_values on FileName help spot one dominating extension. Sources cited, not re-read in this session (B-001)."
+
+  - id: FH-FS-009
+    title: Windows process names outside their system folders (masquerading)
+    tactic: filesystem
+    attack: [T1036.005]
+    channel: MFT
+    event_ids: [48]
+    prerequisites:
+      - "$MFT collected"
+    logic:
+      selection:
+        EventID: 48
+        FileName|re: '^(svchost|lsass|csrss|services|smss|winlogon|wininit|explorer|rundll32|taskhostw|conhost|spoolsv)\.exe$'
+      filter_system:
+        Path|re: '\\windows\\(system32|syswow64|winsxs|servicing)\\'
+      condition: selection and not filter_system
+    forhunt:
+      - forhunt search <paths> --channel MFT --event-id 48 --regex 'FileName=^(svchost|lsass|csrss|services|smss|winlogon|wininit|explorer|rundll32|taskhostw|conhost|spoolsv)\.exe$' --limit 0 --format llm
+    pivots:
+      - "Drop rows under \\Windows\\System32, SysWOW64, WinSxS and servicing (and \\Windows\\explorer.exe); what is left is suspicious"
+      - "Process creation and services pointing at the remaining paths"
+    false_positives:
+      - "\\Windows\\explorer.exe is legitimate; backup copies made by administrators"
+    severity: high
+    sources:
+      - https://attack.mitre.org/techniques/T1036/005/
+    verified: false
+    notes: "Regex has no negation: filter the system folders by reading the output. Sources cited, not re-read in this session (B-001)."
+
+  - id: FH-FS-010
+    title: Remote execution service binaries dropped in the Windows folder
+    tactic: filesystem
+    attack: [T1569.002, T1021.002]
+    channel: MFT
+    event_ids: [48]
+    prerequisites:
+      - "$MFT collected"
+    logic:
+      selection:
+        EventID: 48
+        FileName|re: '^(psexesvc|paexec|remcomsvc|csexecsvc).*\.exe$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel MFT --event-id 48 --regex 'FileName=^(psexesvc|paexec|remcomsvc|csexecsvc).*\.exe$' --format llm
+      - forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=^\.\\windows\\[^\\]+\.exe$' --format llm
+    pivots:
+      - "System 7045 / Security 4697 service install with the same image path"
+      - "Network logon (4624 type 3) and ADMIN$ access (5145) just before"
+    false_positives:
+      - "Administrators using PsExec"
+    severity: high
+    sources:
+      - https://attack.mitre.org/techniques/T1569/002/
+    verified: false
+    notes: "The second query lists any executable created directly in \\Windows, where service binaries copied over ADMIN$ land. Sources cited, not re-read in this session (B-001)."

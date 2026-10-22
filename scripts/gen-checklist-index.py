@@ -25,13 +25,14 @@ ORDER = [
     "initial-access", "execution", "persistence", "privilege-escalation",
     "defense-evasion", "credential-access", "discovery", "lateral-movement",
     "remote-access", "active-directory", "collection-exfiltration", "impact",
+    "filesystem",
 ]
 PREFIX = {
     "initial-access": "INIT", "execution": "EXE", "persistence": "PER",
     "privilege-escalation": "PRV", "defense-evasion": "DEF",
     "credential-access": "CRED", "discovery": "DISC", "lateral-movement": "LAT",
     "remote-access": "RMT", "active-directory": "AD",
-    "collection-exfiltration": "COLL", "impact": "IMP",
+    "collection-exfiltration": "COLL", "impact": "IMP", "filesystem": "FS",
 }
 REQUIRED = ["id", "title", "tactic", "attack", "channel", "event_ids", "prerequisites",
             "logic", "pivots", "false_positives", "severity", "sources", "verified"]
@@ -48,6 +49,7 @@ SOURCES = [
     ("RDP/TS", lambda c: "terminalservices" in c.lower() or "rdp" in c.lower()),
     ("WinRM", lambda c: "winrm" in c.lower()),
     ("Defender", lambda c: "defender" in c.lower()),
+    ("NTFS", lambda c: c in ("MFT", "UsnJrnl")),
     ("Other", None),
 ]
 
@@ -72,6 +74,7 @@ and the gap goes into the report.
 | WinRM/Operational | PowerShell remoting sessions | remote-access, lateral-movement |
 | Windows Defender/Operational | detections (1116/1117) and tampering (5001/5007/5010/5012/5013) | defense-evasion, credential-access |
 | Certificate Services auditing on the CA (4886-4900) | ADCS abuse (ESC1-ESC8) | active-directory |
+| `$MFT` / `$UsnJrnl:$J` not collected (or journal wrapped) | file creation, renames, deletions, timestomping, downloaded files (Zone.Identifier) when event logs are absent or cleared; the journal only covers its retention window | filesystem |
 | Retention: log rolled over or cleared | anything before the first event; check `stats` first/last time, `log_tampering`, `rid_gaps`, `quiet_periods` | all |
 | Not in EVTX at all | VPN/firewall/proxy logs, EDR telemetry, file contents, memory, network bytes transferred, browser history | exfiltration volume, C2 content, initial access via external services |
 """

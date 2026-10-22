@@ -47,15 +47,20 @@ export PATH="$HOME/.local/share/forensic-hunter/bin:$PATH"
 
 ```bash
 CASE=~/cases/<case-name>; mkdir -p "$CASE"/{evidence,work}
-cp -a <source>/*.evtx "$CASE/evidence/" && chmod -R a-w "$CASE/evidence"
-(cd "$CASE/evidence" && find . -type f -name '*.evtx' -exec sha256sum {} + | sort -k2) > "$CASE/work/hashes-before.txt"
+cp -a <collection>/. "$CASE/evidence/" && chmod -R a-w "$CASE/evidence"
+(cd "$CASE/evidence" && find . -type f -exec sha256sum {} + | sort -k2) > "$CASE/work/hashes-before.txt"
 ```
 On macOS use `shasum -a 256`; on Windows `Get-FileHash -Algorithm SHA256`.
 Record collection source, hostnames and the time of acquisition.
 Collections from several endpoints go under one `evidence/` tree (e.g. one
 folder per host); every forhunt command takes the whole tree, merges all hosts
 and keeps the computer name on each event. Scope a question to one host with
-`--computer HOST`. If the analyst wants to browse in Timeline Explorer:
+`--computer HOST`. Ask for `$MFT` and `$Extend/$J` with the event logs (KAPE
+`!SANS_Triage` / Velociraptor `Windows.KapeFiles.Targets` collect them): they
+show files created, renamed, deleted and timestomped when logs are missing or
+cleared (`references/forhunt.md`, NTFS section). They carry no host name, so
+scope them by the host's folder, never with `--computer`.
+If the analyst wants to browse in Timeline Explorer:
 `forhunt parse "$CASE/evidence" -F csv -O "$CASE/work/csv" --split host`.
 
 ## 2. Triage with stats (step b)
@@ -130,7 +135,10 @@ forhunt timeline E --since 2024-03-11T10:05:00Z --until 2024-03-11T10:35:00Z --c
 
 For each cluster of findings, run `forhunt timeline` on a tight window
 (minutes to an hour) and the involved host(s), merge with Hayabusa
-detections, and build the chronological table for the report.
+detections, and build the chronological table for the report. When `$MFT`
+/ `$J` are in the evidence, run the window over the host's folder so file
+activity (downloads, dropped tools, deletions) sits between the events that
+explain it; use `$FILE_NAME` times (event 48) when `$SI` times look faked.
 
 ## 6. Report (step f)
 

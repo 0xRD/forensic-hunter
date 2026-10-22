@@ -49,6 +49,10 @@ jobs:
           for f in $(cd fixtures/synthetic && find . -name '*.evtx'); do
             cmp "fixtures/synthetic/$f" "target/fixtures-check/$f"
           done
+          cargo run --release --locked -p evtx-gen -- ntfs --out target/ntfs-check
+          (cd fixtures/ntfs && find . -type f) | while IFS= read -r f; do
+            cmp "fixtures/ntfs/$f" "target/ntfs-check/$f" || exit 1
+          done
       - name: Benchmarks compile
         run: cargo bench --workspace --no-run --locked
 

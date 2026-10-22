@@ -4291,6 +4291,173 @@
    ],
    "severity": "low",
    "verified": false
+  },
+  {
+   "id": "FH-FS-001",
+   "title": "Timestomping - $STANDARD_INFORMATION created before $FILE_NAME created",
+   "tactic": "filesystem",
+   "channels": [
+    "MFT"
+   ],
+   "event_ids": [
+    16
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel MFT --event-id 16 --field SiLtFn=true --regex 'Path=\\.(exe|dll|sys|ps1|bat|cmd|vbs|js|hta|scr)$' --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-002",
+   "title": "Timestamps with zero sub-seconds on executables",
+   "tactic": "filesystem",
+   "channels": [
+    "MFT"
+   ],
+   "event_ids": [
+    16
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel MFT --event-id 16 --field uSecZeros=true --regex 'Path=\\.(exe|dll|sys|ps1|bat)$' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-003",
+   "title": "Executables or scripts created in user-writable staging folders",
+   "tactic": "filesystem",
+   "channels": [
+    "UsnJrnl"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=\\\\(users\\\\public|programdata|windows\\\\temp|perflogs|appdata\\\\local\\\\temp)\\\\[^\\\\]+\\.(exe|dll|ps1|bat|cmd|vbs|js|hta|scr)$' --format llm",
+    "forhunt search <paths> --channel MFT --event-id 48 --regex 'Path=\\\\(users\\\\public|programdata|windows\\\\temp|perflogs)\\\\[^\\\\]+\\.(exe|dll|ps1|bat|cmd|vbs|js|hta|scr)$' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-004",
+   "title": "Files downloaded from the internet (Zone.Identifier with a URL)",
+   "tactic": "filesystem",
+   "channels": [
+    "MFT"
+   ],
+   "event_ids": [
+    16,
+    48
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel MFT --event-id 48 --field ZoneIdContents~HostUrl --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-005",
+   "title": "Memory dump files (credential dumping output)",
+   "tactic": "filesystem",
+   "channels": [
+    "UsnJrnl"
+   ],
+   "event_ids": [
+    1,
+    2
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel UsnJrnl --regex 'FileName=\\.(dmp|mdmp)$' --format llm",
+    "forhunt search <paths> --channel MFT --event-id 48 --regex 'Path=\\.(dmp|mdmp)$' --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-006",
+   "title": "Executables, scripts or archives deleted (cleanup)",
+   "tactic": "filesystem",
+   "channels": [
+    "UsnJrnl"
+   ],
+   "event_ids": [
+    2
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel UsnJrnl --event-id 2 --regex 'FileName=\\.(exe|dll|ps1|bat|cmd|vbs|zip|7z|rar|dmp)$' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-007",
+   "title": "Event log files or Prefetch files deleted",
+   "tactic": "filesystem",
+   "channels": [
+    "UsnJrnl"
+   ],
+   "event_ids": [
+    2
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel UsnJrnl --event-id 2 --regex 'FileName=\\.(evtx|pf)$' --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-008",
+   "title": "Mass renames to one new extension or ransom notes (ransomware)",
+   "tactic": "filesystem",
+   "channels": [
+    "UsnJrnl"
+   ],
+   "event_ids": [
+    3,
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel UsnJrnl --event-id 3 --field Reason~RenameNewName --limit 50 --format llm",
+    "forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'FileName=(readme|decrypt|restore|recover|how_to).*\\.(txt|html|hta)$' --format llm"
+   ],
+   "severity": "critical",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-009",
+   "title": "Windows process names outside their system folders (masquerading)",
+   "tactic": "filesystem",
+   "channels": [
+    "MFT"
+   ],
+   "event_ids": [
+    48
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel MFT --event-id 48 --regex 'FileName=^(svchost|lsass|csrss|services|smss|winlogon|wininit|explorer|rundll32|taskhostw|conhost|spoolsv)\\.exe$' --limit 0 --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-010",
+   "title": "Remote execution service binaries dropped in the Windows folder",
+   "tactic": "filesystem",
+   "channels": [
+    "MFT"
+   ],
+   "event_ids": [
+    48
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel MFT --event-id 48 --regex 'FileName=^(psexesvc|paexec|remcomsvc|csexecsvc).*\\.exe$' --format llm",
+    "forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=^\\.\\\\windows\\\\[^\\\\]+\\.exe$' --format llm"
+   ],
+   "severity": "high",
+   "verified": false
   }
  ]
 }

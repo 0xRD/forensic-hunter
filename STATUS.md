@@ -3,7 +3,7 @@
 Last update: 2026-10-22 (session 1)
 
 ## Done
-- Spec review, PLAN.md, DECISIONS.md (D-001..D-034), BLOCKERS.md (B-001..B-004)
+- Spec review, PLAN.md, DECISIONS.md (D-001..D-041), BLOCKERS.md (B-001..B-004)
 - forhunt-core: event model, Artifact/Source traits, EVTX source (positional
   reads, per-chunk panic isolation, truncated-tail recovery, damaged string
   table retry), fast template-value decoder + JSON fallback (byte-identical),
@@ -38,10 +38,18 @@ Last update: 2026-10-22 (session 1)
 - v0.1.0 released (2026-10-22): 5 archives + .sha256 + SHA256SUMS, tag on
   833e577, CI green on that commit
 
+- NTFS: `$MFT` and `$UsnJrnl:$J` sources (D-036..D-041), differential checks
+  against mft_dump (13k real records) and USN-Journal-Parser, fuzzed, synthetic
+  fixtures for the WS-07 scenario, filesystem checklist (10 checks), P-011
+
 ## In progress
 - (none)
 
 ## Next
+- NTFS follow-ups: MFTECmd-layout CSV option, `$I30` / `$LogFile`, hard links
+  (one event set per name), attribute lists (names in extension records),
+  host name from the SYSTEM hive once registry support exists, lazy
+  timestamp fields (P-011)
 - Pre-public steps for the owner (history author, release, visibility, tap, installer test): TODO.md
 - Homebrew tap (deferred, B-002)
 - Review lower-priority items: Command and Control checklist, symlinked

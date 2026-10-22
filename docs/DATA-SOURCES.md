@@ -10,6 +10,10 @@ Nothing below is committed to this repository unless marked *committed*.
 | [evtx crate samples](https://github.com/omerbenamram/evtx/tree/master/samples) | repository MIT/Apache-2.0 | manual robustness testing (dirty, corrupt files) | git clone; not used by CI |
 | [Hayabusa](https://github.com/Yamato-Security/hayabusa) binary | GPL-3.0 | detections in the skill workflow | `skill/scripts/install.sh`/`install.ps1`, SHA-256 pinned in `skill/scripts/hayabusa.sha256` |
 | Hayabusa / Sigma rules | DRL 1.1 | shipped inside the Hayabusa archive; cited (never copied) by the checklists | as above |
+| `fixtures/ntfs/**` (*committed*) | MIT OR Apache-2.0 (generated) | NTFS tests | `cargo run -p evtx-gen -- ntfs`; WS-07's C: `$MFT` and `$Extend/$J` for the same scenario, corrupt/truncated variants; reproducible byte for byte (CI) |
+| NTFS benchmark corpus | MIT OR Apache-2.0 (generated) | NTFS benchmarks | `evtx-gen ntfs-corpus --records 1000000` (1 GiB `$MFT`, 170 MiB `$J`) |
+| [mft crate](https://github.com/omerbenamram/mft) `samples/MFT` (13 MB real `$MFT`) and `mft_dump` | MIT/Apache-2.0 | differential check of the `$MFT` parser: paths, six timestamps, deleted flag and sizes of all 13,064 base records match (only metafiles without an unnamed `$DATA` differ: forhunt leaves their size out) | git clone; not used by CI |
+| [USN-Journal-Parser](https://github.com/PoorBillionaire/USN-Journal-Parser) `tests/usnjrnl.zip` (1000-byte real `$J`) | Apache-2.0 | differential check of the `$J` parser (records, names, times identical) | git clone; not used by CI |
 | Checklist content (`skill/references/`) | MIT OR Apache-2.0 | skill | written for this project; sources cited by URL |
 
 Rust dependencies are checked by `cargo deny` (`deny.toml`): permissive

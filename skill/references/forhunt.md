@@ -1,15 +1,16 @@
 # forhunt reference
 
 `forhunt <command> <paths...> [options]`. Paths are files, directories
-(recursive, `*.evtx`) or globs, from any number of hosts. Inputs are only read
-(opened read-only, positional reads).
+(recursive) or globs, from any number of hosts. Directories are searched for
+`*.evtx`, `$MFT` and `$J` / `*UsnJrnl*` files. Inputs are only read (opened
+read-only, positional reads).
 
 | Command | Purpose | Default format |
 |---|---|---|
 | `stats` | triage summary: volumes, coverage, accounts, hosts, IPs, logon types, log tampering, record-id gaps, quiet periods | `llm` |
 | `search` | events matching filters, in file/record order | `llm`, cap 200 |
 | `timeline` | events from all inputs merged by time | `llm`, cap 200 (earliest first) |
-| `show <id>... -p <paths>` | one event in full (`-F json|xml|llm`) | `json` |
+| `show <id>... -p <paths>` | one event in full (`-F json|xml|llm`; `xml`/`raw` is the native record: EVTX XML, hex dump for NTFS) | `json` |
 | `parse` | every event (machine use only) | `jsonl` |
 | `hayabusa <file>` | normalise Hayabusa JSON/JSONL output, attach forhunt ids (`-p <evtx dir>`); `-g` groups per rule and host | `llm`, cap 200 |
 | `checklist <paths> -k checklists.json` | one-pass sweep of every detection check: log source coverage, query hits, pre-filled status file (`-F md|json`, `--tactic`) | markdown |
@@ -61,6 +62,46 @@ PayloadData1..6, ExecutableInfo, HiddenRecord, SourceFile, Keywords, Payload`,
 then `ForhuntId`. `TimeCreated` is `yyyy-MM-dd HH:mm:ss.fffffff` (UTC unless
 `--tz`); `PayloadData*` hold the event's key fields as `Name: value`;
 `Payload` holds every field as JSON. CSV values are never truncated (`--max-value-len` applies to `llm` only).
+
+## NTFS: `$MFT` and `$UsnJrnl:$J`
+
+Same commands, filters and output formats as event logs; merge them with
+EVTX in `timeline` to see what happened on disk around each event.
+
+| Channel | Event id | Event |
+|---|---|---|
+| `MFT` | 16 | timestamps of `$STANDARD_INFORMATION` (what Explorer shows; can be faked) |
+| `MFT` | 48 | timestamps of `$FILE_NAME` (set by the kernel; hard to fake) |
+| `UsnJrnl` | 1 / 2 / 3 | file created / deleted / renamed |
+| `UsnJrnl` | 4 / 5 / 6 | data changed / metadata changed (attributes, security, streams) / closed |
+
+- **One `MFT` event per distinct timestamp** of a record: `MACB` says which of
+  Modified, Accessed, record Changed, Born (created) share the event time
+  (`M..B`, `.AC.`, ...). Fields: `Path` (`.\` = volume root; no drive letter),
+  `FileName`, `FileSize`, `EntryNumber`, `SequenceNumber`, parent numbers,
+  `Deleted` (record not in use: deleted file still described), `IsDirectory`,
+  `SiFlags`, `AdsNames`, `ZoneIdContents` (download origin: `HostUrl=`), all
+  eight timestamps (`Created0x10` ... `LastAccess0x30`), `Usn`.
+- **Timestomp indicators** (present only when true): `SiLtFn` ($SI created
+  earlier than $FN created), `uSecZeros` ($SI created has no sub-second part),
+  `Copied` ($SI created after $SI modified: copied file).
+- **Journal events**: `Reason` (`FileCreate|DataExtend|Close`), `FileName`,
+  `Path` (resolved when an `$MFT` sits in the journal's folder or its parent,
+  as in KAPE / Velociraptor collections), entry and parent numbers, `Usn`,
+  `FileAttributes`. The journal only covers its retention window (often days).
+- **No host name** is stored in NTFS metadata: `--computer` drops these
+  events. Scope by the host's evidence folder instead
+  (`forhunt timeline evidence/WS-07 ...`).
+- Orphans (parent directory reused or missing) show as `.\[orphan 0x<entry>-<seq>]\name`.
+- Ids are `<file key>:<entry*8+n>` for `$MFT` and `<file key>:<byte offset>`
+  for `$J`; `show` accepts them like EVTX ids.
+
+```bash
+forhunt search E -c MFT -e 16 -f SiLtFn=true -r 'Path=\.(exe|dll|ps1)$'     # timestomped binaries
+forhunt search E -c UsnJrnl -e 2 -r 'FileName=\.(exe|ps1|zip|dmp)$'          # deleted tools
+forhunt search E -c MFT -e 48 -f ZoneIdContents~HostUrl                      # downloaded files
+forhunt timeline evidence/WS-07 --since 2024-03-11T10:10:00Z --until 2024-03-11T10:35:00Z
+```
 
 ## `llm` format
 

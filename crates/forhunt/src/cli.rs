@@ -221,6 +221,7 @@ pub struct StatsArgs {
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
 pub enum ShowFormat {
     Json,
+    #[value(alias = "raw")]
     Xml,
     Llm,
 }
@@ -233,6 +234,7 @@ pub struct ShowArgs {
     /// Where to look for the file (files, directories, globs).
     #[arg(long, short = 'p', value_name = "PATHS", default_value = ".")]
     pub path: Vec<String>,
+    /// `xml`: the record in its native form (EVTX XML; hex dump for $MFT and $J).
     #[arg(long, short = 'F', value_enum, default_value_t = ShowFormat::Json)]
     pub format: ShowFormat,
     #[arg(long, short = 'o', default_value = "-")]

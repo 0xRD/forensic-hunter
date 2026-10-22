@@ -308,6 +308,21 @@ Case: <name>  Evidence: <path>  Analyst: <name>  Started: <UTC time>
 | FH-IMP-018 | System shutdown or restart initiated (1074), unexpected shutdown (6008), log stop/start (6006/6005) | System 1074,6006,6008,6005 |  |  |
 | FH-IMP-019 | Defacement or ransom wallpaper (web root writes, wallpaper registry change) | Microsoft-Windows-Sysmon/Operational 11,13 |  |  |
 
+## File System (NTFS $MFT and $UsnJrnl)
+
+| Id | Check | Source | Status | Evidence / reason |
+|---|---|---|---|---|
+| FH-FS-001 | Timestomping - $STANDARD_INFORMATION created before $FILE_NAME created | MFT 16 |  |  |
+| FH-FS-002 | Timestamps with zero sub-seconds on executables | MFT 16 |  |  |
+| FH-FS-003 | Executables or scripts created in user-writable staging folders | UsnJrnl 1 |  |  |
+| FH-FS-004 | Files downloaded from the internet (Zone.Identifier with a URL) | MFT 16,48 |  |  |
+| FH-FS-005 | Memory dump files (credential dumping output) | UsnJrnl 1,2 |  |  |
+| FH-FS-006 | Executables, scripts or archives deleted (cleanup) | UsnJrnl 2 |  |  |
+| FH-FS-007 | Event log files or Prefetch files deleted | UsnJrnl 2 |  |  |
+| FH-FS-008 | Mass renames to one new extension or ransom notes (ransomware) | UsnJrnl 3,1 |  |  |
+| FH-FS-009 | Windows process names outside their system folders (masquerading) | MFT 48 |  |  |
+| FH-FS-010 | Remote execution service binaries dropped in the Windows folder | MFT 48 |  |  |
+
 ## Summary
 
 | Tactic | HIT | NO_HIT | NOT_APPLICABLE | LOG_SOURCE_MISSING |
@@ -324,3 +339,4 @@ Case: <name>  Evidence: <path>  Analyst: <name>  Started: <UTC time>
 | active-directory |  |  |  |  |
 | collection-exfiltration |  |  |  |  |
 | impact |  |  |  |  |
+| filesystem |  |  |  |  |

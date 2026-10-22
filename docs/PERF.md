@@ -67,3 +67,32 @@ profiling shows `decode_value` (~35% with its allocations) and record
 scanning as the main costs. With all cores the gap is ~10% (1.87 s vs
 1.70 s on 2 GiB). Next step: decode values lazily, only for fields the
 writer or filter reads.
+
+## P-011 — NTFS sources (2026-10-22)
+
+Synthetic volume: `evtx-gen ntfs-corpus --records 1000000` = 976 MiB `$MFT`
+(1M records, ~8% directories, 5% deleted) and a 170 MiB `$J` (2M records).
+4 cores, hyperfine, 3 runs.
+
+| Task | Wall time | Peak RSS |
+|---|---|---|
+| `parse $MFT` jsonl, all cores (4.0M events) | 2.19 s ± 0.23 | 94 MiB |
+| `parse $MFT` jsonl, 1 thread | 7.31 s ± 0.42 | 47 MiB |
+| `parse $MFT` csv, all cores | 5.28 s (1 run) | |
+| `parse $J` jsonl, all cores (2.0M events; includes the sibling `$MFT` path table) | 0.80 s ± 0.10 | 118 MiB |
+| `search` both, `-c UsnJrnl -e 2` | 0.53 s ± 0.07 | 157 MiB |
+| `timeline` both, one-day window | 0.75 s (1 run) | |
+| `timeline` both, full sort of 6.0M events | 41.9 s (1 run) | |
+| `mft_dump -o csv` (mft 0.7.0, one row per record, 1 thread) | 16.2 s (1 run) | |
+
+- The directory path table is built by a parallel pre-pass that decodes only
+  directory records (~0.3 s for 1M records), then every path is one lookup.
+- Every event of a record borrows text built once per record (paths, the
+  eight timestamps, flags); per-event cost is the field list and the writer.
+- Profile of a no-match search: timestamp formatting (12%) and the filter;
+  `--field Name~text` now finds candidates with `memchr2` on the needle's
+  first byte instead of comparing every window (no-match search, 1 thread:
+  3.81 s -> 2.88 s; benefits EVTX searches too).
+- Full-sort timelines of millions of MFT events are slow (spill to disk of
+  ~1 KB events); timelines are meant for windows. Lazy timestamp fields
+  (formatted only when written) would cut both costs: next step.

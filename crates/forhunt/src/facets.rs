@@ -42,7 +42,10 @@ impl Facets {
             .eid
             .entry((ev.channel.to_string(), ev.event_id))
             .or_default() += 1;
-        *self.host.entry(ev.computer.to_string()).or_default() += 1;
+        // Artifacts without a host name ($MFT, $J) are left out of host facets.
+        if !ev.computer.is_empty() {
+            *self.host.entry(ev.computer.to_string()).or_default() += 1;
+        }
         let secs = ev.ts.secs();
         *self.day.entry(secs.div_euclid(86_400)).or_default() += 1;
         *self.hour.entry(secs.div_euclid(3600)).or_default() += 1;

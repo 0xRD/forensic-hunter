@@ -1,7 +1,8 @@
 # Forensic Hunter
 
-**`forhunt`**: a very fast, single-binary Windows event log (EVTX) toolkit for
-DFIR, built to be driven by an LLM with a limited context window, plus a
+**`forhunt`**: a very fast, single-binary Windows forensic toolkit for event
+logs (EVTX) and NTFS metadata (`$MFT`, `$UsnJrnl:$J`), built to be driven by
+an LLM with a limited context window, plus a
 **Claude skill** that turns Claude into a systematic, checklist-driven Windows
 forensic analyst.
 
@@ -15,7 +16,11 @@ forensic analyst.
 - **Robust**: corrupt or truncated logs never crash it; bad chunks and records
   are counted and reported (`--strict` makes them fatal).
 - **Forensically sound**: inputs are only opened read-only, never modified.
-- **Extensible**: an `Artifact`/`Source` abstraction ready for MFT, registry,
+- **NTFS timeline**: `$MFT` records become timestamp events with full paths,
+  MACB flags, timestomp indicators, deleted records and download origin
+  (Zone.Identifier); `$J` change-journal entries become create / rename /
+  delete events. Both merge with event logs in one timeline.
+- **Extensible**: an `Artifact`/`Source` abstraction ready for registry,
   prefetch, LNK, jump lists, shellbags and amcache.
 
 ## Install
@@ -44,6 +49,8 @@ forhunt parse   ./evidence -F csv -o all.csv         # full export, all hosts in
 forhunt parse   ./evidence -F csv --computer WS-07 -o ws07.csv   # one host only
 forhunt parse   ./evidence -F csv -O out/ --split host   # one file per host (or --split file)
 forhunt hayabusa hayabusa.jsonl -p ./evidence        # normalise Hayabusa detections
+forhunt search  ./evidence -c MFT -e 16 -f SiLtFn=true   # timestomped files ($MFT)
+forhunt search  ./evidence -c UsnJrnl -e 2               # file deletions ($J)
 ```
 
 Filters: `--event-id 4624,4720-4738`, `--channel Security|Sysmon|PS|...`,

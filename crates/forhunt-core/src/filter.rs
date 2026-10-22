@@ -102,10 +102,18 @@ pub fn contains_ci(hay: &str, needle: &str) -> bool {
         if n.len() > h.len() {
             return false;
         }
-        let first = n[0];
-        return h
-            .windows(n.len())
-            .any(|w| w[0].to_ascii_lowercase() == first && w.eq_ignore_ascii_case(n));
+        // Candidate positions of the first byte (either case), then compare.
+        let (lo, up) = (n[0], n[0].to_ascii_uppercase());
+        let last = h.len() - n.len();
+        let mut i = 0;
+        while i <= last {
+            match memchr::memchr2(lo, up, &h[i..=last]) {
+                Some(p) if h[i + p..i + p + n.len()].eq_ignore_ascii_case(n) => return true,
+                Some(p) => i += p + 1,
+                None => return false,
+            }
+        }
+        return false;
     }
     hay.to_lowercase().contains(needle)
 }

@@ -626,3 +626,149 @@ fn sampled_key_collision_keeps_both_files() {
         assert_eq!(s[0]["id"], id.as_str());
     }
 }
+
+fn nfx(name: &str) -> String {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/ntfs")
+        .join(name)
+        .display()
+        .to_string()
+}
+
+#[test]
+fn ntfs_scenario() {
+    let vol = nfx("WS-07");
+    // Timestomped binary: $SI created before $FN created, zero sub-seconds.
+    let v = lines(&ok(&[
+        "search",
+        "-q",
+        &vol,
+        "-c",
+        "MFT",
+        "-e",
+        "16",
+        "-f",
+        "SiLtFn=true",
+    ]));
+    assert_eq!(summary(&v)["matches"], 2);
+    assert_eq!(v[0]["d"]["path"], ".\\Windows\\PSEXESVC.exe");
+    assert_eq!(v[0]["t"], "2019-03-19T14:23:11.000000Z");
+    assert_eq!(v[0]["d"]["usec0"], true);
+    // Download with its Zone.Identifier.
+    let v = lines(&ok(&[
+        "search",
+        "-q",
+        &vol,
+        "-c",
+        "MFT",
+        "-f",
+        "ZoneIdContents~198.51.100.7",
+    ]));
+    assert!(
+        v[0]["d"]["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("\\Users\\Public\\u.ps1")
+    );
+    // Deleted dump: in $MFT (record not in use) and in $J, with resolved paths.
+    let v = lines(&ok(&[
+        "search",
+        "-q",
+        &vol,
+        "-f",
+        "Path~lsass.dmp",
+        "-F",
+        "jsonl",
+    ]));
+    assert!(
+        v.iter()
+            .any(|e| e["channel"] == "MFT" && e["data"]["Deleted"] == true)
+    );
+    let del: Vec<_> = v
+        .iter()
+        .filter(|e| e["channel"] == "UsnJrnl" && e["event_id"] == 2)
+        .collect();
+    assert_eq!(del.len(), 1);
+    assert_eq!(del[0]["data"]["Path"], ".\\Users\\Public\\lsass.dmp");
+    assert_eq!(del[0]["data"]["Reason"], "FileDelete|Close");
+    // Rename old and new names.
+    let v = lines(&ok(&[
+        "search", "-q", &vol, "-c", "UsnJrnl", "-e", "3", "-F", "jsonl",
+    ]));
+    let names: Vec<_> = v
+        .iter()
+        .map(|e| e["data"]["FileName"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["m.exe", "WinUpdate.exe", "WinUpdate.exe"]);
+    // show: JSON and the native hex dump.
+    let id = v[0]["id"].as_str().unwrap().to_string();
+    let shown: Value = serde_json::from_str(&ok(&["show", "-q", &id, "-p", &vol])).unwrap();
+    assert_eq!(shown["data"]["FileName"], "m.exe");
+    let hex = ok(&["show", "-q", &id, "-p", &vol, "-F", "raw"]);
+    assert!(hex.starts_with("00000000  "), "{hex}");
+    // No host names in NTFS metadata: nothing in host facets.
+    let st = lines(&ok(&["stats", "-q", &vol]));
+    assert_eq!(st[0]["stats"]["hosts"], 0);
+    assert!(!ok(&["stats", "-q", &vol]).contains("rid_gaps"));
+}
+
+#[test]
+fn ntfs_timeline_merges_with_event_logs() {
+    let out = ok(&[
+        "timeline",
+        "-q",
+        &fx("System.evtx"),
+        &nfx("WS-07"),
+        "--since",
+        "2024-03-11T10:21:00Z",
+        "--until",
+        "2024-03-11T10:23:00Z",
+        "-F",
+        "jsonl",
+    ]);
+    let v = lines(&out);
+    let ts: Vec<_> = v
+        .iter()
+        .map(|e| e["timestamp"].as_str().unwrap().to_string())
+        .collect();
+    let mut sorted = ts.clone();
+    sorted.sort();
+    assert_eq!(ts, sorted);
+    let ch: std::collections::BTreeSet<_> =
+        v.iter().map(|e| e["channel"].as_str().unwrap()).collect();
+    assert!(
+        ch.contains("System") && ch.contains("MFT") && ch.contains("UsnJrnl"),
+        "{ch:?}"
+    );
+}
+
+#[test]
+fn ntfs_damaged_inputs_and_determinism() {
+    let o = forhunt(&["parse", "--strict", &nfx("corrupt.mft"), "-o", "-"]);
+    assert_eq!(o.status.code(), Some(4));
+    assert!(String::from_utf8_lossy(&o.stderr).contains("4 bad records"));
+    ok(&["parse", "-q", &nfx("truncated.mft")]);
+    let o = forhunt(&["parse", &nfx("corrupt_UsnJrnl.bin"), "-o", "-"]);
+    assert!(o.status.success());
+    assert!(String::from_utf8_lossy(&o.stderr).contains("1 bad records"));
+    let a = ok(&["parse", "-q", "-t", "1", &nfx("")]);
+    let b = ok(&["parse", "-q", "-t", "8", &nfx("")]);
+    assert_eq!(a, b);
+    // CSV rows use the same Timeline Explorer layout as event logs.
+    let csv = ok(&[
+        "search",
+        "-q",
+        &nfx("WS-07"),
+        "-c",
+        "MFT",
+        "-f",
+        "Path~PSEXESVC",
+        "-F",
+        "csv",
+    ]);
+    let row = csv.lines().nth(1).unwrap();
+    assert!(
+        row.contains(",MFT,") && row.contains("File timestamps ($SI)"),
+        "{row}"
+    );
+}

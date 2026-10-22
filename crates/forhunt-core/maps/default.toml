@@ -182,6 +182,20 @@ VirtualAccount = "virt"
 LinkedLogonId = "linked_lid"
 RestrictedAdminMode = "restricted_admin"
 ImpersonationLevel = "imp"
+# NTFS ($MFT, $J)
+MACB = "macb"
+FileSize = "size"
+Deleted = "deleted"
+IsDirectory = "isdir"
+SiFlags = "attrs"
+FileAttributes = "attrs"
+AdsNames = "ads"
+ZoneIdContents = "zone"
+SiLtFn = "si_lt_fn"
+uSecZeros = "usec0"
+Copied = "copied"
+Reason = "usn_reason"
+EntryNumber = "entry"
 
 # ---------------------------------------------------------------- Security
 
@@ -768,3 +782,57 @@ channel = "Microsoft-Windows-Bits-Client/Operational"
 id = 60
 title = "BITS transfer stopped"
 keep = ["name", "url", "hr"]
+
+# ---------------------------------------------------------------- NTFS
+# $MFT: one event per distinct timestamp of a record's $STANDARD_INFORMATION
+# (16) or $FILE_NAME (48); MACB says which timestamps share it.
+
+[[event]]
+channel = "MFT"
+id = 16
+title = "File timestamps ($SI)"
+keep = ["MACB", "Path", "FileSize", "Deleted", "IsDirectory", "SiLtFn", "uSecZeros", "Copied", "AdsNames", "ZoneIdContents", "EntryNumber"]
+
+[[event]]
+channel = "MFT"
+id = 48
+title = "File timestamps ($FN)"
+keep = ["MACB", "Path", "FileSize", "Deleted", "IsDirectory", "SiLtFn", "uSecZeros", "Copied", "AdsNames", "ZoneIdContents", "EntryNumber"]
+
+# $UsnJrnl:$J: event id = action derived from the accumulated reasons.
+
+[[event]]
+channel = "UsnJrnl"
+id = 1
+title = "File created"
+keep = ["Path", "FileName", "Reason", "EntryNumber", "FileAttributes"]
+
+[[event]]
+channel = "UsnJrnl"
+id = 2
+title = "File deleted"
+keep = ["Path", "FileName", "Reason", "EntryNumber", "FileAttributes"]
+
+[[event]]
+channel = "UsnJrnl"
+id = 3
+title = "File renamed"
+keep = ["Path", "FileName", "Reason", "EntryNumber", "FileAttributes"]
+
+[[event]]
+channel = "UsnJrnl"
+id = 4
+title = "File data changed"
+keep = ["Path", "FileName", "Reason", "EntryNumber", "FileAttributes"]
+
+[[event]]
+channel = "UsnJrnl"
+id = 5
+title = "File metadata changed"
+keep = ["Path", "FileName", "Reason", "EntryNumber", "FileAttributes"]
+
+[[event]]
+channel = "UsnJrnl"
+id = 6
+title = "File closed"
+keep = ["Path", "FileName", "Reason", "EntryNumber", "FileAttributes"]

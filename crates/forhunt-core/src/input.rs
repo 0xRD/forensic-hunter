@@ -112,5 +112,12 @@ mod tests {
         assert_eq!(e.files.len(), 1);
         let e = expand(&["/nonexistent/x.evtx".into()], &arts).unwrap();
         assert_eq!(e.missing.len(), 1);
+        // NTFS metadata found by name in a collection tree.
+        let c = d.path().join("host1/C/$Extend");
+        std::fs::create_dir_all(&c).unwrap();
+        std::fs::write(d.path().join("host1/C/$MFT"), b"x").unwrap();
+        std::fs::write(c.join("$J"), b"x").unwrap();
+        let e = expand(&[d.path().display().to_string()], &arts).unwrap();
+        assert_eq!(e.files.len(), 4);
     }
 }

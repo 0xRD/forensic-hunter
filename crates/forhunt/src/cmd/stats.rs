@@ -92,7 +92,9 @@ impl Sink for PartSink<'_> {
         let secs = ev.ts.secs();
         *p.day.entry(secs.div_euclid(86_400)).or_default() += 1;
         p.hour[secs.rem_euclid(86_400) as usize / 3600] += 1;
-        *p.hosts.entry(ev.computer.to_string()).or_default() += 1;
+        if !ev.computer.is_empty() {
+            *p.hosts.entry(ev.computer.to_string()).or_default() += 1;
+        }
         if let Some(a) = first_of(ev, ACCOUNT_FIELDS) {
             *p.accounts.entry(a).or_default() += 1;
         }
@@ -155,6 +157,8 @@ struct FileStats {
     /// Ranges of record ids missing between chunks: [after, before).
     record_id_gaps: Vec<(u64, u64)>,
     #[serde(skip)]
+    is_log: bool,
+    #[serde(skip)]
     ranges: Vec<(u64, u64, u64)>,
     #[serde(skip)]
     minutes: Vec<i64>,
@@ -198,6 +202,7 @@ pub fn run(a: StatsArgs) -> anyhow::Result<()> {
             .map(|s| FileStats {
                 key: s.key().to_string(),
                 path: s.path().display().to_string(),
+                is_log: s.is_log(),
                 ..Default::default()
             })
             .collect(),
@@ -274,6 +279,9 @@ pub fn run(a: StatsArgs) -> anyhow::Result<()> {
         f.first = f.first_ts.map(|t| t.iso());
         f.last = f.last_ts.map(|t| t.iso());
         f.channels.sort();
+        if !f.is_log {
+            continue;
+        }
         f.ranges.sort();
         for w in f.ranges.windows(2) {
             let (prev_max, next_min) = (w[0].1, w[1].0);
