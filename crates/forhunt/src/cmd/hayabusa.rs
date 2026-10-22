@@ -318,7 +318,10 @@ pub fn run(a: HayabusaArgs) -> anyhow::Result<()> {
 
     let mut out = common::output(&a.output)?;
     let mut buf = Vec::new();
-    for &i in &shown {
+    if a.group {
+        write_groups(&ctx, &dets, a.limit, &mut buf);
+    }
+    for &i in shown.iter().filter(|_| !a.group) {
         let d = &dets[i];
         buf.extend_from_slice(b"{\"id\":");
         match d.id {
@@ -389,7 +392,14 @@ pub fn run(a: HayabusaArgs) -> anyhow::Result<()> {
     buf.extend_from_slice(b"{\"summary\":{\"cmd\":\"hayabusa\",\"detections\":");
     json::u64(&mut buf, dets.len() as u64);
     buf.extend_from_slice(b",\"shown\":");
-    json::u64(&mut buf, shown.len() as u64);
+    json::u64(
+        &mut buf,
+        if a.group {
+            dets.len() as u64
+        } else {
+            shown.len() as u64
+        },
+    );
     buf.extend_from_slice(b",\"below_min_level\":");
     json::u64(&mut buf, below);
     if skipped > 0 {
@@ -442,12 +452,124 @@ pub fn run(a: HayabusaArgs) -> anyhow::Result<()> {
         buf.push(b']');
     }
     buf.push(b']');
-    if dets.len() > shown.len() {
+    if !a.group && dets.len() > shown.len() {
         buf.extend_from_slice(b",\"note\":\"capped: the most severe detections are shown; raise --min-level or --limit\"");
     }
     buf.extend_from_slice(b"}}\n");
     common::write_out(&mut *out, &buf)?;
     common::flush(&mut *out)
+}
+
+/// Grouped output: one line per (rule, level, host), most severe first, then
+/// by first occurrence.
+fn write_groups(ctx: &Ctx, dets: &[Det], limit: usize, buf: &mut Vec<u8>) {
+    struct G<'d> {
+        level: u8,
+        rule: &'d str,
+        host: &'d str,
+        n: u64,
+        first: Option<Ts>,
+        last: Option<Ts>,
+        eids: Vec<u64>,
+        mitre: &'d [String],
+        ids: Vec<EventRef>,
+    }
+    let mut groups: Vec<G<'_>> = Vec::new();
+    let mut index: HashMap<(&str, u8, &str), usize> = HashMap::new();
+    for d in dets {
+        let k = (d.rule.as_str(), d.level, d.computer.as_str());
+        let gi = *index.entry(k).or_insert_with(|| {
+            groups.push(G {
+                level: d.level,
+                rule: &d.rule,
+                host: &d.computer,
+                n: 0,
+                first: None,
+                last: None,
+                eids: Vec::new(),
+                mitre: &d.mitre,
+                ids: Vec::new(),
+            });
+            groups.len() - 1
+        });
+        let g = &mut groups[gi];
+        g.n += 1;
+        g.first = match (g.first, d.ts) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        g.last = match (g.last, d.ts) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        };
+        if !g.eids.contains(&d.eid) {
+            g.eids.push(d.eid);
+        }
+        if let Some(id) = d.id
+            && g.ids.len() < 5
+        {
+            g.ids.push(id);
+        }
+    }
+    groups.sort_by(|x, y| {
+        y.level
+            .cmp(&x.level)
+            .then(x.first.cmp(&y.first))
+            .then_with(|| x.rule.cmp(y.rule))
+    });
+    let n = if limit == 0 {
+        groups.len()
+    } else {
+        groups.len().min(limit)
+    };
+    for g in &groups[..n] {
+        buf.extend_from_slice(b"{\"rule\":");
+        json::str(buf, g.rule);
+        buf.extend_from_slice(b",\"lvl\":");
+        json::str(buf, level_name(g.level));
+        buf.extend_from_slice(b",\"h\":");
+        json::str(buf, g.host);
+        buf.extend_from_slice(b",\"n\":");
+        json::u64(buf, g.n);
+        for (k, t) in [("first", g.first), ("last", g.last)] {
+            if let Some(t) = t {
+                buf.extend_from_slice(format!(",\"{k}\":\"").as_bytes());
+                match &ctx.tz {
+                    Some(tz) => t.write_in_tz(tz, buf),
+                    None => t.write_iso(buf),
+                }
+                buf.push(b'"');
+            }
+        }
+        buf.extend_from_slice(b",\"eid\":[");
+        for (j, e) in g.eids.iter().enumerate() {
+            if j > 0 {
+                buf.push(b',');
+            }
+            json::u64(buf, *e);
+        }
+        buf.push(b']');
+        if !g.mitre.is_empty() {
+            buf.extend_from_slice(b",\"mitre\":[");
+            for (j, m) in g.mitre.iter().enumerate() {
+                if j > 0 {
+                    buf.push(b',');
+                }
+                json::str(buf, m);
+            }
+            buf.push(b']');
+        }
+        buf.extend_from_slice(b",\"ids\":[");
+        for (j, id) in g.ids.iter().enumerate() {
+            if j > 0 {
+                buf.push(b',');
+            }
+            buf.push(b'"');
+            id.write(buf);
+            buf.push(b'"');
+        }
+        buf.extend_from_slice(b"]}\n");
+    }
 }
 
 #[cfg(test)]

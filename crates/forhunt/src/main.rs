@@ -21,6 +21,7 @@ fn main() -> ExitCode {
         cli::Cmd::Timeline(a) => cmd::timeline::run(a),
         cli::Cmd::Show(a) => cmd::show::run(a),
         cli::Cmd::Hayabusa(a) => cmd::hayabusa::run(a),
+        cli::Cmd::Checklist(a) => cmd::checklist::run(a),
     };
     match r {
         Ok(()) => ExitCode::SUCCESS,

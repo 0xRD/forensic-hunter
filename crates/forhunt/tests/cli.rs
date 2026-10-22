@@ -411,3 +411,43 @@ fn fast_path_matches_json_path() {
     let slow = ok(&["parse", "-q", "-F", "csv", "--slow-decoder", &dir]);
     assert_eq!(fast, slow);
 }
+
+#[test]
+fn checklist_sweep() {
+    let checks = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../skill/references/checklists/checklists.json");
+    let checks = checks.display().to_string();
+    let out = ok(&[
+        "checklist",
+        "-q",
+        "-k",
+        &checks,
+        &fx("Security.evtx"),
+        &fx("System.evtx"),
+        "-F",
+        "json",
+    ]);
+    let v: Value = serde_json::from_str(&out).unwrap();
+    let rows = v.as_array().unwrap();
+    assert!(rows.len() > 200);
+    let status = |id: &str| {
+        rows.iter().find(|r| r["id"] == id).unwrap()["status"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(status("FH-DEF-001"), "HIT?"); // 1102 in the scenario
+    assert_eq!(status("FH-LAT-001"), "HIT?"); // PSEXESVC
+    // No Sysmon file given: Sysmon checks must say the source is missing.
+    assert_eq!(status("FH-CRED-001"), "LOG_SOURCE_MISSING");
+    let md = ok(&[
+        "checklist",
+        "-q",
+        "-k",
+        &checks,
+        &fx("Security.evtx"),
+        "--tactic",
+        "impact",
+    ]);
+    assert!(md.contains("## impact") && !md.contains("## execution"));
+}

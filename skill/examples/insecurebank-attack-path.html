@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>insecurebank.local attack path</title>
+<style>
+ :root{--bg:#fff;--fg:#1d1d1f;--muted:#6e6e73;--line:#d2d2d7}
+ @media (prefers-color-scheme:dark){:root{--bg:#111;--fg:#f5f5f7;--muted:#a1a1a6;--line:#3a3a3c}}
+ body{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;margin:0 auto;max-width:1200px;padding:16px}
+ h1{font-size:1.4rem} .note{color:var(--muted)} table{border-collapse:collapse;width:100%;font-size:13px}
+ th,td{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top} .wrap{overflow-x:auto}
+</style></head><body>
+<h1>insecurebank.local attack path</h1>
+<p class="note">Solid edges: observed in logs. Dashed edges: inferred. Times UTC. Labels: technique, time, forhunt event id.</p>
+<div class="wrap"><pre class="mermaid">
+flowchart LR
+  A_bob([&quot;insecurebank\\bob&quot;])
+  A_admin([&quot;insecurebank\\Administrator&quot;])
+  H_DC1[&quot;DC1&quot;]
+  H_alice[&quot;alice (10.59.4.20)&quot;]
+  F_gpo[/&quot;Default GPOs&quot;/]
+  F_acl[/&quot;Domain root ACL: replication rights&quot;/]
+  P_dump{{&quot;Outflank-Dumpert -&gt; lsass.exe&quot;}}
+  F_ntds[/&quot;ntds.dit copy&quot;/]
+  P_osk{{&quot;Utilman -&gt; osk.exe (SYSTEM)&quot;}}
+  A_bob --&gt;|&quot;1. T1070.001 log clear 2019-03-25 09:09 792dbe0a:1&quot;| H_DC1
+  A_bob --&gt;|&quot;2. T1484.001 10:33-12:33 792dbe0a:4&quot;| F_gpo
+  A_bob --&gt;|&quot;3. T1098 DCSync rights 21:28:45 ab178b42:11&quot;| F_acl
+  F_acl -.-&gt;|&quot;4. enables (inferred)&quot;| A_admin
+  A_admin --&gt;|&quot;5. T1003.006 DCSync 2019-05-08 02:10 85641d06:3&quot;| H_DC1
+  A_admin -.-&gt;|&quot;6. T1207 DCShadow 03:00:37 4662e471:3&quot;| H_alice
+  A_admin --&gt;|&quot;7. T1021.006 WinRM 2019-05-16 01:31 158c870c:2&quot;| H_DC1
+  H_DC1 --&gt;|&quot;8. T1546.008 16:08 90275a25:2&quot;| P_osk
+  A_admin --&gt;|&quot;9. T1003.001 2019-06-21 07:35 0bc6e267:2&quot;| P_dump
+  P_dump --- H_alice
+  A_bob -.-&gt;|&quot;10. T1003.003 2019-11-26 23:55 ad76cd23:2 (path only)&quot;| F_ntds
+  F_ntds --- H_DC1
+
+</pre></div>
+<h2>Timeline</h2>
+<div class="wrap"><table><thead><tr><th>#</th><th>Time (UTC)</th><th>Host</th><th>Account</th><th>Event ref</th><th>Description</th><th>ATT&amp;CK</th><th>Confidence</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>2019-03-25T09:09:14Z</td><td>DC1</td><td>bob</td><td>792dbe0a:1</td><td>Security log cleared (1102)</td><td>T1070.001</td><td>High</td></tr>
+<tr><td>2</td><td>2019-03-25T10:33:56Z</td><td>DC1</td><td>bob</td><td>792dbe0a:4</td><td>First of 22 GPO versionNumber changes (5136), until 12:33:44</td><td>T1484.001</td><td>High</td></tr>
+<tr><td>3</td><td>2019-03-25T11:15:58Z</td><td>DC1</td><td>bob</td><td>792dbe0a:26</td><td>User account alice changed (4738), 5 times until 13:01:41</td><td>T1098</td><td>Medium</td></tr>
+<tr><td>4</td><td>2019-03-25T13:01:41Z</td><td>DC1</td><td>bob</td><td>792dbe0a:55</td><td>Computer account ALICE$ changed (4742)</td><td>T1098</td><td>Medium</td></tr>
+<tr><td>5</td><td>2019-03-25T21:28:11Z</td><td>DC1</td><td>bob</td><td>ab178b42:1</td><td>Security log cleared</td><td>T1070.001</td><td>High</td></tr>
+<tr><td>6</td><td>2019-03-25T21:28:45Z</td><td>DC1</td><td>bob</td><td>ab178b42:11</td><td>Domain root ACL rewritten 18x: DCSync rights (5136)</td><td>T1098</td><td>High</td></tr>
+<tr><td>7</td><td>2019-05-08T02:10:43Z</td><td>DC1</td><td>Administrator</td><td>85641d06:3</td><td>Replication Get-Changes-All requested (4662): DCSync</td><td>T1003.006</td><td>High</td></tr>
+<tr><td>8</td><td>2019-05-08T03:00:11Z</td><td>DC1</td><td>administrator</td><td>4662e471:1</td><td>Security log cleared</td><td>T1070.001</td><td>High</td></tr>
+<tr><td>9</td><td>2019-05-08T03:00:37Z</td><td>DC1</td><td>Administrator</td><td>4662e471:3</td><td>ALICE$ SPNs extended, Configuration objects accessed (inferred DCShadow)</td><td>T1207</td><td>Medium</td></tr>
+<tr><td>10</td><td>2019-05-14T14:04:05Z</td><td>alice</td><td>administrator</td><td>6088c057:2</td><td>mstsc.exe drops cmd.exe in Startup folder (Sysmon 11)</td><td>T1547.001</td><td>High</td></tr>
+<tr><td>11</td><td>2019-05-14T17:17:38Z</td><td>alice</td><td>SYSTEM</td><td>ac20b091:3</td><td>SMB connections to 7 hosts in 1 s (Sysmon 3)</td><td>T1135</td><td>Medium</td></tr>
+<tr><td>12</td><td>2019-05-14T17:31:27Z</td><td>DC1</td><td>-</td><td>fafa8825:1</td><td>srvsvc pipe opened (Sysmon 18): session enumeration</td><td>T1049</td><td>Medium</td></tr>
+<tr><td>13</td><td>2019-05-16T01:31:36Z</td><td>DC1</td><td>Administrator</td><td>158c870c:2</td><td>WinRM shell runs cmd /C ipconfig</td><td>T1021.006</td><td>High</td></tr>
+<tr><td>14</td><td>2019-05-16T01:38:19Z</td><td>DC1</td><td>Administrator</td><td>5cf4c00a:1</td><td>PowerShell remoting (wsmprovhost.exe child)</td><td>T1021.006</td><td>High</td></tr>
+<tr><td>15</td><td>2019-05-16T13:10:13Z</td><td>DC1</td><td>-</td><td>c05fe803:1</td><td>PowerShell constrained language setting deleted (Sysmon 12)</td><td>T1685 (T1562.001)</td><td>Medium</td></tr>
+<tr><td>16</td><td>2019-05-16T14:17:15Z</td><td>DC1</td><td>Administrator</td><td>ae8d4b26:3</td><td>EnableLUA set: UAC disabled</td><td>T1548.002</td><td>High</td></tr>
+<tr><td>17</td><td>2019-05-16T16:08:34Z</td><td>DC1</td><td>SYSTEM</td><td>90275a25:2</td><td>osk.exe from Utilman.exe at logon screen, whoami follows</td><td>T1546.008</td><td>High</td></tr>
+<tr><td>18</td><td>2019-05-19T17:32:00Z</td><td>DC1</td><td>Administrator</td><td>af3cfc6c:1</td><td>attrib +h nbtscan.exe</td><td>T1564.001</td><td>High</td></tr>
+<tr><td>19</td><td>2019-06-21T07:35:37Z</td><td>alice</td><td>Administrator</td><td>0bc6e267:1</td><td>Outflank-Dumpert executed</td><td>T1003.001</td><td>High</td></tr>
+<tr><td>20</td><td>2019-06-21T07:35:37Z</td><td>alice</td><td>Administrator</td><td>0bc6e267:3</td><td>LSASS dump C:\Windows\Temp\dumpert.dmp</td><td>T1003.001</td><td>High</td></tr>
+<tr><td>21</td><td>2019-11-15T08:19:02Z</td><td>alice</td><td>bob</td><td>aceceead:1</td><td>Security log cleared</td><td>T1070.001</td><td>High</td></tr>
+<tr><td>22</td><td>2019-11-15T08:19:16Z</td><td>alice</td><td>ANONYMOUS LOGON</td><td>aceceead:2</td><td>Loopback NTLM V1 network logon (potato pattern, inferred)</td><td>T1134.001</td><td>Medium</td></tr>
+<tr><td>23</td><td>2019-11-26T23:55:00Z</td><td>DC1</td><td>bob (path)</td><td>ad76cd23:2</td><td>ntds.dit copied from VSS snapshot to user folder (ESENT 325-327)</td><td>T1003.003</td><td>High</td></tr>
+</tbody></table></div>
+<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
+mermaid.initialize({startOnLoad:true, securityLevel:"strict",
+  theme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default"});
+</script>
+</body></html>

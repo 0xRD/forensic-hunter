@@ -1,3 +1,4 @@
+pub mod checklist;
 pub mod dump;
 pub mod hayabusa;
 pub mod show;

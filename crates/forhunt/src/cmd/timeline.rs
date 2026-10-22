@@ -140,8 +140,13 @@ impl Collector {
                 } else {
                     buf.capacity()
                 };
-                let idx_cap = if grow_idx { idx.capacity().max(4) * 2 } else { idx.capacity() };
-                let too_big = buf_cap + idx_cap * item > *budget || buf_cap > (u32::MAX as usize) / 2;
+                let idx_cap = if grow_idx {
+                    idx.capacity().max(4) * 2
+                } else {
+                    idx.capacity()
+                };
+                let too_big =
+                    buf_cap + idx_cap * item > *budget || buf_cap > (u32::MAX as usize) / 2;
                 if (grow_buf || grow_idx) && too_big && !idx.is_empty() {
                     runs.push(spill(buf, idx)?);
                 }

@@ -1,0 +1,4296 @@
+{
+ "version": 1,
+ "checks": [
+  {
+   "id": "FH-INIT-001",
+   "title": "Password spraying - many distinct accounts failing from one source address",
+   "tactic": "initial-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4625
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4625 --field SubStatus=0xC000006A --format csv",
+    "forhunt search <paths> --channel Security --event-id 4625 --field SubStatus=0xC0000064 --format csv",
+    "forhunt stats <paths> --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-INIT-002",
+   "title": "Brute force against a single account",
+   "tactic": "initial-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4625
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4625 --field SubStatus=0xC000006A --field TargetUserName=jdoe --format llm",
+    "forhunt search <paths> --channel Security --event-id 4740 --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-INIT-003",
+   "title": "Username enumeration - failures for accounts that do not exist",
+   "tactic": "initial-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4625
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4625 --field SubStatus=0xC0000064 --format csv"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-INIT-004",
+   "title": "Account lockout (4740) and the callers behind it",
+   "tactic": "initial-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4740
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4740 --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-INIT-005",
+   "title": "Successful logon after a failure burst from the same source (guess succeeded)",
+   "tactic": "initial-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4625,
+    4624
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4625 --field IpAddress=203.0.113.10 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4624 --field IpAddress=203.0.113.10 --format llm",
+    "forhunt timeline <paths> --since 2024-05-01T10:00:00Z --until 2024-05-01T12:00:00Z --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-INIT-006",
+   "title": "Failed logons from public IP addresses (RDP / SMB / WinRM exposed to the internet)",
+   "tactic": "initial-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4625
+   ],
+   "forhunt": [
+    "forhunt stats <paths> --format llm",
+    "forhunt search <paths> --channel Security --event-id 4625 --field LogonType=3 --format csv",
+    "forhunt search <paths> --channel Security --event-id 4625 --field LogonType=10 --format csv"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-INIT-007",
+   "title": "Successful interactive or network logon from a public IP (valid accounts, external remote services)",
+   "tactic": "initial-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4624,
+    21,
+    1149
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4624 --field LogonType=10 --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-TerminalServices-LocalSessionManager/Operational --event-id 21 --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational --event-id 1149 --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-INIT-008",
+   "title": "NTLM validation failures on a domain controller (4776) - spray and guessing from one workstation",
+   "tactic": "initial-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4776
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4776 --field Status=0xC000006A --format csv",
+    "forhunt search <paths> --channel Security --event-id 4776 --field Status=0xC0000064 --format csv"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-INIT-009",
+   "title": "Kerberos pre-authentication failures (4771, Status 0x18) from one address",
+   "tactic": "initial-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4771
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4771 --field Status=0x18 --format csv"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-INIT-010",
+   "title": "Valid-account misuse signals - logons rejected for restriction reasons, and activity outside the account's normal hours",
+   "tactic": "initial-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4625,
+    4776,
+    4624
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4625 --field SubStatus=0xC000006F --format llm",
+    "forhunt search <paths> --channel Security --event-id 4625 --field SubStatus=0xC0000072 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4625 --field SubStatus=0xC0000070 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4624 --since 2024-05-01T10:00:00Z --until 2024-05-01T12:00:00Z --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-INIT-011",
+   "title": "Phishing payload execution chain - Office, Outlook or other document hosts spawning script hosts and LOLBins",
+   "tactic": "initial-access",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1,
+    4688
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~WINWORD.EXE --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~EXCEL.EXE --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~OUTLOOK.EXE --format llm",
+    "forhunt search <paths> --channel Security --event-id 4688 --field ParentProcessName~WINWORD.EXE --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-INIT-012",
+   "title": "Downloaded payloads - Zone.Identifier (Mark-of-the-Web) streams created outside browsers",
+   "tactic": "initial-access",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    15,
+    11
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 15 --field TargetFilename~Zone.Identifier --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 11 --field Image~OUTLOOK.EXE --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-INIT-013",
+   "title": "Exploitation of public-facing applications - web server worker spawning shells and recon tools",
+   "tactic": "initial-access",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1,
+    4688
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~w3wp.exe --format llm",
+    "forhunt search <paths> --channel Security --event-id 4688 --field ParentProcessName~w3wp.exe --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-INIT-014",
+   "title": "SQL Server spawning command interpreters (xp_cmdshell abuse after SQL injection)",
+   "tactic": "initial-access",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1,
+    4688
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~sqlservr.exe --format llm",
+    "forhunt search <paths> --channel Security --event-id 4688 --field ParentProcessName~sqlservr.exe --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-INIT-015",
+   "title": "Windows Remote Access / VPN server logons (RRAS) and RD Gateway sessions - external remote services visible in EVTX",
+   "tactic": "initial-access",
+   "channels": [
+    "Microsoft-Windows-TerminalServices-Gateway/Operational"
+   ],
+   "event_ids": [
+    302,
+    303,
+    20250,
+    20274
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-TerminalServices-Gateway/Operational --event-id 302,303 --format llm",
+    "forhunt search <paths> --channel System --event-id 20250,20274 --format llm"
+   ],
+   "severity": "informational",
+   "verified": false
+  },
+  {
+   "id": "FH-INIT-016",
+   "title": "Tool-default workstation names on NTLM logons (Metasploit, Ruler, Rdesktop-style clients)",
+   "tactic": "initial-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4624,
+    4625,
+    4776
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4624,4625 --regex WorkstationName='^[A-Za-z0-9]{16}$' --format llm",
+    "forhunt search <paths> --channel Security --event-id 4776 --regex Workstation='^[A-Za-z0-9]{16}$' --format llm",
+    "forhunt search <paths> --channel Security --event-id 4625 --field WorkstationName=RULER --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-EXE-001",
+   "title": "Office application spawning a shell, script host or LOLBin (Sysmon 1)",
+   "tactic": "execution",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~WINWORD.EXE --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --regex ParentImage='(?i)\\\\(winword|excel|powerpnt|outlook|onenote)\\.exe$' --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-EXE-002",
+   "title": "Office application spawning a shell, script host or LOLBin (Security 4688)",
+   "tactic": "execution",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4688
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4688 --field ParentProcessName~WINWORD.EXE --format llm",
+    "forhunt search <paths> --channel Security --event-id 4688 --regex ParentProcessName='(?i)\\\\(winword|excel|powerpnt|outlook|onenote)\\.exe$' --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-EXE-003",
+   "title": "PowerShell started with an encoded command (Sysmon 1)",
+   "tactic": "execution",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~-enc --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --regex CommandLine='(?i)\\s-e(nc|nco|ncodedcommand)?\\s+[A-Za-z0-9+/=]{20,}' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-EXE-004",
+   "title": "PowerShell started with an encoded command (Security 4688)",
+   "tactic": "execution",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4688
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4688 --field NewProcessName~powershell --field CommandLine~-enc --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-EXE-005",
+   "title": "PowerShell engine started as version 2 while the host is newer (downgrade) - classic 400",
+   "tactic": "execution",
+   "channels": [
+    "Windows PowerShell"
+   ],
+   "event_ids": [
+    400
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel \"Windows PowerShell\" --event-id 400 --field Data[3]~EngineVersion=2. --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-EXE-006",
+   "title": "Classic PowerShell provider start (600) revealing host application and engine version",
+   "tactic": "execution",
+   "channels": [
+    "Windows PowerShell"
+   ],
+   "event_ids": [
+    600
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel \"Windows PowerShell\" --event-id 600 --format llm",
+    "forhunt search <paths> --channel \"Windows PowerShell\" --event-id 600 --field Data[3]~HostApplication= --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-EXE-007",
+   "title": "PowerShell script block containing a download cradle (4104)",
+   "tactic": "execution",
+   "channels": [
+    "Microsoft-Windows-PowerShell/Operational"
+   ],
+   "event_ids": [
+    4104
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~DownloadString --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~Net.WebClient --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-EXE-008",
+   "title": "AMSI bypass strings in script blocks (4104)",
+   "tactic": "execution",
+   "channels": [
+    "Microsoft-Windows-PowerShell/Operational"
+   ],
+   "event_ids": [
+    4104
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~amsiInitFailed --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~AmsiUtils --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-EXE-009",
+   "title": "PowerShell module logging (4103) showing suspicious cmdlet invocations",
+   "tactic": "execution",
+   "channels": [
+    "Microsoft-Windows-PowerShell/Operational"
+   ],
+   "event_ids": [
+    4103
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4103 --field ContextInfo~FromBase64String --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-EXE-010",
+   "title": "Mshta executing remote content, inline script or non-HTA file types",
+   "tactic": "execution",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~mshta.exe --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-EXE-011",
+   "title": "Regsvr32 loading scriptlets, URLs or launched from script hosts",
+   "tactic": "execution",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~regsvr32.exe --field CommandLine~scrobj --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~regsvr32.exe --field CommandLine~/i: --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-EXE-012",
+   "title": "Rundll32 invoked without arguments, with script protocols, or loading odd DLL extensions",
+   "tactic": "execution",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~rundll32.exe --field CommandLine~AppData --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~rundll32.exe --field CommandLine~javascript: --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-EXE-013",
+   "title": "Certutil used to download or decode files",
+   "tactic": "execution",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~certutil.exe --field CommandLine~urlcache --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~certutil.exe --field CommandLine~-decode --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-EXE-014",
+   "title": "Bitsadmin command line creating or running transfer jobs",
+   "tactic": "execution",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~bitsadmin.exe --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-EXE-015",
+   "title": "WMIC creating processes, remote execution or XSL script processing",
+   "tactic": "execution",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~wmic.exe --field CommandLine~\"process call create\" --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~wmic.exe --field CommandLine~/node: --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-EXE-016",
+   "title": "Processes spawned by WmiPrvSE.exe (WMI-based remote execution)",
+   "tactic": "execution",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~WmiPrvSE.exe --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-EXE-017",
+   "title": "Wscript/cscript running scripts with non-script extensions or spawning shells",
+   "tactic": "execution",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~wscript.exe --field CommandLine~AppData --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~cscript.exe --field CommandLine~Temp --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-EXE-018",
+   "title": "Msbuild, InstallUtil or csc launched by unusual parent or with remote content",
+   "tactic": "execution",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~MSBuild.exe --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~InstallUtil.exe --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-EXE-019",
+   "title": "AMSI DLL loaded into a LOLBin that does not normally scan content",
+   "tactic": "execution",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    7
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 7 --field ImageLoaded~amsi.dll --field Image~rundll32.exe --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-PER-001",
+   "title": "New service installed with a suspicious ImagePath (System 7045)",
+   "tactic": "persistence",
+   "channels": [
+    "System"
+   ],
+   "event_ids": [
+    7045
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel System --event-id 7045 --field ImagePath~powershell --format llm",
+    "forhunt search <paths> --channel System --event-id 7045 --field ImagePath~Temp --format llm",
+    "forhunt search <paths> --channel System --event-id 7045 --format llm --limit 200"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-PER-002",
+   "title": "Service installed - Security 4697 (service file name check)",
+   "tactic": "persistence",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4697
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4697 --format llm --limit 200",
+    "forhunt search <paths> --channel Security --event-id 4697 --field ServiceFileName~powershell --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-PER-003",
+   "title": "Service start type changed (System 7040) and unexpected service state changes (7036)",
+   "tactic": "persistence",
+   "channels": [
+    "System"
+   ],
+   "event_ids": [
+    7040,
+    7036
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel System --event-id 7040 --format llm --limit 200",
+    "forhunt search <paths> --channel System --event-id 7036 --format llm --limit 500"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-PER-004",
+   "title": "Scheduled task created - Security 4698",
+   "tactic": "persistence",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4698
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4698 --format llm --limit 200",
+    "forhunt search <paths> --channel Security --event-id 4698 --field TaskContent~powershell --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-PER-005",
+   "title": "Scheduled task deleted, enabled, disabled or modified - Security 4699/4700/4701/4702",
+   "tactic": "persistence",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4699,
+    4700,
+    4701,
+    4702
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4702 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4699,4700,4701 --format llm --limit 200"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PER-006",
+   "title": "Scheduled task registered - TaskScheduler/Operational 106",
+   "tactic": "persistence",
+   "channels": [
+    "Microsoft-Windows-TaskScheduler/Operational"
+   ],
+   "event_ids": [
+    106
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-TaskScheduler/Operational --event-id 106 --format llm --limit 200"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-PER-007",
+   "title": "Scheduled task updated or deleted - TaskScheduler/Operational 140/141",
+   "tactic": "persistence",
+   "channels": [
+    "Microsoft-Windows-TaskScheduler/Operational"
+   ],
+   "event_ids": [
+    140,
+    141
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-TaskScheduler/Operational --event-id 140,141 --format llm --limit 200"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-PER-008",
+   "title": "Scheduled task running a program from a user-writable path - TaskScheduler/Operational 129/200",
+   "tactic": "persistence",
+   "channels": [
+    "Microsoft-Windows-TaskScheduler/Operational"
+   ],
+   "event_ids": [
+    129,
+    200
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-TaskScheduler/Operational --event-id 129 --field Path~Temp --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-TaskScheduler/Operational --event-id 200 --format llm --limit 200"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PER-009",
+   "title": "Run / RunOnce autorun value written (Sysmon 12/13)",
+   "tactic": "persistence",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    12,
+    13
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 12,13 --field TargetObject~CurrentVersion\\Run --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~CurrentVersion\\Run --field Details~AppData --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-PER-010",
+   "title": "Executable or script dropped into a Startup folder (Sysmon 11)",
+   "tactic": "persistence",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    11
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 11 --field \"TargetFilename~Start Menu\\Programs\\StartUp\" --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-PER-011",
+   "title": "Winlogon Shell / Userinit / Notify values modified, or userinit spawning a non-explorer shell",
+   "tactic": "persistence",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    12,
+    13
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 12,13 --field TargetObject~Winlogon --format llm",
+    "forhunt search <paths> --channel Security --event-id 4688 --field ParentProcessName~userinit.exe --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-PER-012",
+   "title": "Image File Execution Options Debugger / accessibility-feature (sethc, utilman) backdoor",
+   "tactic": "persistence",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    12,
+    13
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 12,13 --field \"TargetObject~Image File Execution Options\" --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~sethc.exe --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-PER-013",
+   "title": "AppInit_DLLs or AppCertDlls registry modification",
+   "tactic": "persistence",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    12,
+    13
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 12,13 --field TargetObject~AppInit_DLLs --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 12,13 --field TargetObject~AppCertDlls --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-PER-014",
+   "title": "COM hijacking via InprocServer32 / LocalServer32 / TreatAs changes",
+   "tactic": "persistence",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    12,
+    13
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~InprocServer32 --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~TreatAs --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PER-015",
+   "title": "Netsh helper DLL registered",
+   "tactic": "persistence",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1,
+    13
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~netsh.exe --field CommandLine~helper --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~Microsoft\\NetSh --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PER-016",
+   "title": "Permanent WMI event subscription registered - WMI-Activity/Operational 5861 (and 5859/5860)",
+   "tactic": "persistence",
+   "channels": [
+    "Microsoft-Windows-WMI-Activity/Operational"
+   ],
+   "event_ids": [
+    5861,
+    5859,
+    5860
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-WMI-Activity/Operational --event-id 5861 --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-WMI-Activity/Operational --event-id 5859,5860,5861 --format llm --limit 200"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-PER-017",
+   "title": "WMI filter, consumer and binding created (Sysmon 19/20/21)",
+   "tactic": "persistence",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    19,
+    20,
+    21
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 19,20,21 --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 20 --field Destination~powershell --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-PER-018",
+   "title": "BITS job created or started (Bits-Client/Operational 3, 59, 60) and notify-command persistence",
+   "tactic": "persistence",
+   "channels": [
+    "Microsoft-Windows-Bits-Client/Operational"
+   ],
+   "event_ids": [
+    3,
+    59,
+    60
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Bits-Client/Operational --event-id 3,59,60 --format llm --limit 200",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~bitsadmin.exe --field CommandLine~SetNotifyCmdLine --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PER-019",
+   "title": "Local account created - Security 4720 (incl. hidden '$' accounts)",
+   "tactic": "persistence",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4720
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4720 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4720 --field TargetUserName~$ --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-PER-020",
+   "title": "Account enabled or modified for persistence - Security 4722 / 4738",
+   "tactic": "persistence",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4722,
+    4738
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4722 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4738 --format llm --limit 200"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-PER-021",
+   "title": "Logon script / UserInitMprLogonScript registry persistence",
+   "tactic": "persistence",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    13
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~UserInitMprLogonScript --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PER-022",
+   "title": "Service DLL / ImagePath registry tampering and sc.exe service creation",
+   "tactic": "persistence",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1,
+    13
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~sc.exe --field CommandLine~binPath --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~ServiceDll --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PER-023",
+   "title": "WMI event consumer created through wbemcons.dll load or wmic/PowerShell command",
+   "tactic": "persistence",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    7,
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 7 --field ImageLoaded~wbemcons.dll --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~wmic.exe --field CommandLine~EventConsumer --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-PRV-001",
+   "title": "Special privileges (4672) assigned to an unexpected account",
+   "tactic": "privilege-escalation",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4672
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4672 --format llm --limit 500",
+    "forhunt search <paths> --channel Security --event-id 4672 --field PrivilegeList~SeDebugPrivilege --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PRV-002",
+   "title": "Sensitive privilege use (4673) by an unknown or unexpected process",
+   "tactic": "privilege-escalation",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4673
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4673 --format llm --limit 300",
+    "forhunt search <paths> --channel Security --event-id 4673 --field Service~LsaRegisterLogonProcess --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-PRV-003",
+   "title": "Privileged object operation (4674): service DACL change or SC manager ownership",
+   "tactic": "privilege-escalation",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4674
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4674 --field ObjectType=\"SERVICE OBJECT\" --format llm",
+    "forhunt search <paths> --channel Security --event-id 4674 --field PrivilegeList~SeTakeOwnershipPrivilege --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-PRV-004",
+   "title": "Member added to local Administrators (4732)",
+   "tactic": "privilege-escalation",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4732
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4732 --field TargetSid=S-1-5-32-544 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4732 --field TargetUserName=Administrators --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-PRV-005",
+   "title": "Member added to privileged domain groups (4728 / 4732 / 4756)",
+   "tactic": "privilege-escalation",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4728,
+    4732,
+    4756
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4728,4756 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4728 --field TargetUserName=\"Domain Admins\" --format llm",
+    "forhunt search <paths> --channel Security --event-id 4756 --field TargetUserName=\"Enterprise Admins\" --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-PRV-006",
+   "title": "User right assigned (4704) - dangerous privilege granted",
+   "tactic": "privilege-escalation",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4704
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4704 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4704 --field PrivilegeList~SeDebugPrivilege --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-PRV-007",
+   "title": "GPO modified to push user-rights assignment (5136 gPCMachineExtensionNames)",
+   "tactic": "privilege-escalation",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    5136
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 5136 --field AttributeLDAPDisplayName=gPCMachineExtensionNames --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-PRV-008",
+   "title": "UAC bypass via registry hijack (eventvwr mscfile, ms-settings, sdclt) - Sysmon 13",
+   "tactic": "privilege-escalation",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    13
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field 'TargetObject~mscfile\\shell\\open\\command' --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field 'TargetObject~ms-settings\\shell\\open\\command' --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~isolatedCommand --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-PRV-009",
+   "title": "UAC bypass auto-elevated binary spawning a child (fodhelper, ComputerDefaults, cmstp)",
+   "tactic": "privilege-escalation",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field 'ParentImage~\\fodhelper.exe' --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field 'Image~\\ComputerDefaults.exe' --format llm",
+    "forhunt search <paths> --channel Security --event-id 4688 --field 'ParentProcessName~\\fodhelper.exe' --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-PRV-010",
+   "title": "Service installed (7045) with cmd / PowerShell / script-host ImagePath",
+   "tactic": "privilege-escalation",
+   "channels": [
+    "System"
+   ],
+   "event_ids": [
+    7045
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel System --event-id 7045 --field ImagePath~powershell --format llm",
+    "forhunt search <paths> --channel System --event-id 7045 --field ImagePath~cmd --format llm",
+    "forhunt search <paths> --channel System --event-id 7045 --field AccountName=LocalSystem --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-PRV-011",
+   "title": "getsystem-style service: named-pipe echo or rundll32 ImagePath (7045 / 4688)",
+   "tactic": "privilege-escalation",
+   "channels": [
+    "System"
+   ],
+   "event_ids": [
+    7045,
+    4688
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel System --event-id 7045 --field 'ImagePath~\\pipe\\' --format llm",
+    "forhunt search <paths> --channel Security --event-id 4688 --field 'CommandLine~\\pipe\\' --field NewProcessName~cmd.exe --format llm",
+    "forhunt search <paths> --channel System --event-id 7045 --field 'ImagePath~ADMIN$' --format llm"
+   ],
+   "severity": "critical",
+   "verified": true
+  },
+  {
+   "id": "FH-PRV-012",
+   "title": "Service creation with suspicious binary path via sc.exe / New-Service (4688 / Sysmon 1)",
+   "tactic": "privilege-escalation",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4688,
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~binPath --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~binPath --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PRV-013",
+   "title": "Named-pipe impersonation tooling (potato / PrintSpoofer / Cobalt Strike pipes) - Sysmon 17/18",
+   "tactic": "privilege-escalation",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    17,
+    18
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 17,18 --field PipeName~coerced --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 17 --field PipeName~postex_ --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 17 --field 'Image~\\Users\\' --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-PRV-014",
+   "title": "Access-token abuse: logon type 9 with Impersonation level (4624)",
+   "tactic": "privilege-escalation",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4624
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4624 --field LogonType=9 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4624 --field LogonType=9 --field LogonProcessName~Advapi --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-PRV-015",
+   "title": "RottenPotato-like loopback ANONYMOUS LOGON (4624 type 3)",
+   "tactic": "privilege-escalation",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4624
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4624 --field LogonType=3 --field TargetUserName=\"ANONYMOUS LOGON\" --field IpAddress=127.0.0.1 --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-DEF-001",
+   "title": "Security log cleared (1102)",
+   "tactic": "defense-evasion",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    1102
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 1102 --format llm",
+    "forhunt stats <paths> --format llm"
+   ],
+   "severity": "critical",
+   "verified": true
+  },
+  {
+   "id": "FH-DEF-002",
+   "title": "Any event log cleared (System 104)",
+   "tactic": "defense-evasion",
+   "channels": [
+    "System"
+   ],
+   "event_ids": [
+    104
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel System --event-id 104 --format llm",
+    "forhunt search <paths> --channel System --event-id 104 --field Provider=Microsoft-Windows-Eventlog --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-DEF-003",
+   "title": "Log clearing / configuration tampering command lines (wevtutil cl, Clear-EventLog, WMI)",
+   "tactic": "defense-evasion",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4688,
+    1,
+    4104
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4688 --field 'NewProcessName~\\wevtutil.exe' --format llm",
+    "forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~Clear-EventLog --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~Clear-EventLog --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-DEF-004",
+   "title": "EventLog service stopped or disabled (6006 / 7040 / 1100)",
+   "tactic": "defense-evasion",
+   "channels": [
+    "System"
+   ],
+   "event_ids": [
+    6006,
+    7040,
+    7036,
+    1100
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel System --event-id 7040 --field param1=\"Windows Event Log\" --format llm",
+    "forhunt search <paths> --channel System --event-id 6005,6006,6008 --format llm",
+    "forhunt search <paths> --channel Security --event-id 1100 --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-DEF-005",
+   "title": "Audit policy disabled or changed (4719) and object SACL changed (4907)",
+   "tactic": "defense-evasion",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4719,
+    4907
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4719 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4719 --field AuditPolicyChanges~%%8448 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4907 --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-DEF-006",
+   "title": "System time changed (4616)",
+   "tactic": "defense-evasion",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4616
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4616 --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-DEF-007",
+   "title": "Defender real-time or scanning protection disabled (5001 / 5010 / 5012)",
+   "tactic": "defense-evasion",
+   "channels": [
+    "Microsoft-Windows-Windows Defender/Operational"
+   ],
+   "event_ids": [
+    5001,
+    5010,
+    5012
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel \"Microsoft-Windows-Windows Defender/Operational\" --event-id 5001,5010,5012 --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-DEF-008",
+   "title": "Defender configuration change: exclusions added, protection values altered, tamper protection blocks (5007 / 5013)",
+   "tactic": "defense-evasion",
+   "channels": [
+    "Microsoft-Windows-Windows Defender/Operational"
+   ],
+   "event_ids": [
+    5007,
+    5013
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel \"Microsoft-Windows-Windows Defender/Operational\" --event-id 5007 --field NewValue~Exclusions --format llm",
+    "forhunt search <paths> --channel \"Microsoft-Windows-Windows Defender/Operational\" --event-id 5007 --format llm --limit 300",
+    "forhunt search <paths> --channel \"Microsoft-Windows-Windows Defender/Operational\" --event-id 5013 --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-DEF-009",
+   "title": "Defender exclusion or disable via PowerShell / registry (4688, Sysmon 1, Sysmon 13, 4104)",
+   "tactic": "defense-evasion",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4688,
+    1,
+    13,
+    4104
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~Add-MpPreference --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field 'TargetObject~Windows Defender\\Exclusions' --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~Set-MpPreference --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-DEF-010",
+   "title": "Security / logging service stopped or disabled (7036 / 7040, net stop, sc)",
+   "tactic": "defense-evasion",
+   "channels": [
+    "System"
+   ],
+   "event_ids": [
+    7036,
+    7040,
+    4688
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel System --event-id 7036 --field param1~Defender --field param2=stopped --format llm",
+    "forhunt search <paths> --channel System --event-id 7040 --field param3=disabled --format llm",
+    "forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~\"stop windefend\" --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-DEF-011",
+   "title": "Defender detections and history deletion (1116 / 1117 / 1013 / 1015)",
+   "tactic": "defense-evasion",
+   "channels": [
+    "Microsoft-Windows-Windows Defender/Operational"
+   ],
+   "event_ids": [
+    1116,
+    1117,
+    1015,
+    1013,
+    1009
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel \"Microsoft-Windows-Windows Defender/Operational\" --event-id 1116,1117 --format llm --limit 300",
+    "forhunt search <paths> --channel \"Microsoft-Windows-Windows Defender/Operational\" --event-id 1013 --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-DEF-012",
+   "title": "Sysmon service stopped, config changed, or erroring (Sysmon 4 / 16 / 255)",
+   "tactic": "defense-evasion",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    4,
+    16,
+    255
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 4,16 --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 255 --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-DEF-013",
+   "title": "Sysmon / EDR sensor tampering: fltMC unload, WINEVT channel disabled in registry",
+   "tactic": "defense-evasion",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4688,
+    1,
+    4657,
+    4663
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~fltmc --format llm",
+    "forhunt search <paths> --channel Security --event-id 4657 --field ObjectName~WINEVT --format llm"
+   ],
+   "severity": "critical",
+   "verified": false
+  },
+  {
+   "id": "FH-DEF-014",
+   "title": "Windows Firewall rule added, changed, deleted or reset (MPSSVC 2004 / 2005 / 2006 / 2032 / 2033)",
+   "tactic": "defense-evasion",
+   "channels": [
+    "Microsoft-Windows-Windows Firewall With Advanced Security/Firewall"
+   ],
+   "event_ids": [
+    2004,
+    2005,
+    2006,
+    2032,
+    2033,
+    2071,
+    2052,
+    2059,
+    2060,
+    2097
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel \"Microsoft-Windows-Windows Firewall With Advanced Security/Firewall\" --event-id 2004,2071,2097 --format llm",
+    "forhunt search <paths> --channel \"Microsoft-Windows-Windows Firewall With Advanced Security/Firewall\" --event-id 2033,2059,2032,2060 --format llm",
+    "forhunt search <paths> --channel \"Microsoft-Windows-Windows Firewall With Advanced Security/Firewall\" --event-id 2006,2052 --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-DEF-015",
+   "title": "Firewall disabled or broadly opened via netsh",
+   "tactic": "defense-evasion",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4688,
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4688 --field 'NewProcessName~\\netsh.exe' --field CommandLine~advfirewall --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~\"opmode disable\" --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-DEF-016",
+   "title": "Process image tampering: hollowing / herpaderping (Sysmon 25)",
+   "tactic": "defense-evasion",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    25
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 25 --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 25 --field Type=\"Image is replaced\" --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-DEF-017",
+   "title": "File deletion of logs, tools or Sysmon-tracked paths (Sysmon 26 / 23)",
+   "tactic": "defense-evasion",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    26,
+    23
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 26 --format llm --limit 300",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 26,23 --field TargetFilename~.evtx --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-DEF-018",
+   "title": "Timestomping: file creation time changed (Sysmon 2) and PowerShell timestamp edits (4104)",
+   "tactic": "defense-evasion",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    2,
+    4104
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 2 --format llm --limit 300",
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~SetCreationTime --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-DEF-019",
+   "title": "PowerShell AMSI bypass in script blocks (4104)",
+   "tactic": "defense-evasion",
+   "channels": [
+    "Microsoft-Windows-PowerShell/Operational"
+   ],
+   "event_ids": [
+    4104
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~AmsiUtils --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~amsiInitFailed --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-DEF-020",
+   "title": "ETW tampering: .NET ETW disabled via registry or environment variable (4657 / Sysmon 13) and script text",
+   "tactic": "defense-evasion",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4657,
+    13,
+    4104
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4657 --field ObjectValueName=ETWEnabled --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~ETWEnabled --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~EtwEventWrite --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-DEF-021",
+   "title": "Event log gaps: record-id discontinuities and silent intervals",
+   "tactic": "defense-evasion",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    1102,
+    104,
+    1100,
+    4616
+   ],
+   "forhunt": [
+    "forhunt stats <paths> --format llm",
+    "forhunt timeline <paths> --since 2024-05-01T10:00:00Z --until 2024-05-01T12:00:00Z --format llm",
+    "forhunt search <paths> --channel Security --event-id 1102,104,1100 --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-DEF-022",
+   "title": "Process masquerading as svchost.exe (wrong path or no service arguments)",
+   "tactic": "defense-evasion",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1,
+    4688
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field 'Image~\\svchost.exe' --format llm --limit 500",
+    "forhunt search <paths> --channel Security --event-id 4688 --field 'NewProcessName~\\svchost.exe' --format llm --limit 500"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-DEF-023",
+   "title": "rundll32.exe launched without arguments",
+   "tactic": "defense-evasion",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1,
+    4688
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field 'Image~\\rundll32.exe' --format llm --limit 500",
+    "forhunt search <paths> --channel Security --event-id 4688 --field 'NewProcessName~\\rundll32.exe' --format llm --limit 500"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-CRED-001",
+   "title": "LSASS memory access with dump-capable access mask and debug-library call trace (Sysmon 10)",
+   "tactic": "credential-access",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    10
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 10 --field 'TargetImage~\\lsass.exe' --format llm --limit 300",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 10 --field 'TargetImage~\\lsass.exe' --field GrantedAccess=0x1fffff --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 10 --field 'TargetImage~\\lsass.exe' --field CallTrace~dbgcore --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-CRED-002",
+   "title": "LSASS read-access masks 0x1010 / 0x1410 / 0x1400 from non-system, non-security processes (Sysmon 10)",
+   "tactic": "credential-access",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    10
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 10 --field 'TargetImage~\\lsass.exe' --field GrantedAccess=0x1010 --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 10 --field 'TargetImage~\\lsass.exe' --field GrantedAccess=0x1410 --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-CRED-003",
+   "title": "comsvcs.dll MiniDump via rundll32 against LSASS (Sysmon 10 call trace)",
+   "tactic": "credential-access",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    10
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 10 --field 'TargetImage~\\lsass.exe' --field 'SourceImage~\\rundll32.exe' --field CallTrace~comsvcs.dll --format llm"
+   ],
+   "severity": "critical",
+   "verified": true
+  },
+  {
+   "id": "FH-CRED-004",
+   "title": "LSASS dumping tool command lines: procdump, comsvcs MiniDump, rundll32 (4688 / Sysmon 1)",
+   "tactic": "credential-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4688,
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~lsass --format llm",
+    "forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~comsvcs --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~MiniDump --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-CRED-005",
+   "title": "Handle request to lsass.exe with suspicious access mask (Security 4656 / 4663)",
+   "tactic": "credential-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4656,
+    4663
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4656,4663 --field 'ObjectName~\\lsass.exe' --format llm --limit 300",
+    "forhunt search <paths> --channel Security --event-id 4656 --field 'ObjectName~\\lsass.exe' --field AccessMask=0x1410 --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-CRED-006",
+   "title": "Defender ASR blocked credential stealing from LSASS (1121)",
+   "tactic": "credential-access",
+   "channels": [
+    "Microsoft-Windows-Windows Defender/Operational"
+   ],
+   "event_ids": [
+    1121
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel \"Microsoft-Windows-Windows Defender/Operational\" --event-id 1121 --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-CRED-007",
+   "title": "Registry hive dumping: reg save/export of SAM, SECURITY, SYSTEM (4688 / Sysmon 1)",
+   "tactic": "credential-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4688,
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4688 --field 'NewProcessName~\\reg.exe' --field CommandLine~save --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field 'Image~\\reg.exe' --field 'CommandLine~hklm\\sam' --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-CRED-008",
+   "title": "NTDS.dit extraction: ntdsutil snapshot/ifm, ESENT events, esentutl copy (4688 / Sysmon 1 / Application)",
+   "tactic": "credential-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4688,
+    1,
+    216,
+    325,
+    326,
+    327
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4688 --field 'NewProcessName~\\ntdsutil.exe' --format llm",
+    "forhunt search <paths> --channel Application --event-id 216,325,326,327 --field Provider=ESENT --format llm",
+    "forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~ntds.dit --format llm",
+    "forhunt search <paths> --channel Application --event-id 325,326,327 --field Data[5]~ntds.dit --format llm",
+    "forhunt search <paths> --channel Application --event-id 216 --field Data[4]~ntds.dit --format llm"
+   ],
+   "severity": "critical",
+   "verified": false
+  },
+  {
+   "id": "FH-CRED-009",
+   "title": "DPAPI domain backup key retrieval (4662 BCKUPKEY) and master key backup (4692)",
+   "tactic": "credential-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4662,
+    4692,
+    4693,
+    4695
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4662 --field ObjectName~BCKUPKEY --format llm",
+    "forhunt search <paths> --channel Security --event-id 4692,4693,4695 --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-CRED-010",
+   "title": "Credential Manager reads (5379) and vault enumeration (5381 / 5382)",
+   "tactic": "credential-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    5379,
+    5381,
+    5382
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 5379 --format llm --limit 300",
+    "forhunt search <paths> --channel Security --event-id 5381,5382 --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-CRED-011",
+   "title": "Password guessing against one account: repeated 4625 with SubStatus 0xC000006A",
+   "tactic": "credential-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4625
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4625 --field SubStatus=0xC000006A --format llm --limit 500",
+    "forhunt search <paths> --channel Security --event-id 4625 --field SubStatus=0xC000006A --field LogonType=3 --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-CRED-012",
+   "title": "Password spraying / user enumeration: many accounts failing from one source (4625 0xC000006A / 0xC0000064)",
+   "tactic": "credential-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4625
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4625 --field SubStatus=0xC0000064 --format llm --limit 500",
+    "forhunt search <paths> --channel Security --event-id 4625 --field SubStatus=0xC000006A --format llm --limit 500",
+    "forhunt search <paths> --channel Security --event-id 4776 --format llm --limit 500"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-CRED-013",
+   "title": "Account lockout and disabled-account logon failures (4625 0xC0000234 and related)",
+   "tactic": "credential-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4625,
+    4740
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4625 --field SubStatus=0xC0000234 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4740 --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-CRED-014",
+   "title": "Kerberos pre-authentication failures (4771) and NTLM credential validation failures (4776) on DCs",
+   "tactic": "credential-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4771,
+    4776
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4771 --field Status=0x18 --format llm --limit 500",
+    "forhunt search <paths> --channel Security --event-id 4776 --field Status=0xC000006A --format llm --limit 500"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-CRED-015",
+   "title": "Kerberoasting: RC4 service ticket requests (4769, TicketEncryptionType 0x17)",
+   "tactic": "credential-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4769
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4769 --field TicketEncryptionType=0x17 --format llm --limit 500",
+    "forhunt search <paths> --channel Security --event-id 4769 --field TicketEncryptionType=0x17 --field Status=0x0 --format llm --limit 500"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-CRED-016",
+   "title": "AS-REP roasting: TGT request without pre-authentication (4768 PreAuthType 0)",
+   "tactic": "credential-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4768
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4768 --field PreAuthType=0 --format llm --limit 300",
+    "forhunt search <paths> --channel Security --event-id 4768 --field PreAuthType=0 --field TicketEncryptionType=0x17 --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-CRED-017",
+   "title": "Rubeus-style logon process registration (4611 User32LogonProcesss)",
+   "tactic": "credential-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4611
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4611 --field LogonProcessName~User32LogonProcesss --format llm",
+    "forhunt search <paths> --channel Security --event-id 4611 --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-CRED-018",
+   "title": "Mimikatz execution traces: command-line modules and credential-dumper services",
+   "tactic": "credential-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4688,
+    1,
+    7045,
+    4104
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~sekurlsa --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~Invoke-Mimikatz --format llm",
+    "forhunt search <paths> --channel System --event-id 7045 --field ImagePath~mimidrv --format llm"
+   ],
+   "severity": "critical",
+   "verified": false
+  },
+  {
+   "id": "FH-CRED-019",
+   "title": "WDigest cleartext credential caching enabled (Sysmon 13 UseLogonCredential = 1)",
+   "tactic": "credential-access",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    13
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field 'TargetObject~WDigest\\UseLogonCredential' --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-CRED-020",
+   "title": "Browser credential store theft: access to Login Data / logins.json / key4.db by non-browser process (Sysmon 11 / 10)",
+   "tactic": "credential-access",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    11,
+    10
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 11 --field 'TargetFilename~\\Login Data' --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 11 --field TargetFilename~logins.json --format llm",
+    "forhunt search <paths> --channel Security --event-id 4663 --field 'ObjectName~\\Login Data' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-CRED-021",
+   "title": "Defender detection of credential-theft tooling (1116 / 1117)",
+   "tactic": "credential-access",
+   "channels": [
+    "Microsoft-Windows-Windows Defender/Operational"
+   ],
+   "event_ids": [
+    1116,
+    1117,
+    1015
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel \"Microsoft-Windows-Windows Defender/Operational\" --event-id 1116,1117 --format llm --limit 300",
+    "forhunt search <paths> --channel \"Microsoft-Windows-Windows Defender/Operational\" --event-id 1116 --field 'Threat Name~Mimikatz' --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-DISC-001",
+   "title": "Account and group enumeration with net.exe / net1.exe",
+   "tactic": "discovery",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~net --field CommandLine~\"/domain\" --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~\"net group\" --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-DISC-002",
+   "title": "Domain controller and trust discovery with nltest",
+   "tactic": "discovery",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~nltest --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-DISC-003",
+   "title": "Burst of discovery utilities from one session (whoami, systeminfo, ipconfig, arp, route, netstat, quser, qwinsta, tasklist)",
+   "tactic": "discovery",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~whoami --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --regex Image='(?i)\\\\(whoami|systeminfo|ipconfig|arp|route|netstat|quser|qwinsta|tasklist)\\.exe$' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-DISC-004",
+   "title": "AdFind Active Directory query tool",
+   "tactic": "discovery",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~objectcategory= --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~adfind --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-DISC-005",
+   "title": "BloodHound/SharpHound LDAP enumeration - read-property bursts on AD user objects (4662)",
+   "tactic": "discovery",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4662
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4662 --field ObjectType~bf967aba-0de6-11d0-a285-00aa003049e2 --format llm",
+    "forhunt stats <paths> --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-DISC-006",
+   "title": "SAM enumeration via handle requests on SAM_USER / SAM_GROUP objects (4661)",
+   "tactic": "discovery",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4661
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4661 --field ObjectType=SAM_USER --format llm",
+    "forhunt search <paths> --channel Security --event-id 4661 --field ObjectType=SAM_GROUP --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-DISC-007",
+   "title": "SMB named-pipe enumeration (srvsvc, samr, lsarpc, wkssvc) across many hosts (5145)",
+   "tactic": "discovery",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    5145
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 5145 --field ShareName~IPC$ --field RelativeTargetName=srvsvc --format llm",
+    "forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName=samr --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-DISC-008",
+   "title": "Remote enumeration of local group membership (4799)",
+   "tactic": "discovery",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4799
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4799 --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-DISC-009",
+   "title": "Local group membership of a user enumerated (4798)",
+   "tactic": "discovery",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4798
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4798 --format llm"
+   ],
+   "severity": "informational",
+   "verified": false
+  },
+  {
+   "id": "FH-DISC-010",
+   "title": "PowerView / AD PowerShell enumeration in script blocks",
+   "tactic": "discovery",
+   "channels": [
+    "Microsoft-Windows-PowerShell/Operational"
+   ],
+   "event_ids": [
+    4104
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~Get-DomainUser --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~DirectorySearcher --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-DISC-011",
+   "title": "SPN enumeration and Kerberos TGS burst from a single source (setspn, SharpHound)",
+   "tactic": "discovery",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4769
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4769 --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-DISC-012",
+   "title": "Host-based port scan (Sysmon 3 fan-out)",
+   "tactic": "discovery",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    3
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 3 --field Initiated=true --format llm",
+    "forhunt stats <paths> --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-DISC-013",
+   "title": "Host-based port scan seen by Windows Filtering Platform (5156 / 5157)",
+   "tactic": "discovery",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    5156,
+    5157
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 5156,5157 --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-DISC-014",
+   "title": "Network share discovery - one source touching many shares (5140)",
+   "tactic": "discovery",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    5140
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 5140 --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-DISC-015",
+   "title": "Security software discovery (WMI SecurityCenter2, Get-MpComputerStatus, product queries)",
+   "tactic": "discovery",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~SecurityCenter2 --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~SecurityCenter2 --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-DISC-016",
+   "title": "Installed-software discovery via registry Uninstall keys in script blocks",
+   "tactic": "discovery",
+   "channels": [
+    "Microsoft-Windows-PowerShell/Operational"
+   ],
+   "event_ids": [
+    4104
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~Uninstall --format llm"
+   ],
+   "severity": "informational",
+   "verified": true
+  },
+  {
+   "id": "FH-DISC-017",
+   "title": "RDP service discovery - one client connecting to many hosts (RdpCoreTS 131)",
+   "tactic": "discovery",
+   "channels": [
+    "Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational"
+   ],
+   "event_ids": [
+    131
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel \"Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational\" --event-id 131 --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-LAT-001",
+   "title": "PsExec service installed on target (PSEXESVC)",
+   "tactic": "lateral-movement",
+   "channels": [
+    "System"
+   ],
+   "event_ids": [
+    7045
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel System --event-id 7045 --field ServiceName=PSEXESVC --format llm",
+    "forhunt search <paths> --channel System --event-id 7045 --field ImagePath~PSEXESVC --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-LAT-002",
+   "title": "PsExec clones and Impacket-style remote service install (random names, known clone names)",
+   "tactic": "lateral-movement",
+   "channels": [
+    "System"
+   ],
+   "event_ids": [
+    7045,
+    4697
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel System --event-id 7045 --regex ImagePath='^%systemroot%\\\\[a-zA-Z]{8}\\.exe$' --format llm",
+    "forhunt search <paths> --channel System --event-id 7045 --field ServiceName~PAExec --format llm",
+    "forhunt search <paths> --channel Security --event-id 4697 --regex ServiceFileName='^%systemroot%\\\\[a-zA-Z]{8}\\.exe$' --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-LAT-003",
+   "title": "Named-pipe traffic of PsExec and clones over IPC$ (stdin/stdout/stderr pipes)",
+   "tactic": "lateral-movement",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    5145
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName~-stdin --format llm",
+    "forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName~RemCom_std --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-LAT-004",
+   "title": "Remote service control over the svcctl pipe (sc.exe \\\\host, smbexec, PsExec)",
+   "tactic": "lateral-movement",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    5145
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName=svcctl --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-LAT-005",
+   "title": "Remote scheduled task creation over the atsvc pipe (atexec, schtasks /s)",
+   "tactic": "lateral-movement",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    5145
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName=atsvc --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-LAT-006",
+   "title": "Remote scheduled task - 4698 plus network logon from the same source",
+   "tactic": "lateral-movement",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4698,
+    4624
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4698 --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-TaskScheduler/Operational --event-id 106,200,201 --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-LAT-007",
+   "title": "WMI remote execution - WmiPrvSE.exe spawning command interpreters",
+   "tactic": "lateral-movement",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4688
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4688 --field ParentProcessName~WmiPrvSE --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~WmiPrvSE --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-LAT-008",
+   "title": "Impacket exec family - cmd /Q /c with output redirected to \\\\127.0.0.1\\ADMIN$ or C$",
+   "tactic": "lateral-movement",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1,
+    4688,
+    11
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~127.0.0.1 --field 'CommandLine~ADMIN$' --format llm",
+    "forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~127.0.0.1 --field 'CommandLine~ADMIN$' --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 11 --regex TargetFilename='__1\\d{9}\\.\\d+$' --format llm"
+   ],
+   "severity": "critical",
+   "verified": false
+  },
+  {
+   "id": "FH-LAT-009",
+   "title": "PowerShell remoting / WinRM - wsmprovhost.exe host process and its children",
+   "tactic": "lateral-movement",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4688
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4688 --field NewProcessName~wsmprovhost --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~wsmprovhost --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-LAT-010",
+   "title": "Inbound WinRM connections via Windows Filtering Platform (5156 to 5985/5986)",
+   "tactic": "lateral-movement",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    5156
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 5156 --field DestPort=5985 --format llm",
+    "forhunt search <paths> --channel Security --event-id 5156 --field DestPort=5986 --format llm"
+   ],
+   "severity": "low",
+   "verified": true
+  },
+  {
+   "id": "FH-LAT-011",
+   "title": "DCOM lateral movement - MMC20.Application, ShellWindows/ShellBrowserWindow, Excel/Office DCOM",
+   "tactic": "lateral-movement",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4688
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4688 --field NewProcessName~mmc.exe --field CommandLine~Embedding --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field ParentImage~mmc.exe --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-LAT-012",
+   "title": "Pass-the-hash heuristic - NTLM network logon with null subject SID and KeyLength 0",
+   "tactic": "lateral-movement",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4624
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4624 --field LogonType=3 --field LogonProcessName=NtLmSsp --field KeyLength=0 --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-LAT-013",
+   "title": "Logon type 9 NewCredentials with seclogo (runas /netonly, Mimikatz sekurlsa::pth, overpass-the-hash)",
+   "tactic": "lateral-movement",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4624
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4624 --field LogonType=9 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4624 --field LogonType=9 --field LogonProcessName=seclogo --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-LAT-014",
+   "title": "Explicit-credential logons (4648) toward remote servers",
+   "tactic": "lateral-movement",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4648
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4648 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4648 --field ProcessName~powershell --format llm",
+    "forhunt search <paths> --channel Security --event-id 4648 --field ProcessName~wmic --format llm"
+   ],
+   "severity": "low",
+   "verified": true
+  },
+  {
+   "id": "FH-LAT-015",
+   "title": "Overpass-the-hash - RC4 TGT request from a host whose account normally uses AES",
+   "tactic": "lateral-movement",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4768,
+    4769
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4768 --field TicketEncryptionType=0x17 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4769 --field TicketEncryptionType=0x17 --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-LAT-016",
+   "title": "Pass-the-ticket tooling - Kerberos traffic to KDC from a non-LSASS process",
+   "tactic": "lateral-movement",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    5156,
+    4611
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 5156 --field DestPort=88 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4611 --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-LAT-017",
+   "title": "Administrative share access from remote hosts (5140 on ADMIN$, C$, IPC$)",
+   "tactic": "lateral-movement",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    5140
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 5140 --field 'ShareName~ADMIN$' --format llm",
+    "forhunt search <paths> --channel Security --event-id 5140 --field 'ShareName~C$' --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-LAT-018",
+   "title": "File drops to admin shares (5145 write access to ADMIN$/C$ of executables and scripts)",
+   "tactic": "lateral-movement",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    5145
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 5145 --field 'ShareName~ADMIN$' --field AccessList~%%4417 --format llm",
+    "forhunt search <paths> --channel Security --event-id 5145 --field 'ShareName~C$' --field RelativeTargetName~.exe --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-LAT-019",
+   "title": "RDP session hijacking with tscon.exe",
+   "tactic": "lateral-movement",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4688
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4688 --field NewProcessName~tscon.exe --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~tscon.exe --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-LAT-020",
+   "title": "Impacket smbexec service pattern (BTOBTO / batch file with __output redirection)",
+   "tactic": "lateral-movement",
+   "channels": [
+    "System"
+   ],
+   "event_ids": [
+    7045,
+    4697
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel System --event-id 7045 --field ImagePath~__output --format llm",
+    "forhunt search <paths> --channel System --event-id 7045 --field ServiceName~BTOBTO --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-LAT-021",
+   "title": "WMI-Activity provider activity on target (5857/5860/5861) alongside remote logon",
+   "tactic": "lateral-movement",
+   "channels": [
+    "Microsoft-Windows-WMI-Activity/Operational"
+   ],
+   "event_ids": [
+    5857,
+    5860,
+    5861
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-WMI-Activity/Operational --event-id 5857,5860,5861 --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-LAT-022",
+   "title": "Privileged network logon on a non-server host (4624 type 3 followed by 4672 with the same logon id)",
+   "tactic": "lateral-movement",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4624,
+    4672
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4624 --field LogonType=3 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4672 --format llm"
+   ],
+   "severity": "informational",
+   "verified": true
+  },
+  {
+   "id": "FH-RMT-001",
+   "title": "RDP network authentication succeeded (RemoteConnectionManager 1149) with source address",
+   "tactic": "remote-access",
+   "channels": [
+    "Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational"
+   ],
+   "event_ids": [
+    1149
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational --event-id 1149 --format llm"
+   ],
+   "severity": "informational",
+   "verified": true
+  },
+  {
+   "id": "FH-RMT-002",
+   "title": "RDP session logon, shell start and reconnect (LocalSessionManager 21, 22, 25)",
+   "tactic": "remote-access",
+   "channels": [
+    "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational"
+   ],
+   "event_ids": [
+    21,
+    22,
+    25
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-TerminalServices-LocalSessionManager/Operational --event-id 21,22,25 --format llm"
+   ],
+   "severity": "informational",
+   "verified": false
+  },
+  {
+   "id": "FH-RMT-003",
+   "title": "RDP disconnect and logoff (LocalSessionManager 23, 24, 39, 40)",
+   "tactic": "remote-access",
+   "channels": [
+    "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational"
+   ],
+   "event_ids": [
+    23,
+    24,
+    39,
+    40
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-TerminalServices-LocalSessionManager/Operational --event-id 23,24,39,40 --format llm"
+   ],
+   "severity": "informational",
+   "verified": false
+  },
+  {
+   "id": "FH-RMT-004",
+   "title": "RDP logon in the Security log (4624 LogonType 10, and 7 / 12 on reconnect)",
+   "tactic": "remote-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4624
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4624 --field LogonType=10 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4624 --field LogonType=7 --format llm"
+   ],
+   "severity": "informational",
+   "verified": true
+  },
+  {
+   "id": "FH-RMT-005",
+   "title": "RDP session reconnect and disconnect in the Security log (4778, 4779)",
+   "tactic": "remote-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4778,
+    4779
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4778,4779 --format llm"
+   ],
+   "severity": "low",
+   "verified": true
+  },
+  {
+   "id": "FH-RMT-006",
+   "title": "RDP through a tunnel - logon or flow from loopback",
+   "tactic": "remote-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4624,
+    5156
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4624 --field LogonType=10 --field IpAddress=127.0.0.1 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4624 --field LogonType=10 --field IpAddress=::1 --format llm",
+    "forhunt search <paths> --channel Security --event-id 5156 --field SourcePort=3389 --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-RMT-007",
+   "title": "RDP enabled via registry (fDenyTSConnections set to 0)",
+   "tactic": "remote-access",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    13,
+    4688,
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~fDenyTSConnections --format llm",
+    "forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~fDenyTSConnections --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-RMT-008",
+   "title": "RDP security weakened - NLA disabled or security layer changed",
+   "tactic": "remote-access",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    13
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~UserAuthentication --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~SecurityLayer --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field 'TargetObject~Terminal Server' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-RMT-009",
+   "title": "Firewall opened for RDP (netsh / Windows Firewall rule add for 3389)",
+   "tactic": "remote-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4688,
+    1,
+    2004
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4688 --field NewProcessName~netsh.exe --field CommandLine~3389 --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~3389 --field CommandLine~firewall --format llm",
+    "forhunt search <paths> --channel 'Microsoft-Windows-Windows Firewall With Advanced Security/Firewall' --event-id 2004 --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-RMT-010",
+   "title": "RDP shadowing (mstsc /shadow with noConsentPrompt)",
+   "tactic": "remote-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4688,
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~noconsentprompt --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~noconsentprompt --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-RMT-011",
+   "title": "RDP client use on the source host (RDPClient 1024 and 1102)",
+   "tactic": "remote-access",
+   "channels": [
+    "Microsoft-Windows-TerminalServices-RDPClient/Operational"
+   ],
+   "event_ids": [
+    1024,
+    1102,
+    1025,
+    1026,
+    1029
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-TerminalServices-RDPClient/Operational --event-id 1024,1102 --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-TerminalServices-RDPClient/Operational --event-id 1026,1025,1029 --format llm"
+   ],
+   "severity": "informational",
+   "verified": false
+  },
+  {
+   "id": "FH-RMT-012",
+   "title": "WinRM session established - server side (WinRM/Operational 169, 81, 82, 134)",
+   "tactic": "remote-access",
+   "channels": [
+    "Microsoft-Windows-WinRM/Operational"
+   ],
+   "event_ids": [
+    169,
+    81,
+    82,
+    134
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-WinRM/Operational --event-id 169,81,82,134 --format llm"
+   ],
+   "severity": "informational",
+   "verified": false
+  },
+  {
+   "id": "FH-RMT-013",
+   "title": "WinRM client activity on the source host (WinRM/Operational 6, 80, 143)",
+   "tactic": "remote-access",
+   "channels": [
+    "Microsoft-Windows-WinRM/Operational"
+   ],
+   "event_ids": [
+    6,
+    80,
+    143
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-WinRM/Operational --event-id 6 --format llm"
+   ],
+   "severity": "informational",
+   "verified": false
+  },
+  {
+   "id": "FH-RMT-014",
+   "title": "WinRM authentication or operation failures (WinRM/Operational 161, 142)",
+   "tactic": "remote-access",
+   "channels": [
+    "Microsoft-Windows-WinRM/Operational"
+   ],
+   "event_ids": [
+    161,
+    142
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-WinRM/Operational --event-id 161,142 --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-RMT-015",
+   "title": "RDP TCP-level connection events (RdpCoreTS 131 and 98)",
+   "tactic": "remote-access",
+   "channels": [
+    "Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational"
+   ],
+   "event_ids": [
+    131,
+    98
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational --event-id 131,98 --format llm"
+   ],
+   "severity": "informational",
+   "verified": false
+  },
+  {
+   "id": "FH-RMT-016",
+   "title": "Network share created, modified or deleted (5142, 5143, 5144)",
+   "tactic": "remote-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    5142,
+    5143,
+    5144
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 5142,5143,5144 --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-RMT-017",
+   "title": "One source touching shares or admin shares on many hosts (5140/5145 fan-out)",
+   "tactic": "remote-access",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    5140,
+    5145
+   ],
+   "forhunt": [
+    "forhunt stats <paths> --format llm",
+    "forhunt search <paths> --channel Security --event-id 5140 --format csv"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-RMT-018",
+   "title": "SMB server authentication failures (SMBServer/Security 551)",
+   "tactic": "remote-access",
+   "channels": [
+    "Microsoft-Windows-SMBServer/Security"
+   ],
+   "event_ids": [
+    551
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-SMBServer/Security --event-id 551 --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-RMT-019",
+   "title": "SMB client events - rejected guest logons (SMBClient/Security 31017)",
+   "tactic": "remote-access",
+   "channels": [
+    "Microsoft-Windows-SmbClient/Security"
+   ],
+   "event_ids": [
+    31017
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-SmbClient/Security --event-id 31017 --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-RMT-020",
+   "title": "Unsigned or unencrypted SMB sessions to admin shares (SMBServer/Connectivity 4000)",
+   "tactic": "remote-access",
+   "channels": [
+    "Microsoft-Windows-SMBServer/Connectivity"
+   ],
+   "event_ids": [
+    4000
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-SMBServer/Connectivity --event-id 4000 --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-AD-001",
+   "title": "Kerberoasting - RC4 service ticket requests for user-account SPNs",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4769
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4769 --regex TicketEncryptionType='^0x0*17$' --regex Status='^0x0*$' --format llm",
+    "forhunt search <paths> --channel Security --event-id 4769 --regex TicketEncryptionType='^0x0*17$' --regex ServiceName='[^$]$' --limit 200 --format csv"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-AD-002",
+   "title": "Kerberoasting - burst of distinct service ticket requests by one requester",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4769
+   ],
+   "forhunt": [
+    "forhunt stats <paths> --format llm",
+    "forhunt search <paths> --channel Security --event-id 4769 --regex ServiceName='[^$]$' --limit 2000 --format csv"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-AD-003",
+   "title": "AS-REP roasting - TGT issued without pre-authentication",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4768
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4768 --field PreAuthType=0 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4768 --field PreAuthType=0 --regex TicketEncryptionType='^0x0*17$' --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-AD-004",
+   "title": "Account flagged \"Do not require Kerberos preauthentication\" (4738)",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4738
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4738 --field UserAccountControl~%%2096 --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-AD-005",
+   "title": "DCSync - directory replication rights exercised by a non-DC account (4662)",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4662
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4662 --field Properties~1131f6aa-9c07-11d1-f79f-00c04fc2dcd2 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4662 --field Properties~1131f6ad-9c07-11d1-f79f-00c04fc2dcd2 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4662 --field Properties~89e95b76-444d-4c62-991a-0facbeda640c --format llm"
+   ],
+   "severity": "critical",
+   "verified": true
+  },
+  {
+   "id": "FH-AD-006",
+   "title": "DCSync rights granted - ACL change on the domain root (5136)",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    5136
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 5136 --field AttributeLDAPDisplayName=nTSecurityDescriptor --field ObjectClass=domainDNS --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-AD-007",
+   "title": "DCShadow - rogue DC registration (GC/ SPN and server object in Configuration)",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4742,
+    5136,
+    5137,
+    5141
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4742 --field ServicePrincipalNames~GC/ --format llm",
+    "forhunt search <paths> --channel Security --event-id 5137,5141 --field ObjectClass=server --format llm",
+    "forhunt search <paths> --channel Security --event-id 5136 --field AttributeLDAPDisplayName=servicePrincipalName --field AttributeValue~GC/ --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-AD-008",
+   "title": "Password reset on privileged account, krbtgt or DSRM (4724 / 4723)",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4724,
+    4723
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4724 --field TargetUserName=krbtgt --format llm",
+    "forhunt search <paths> --channel Security --event-id 4724,4723 --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-AD-009",
+   "title": "Golden ticket - Kerberos logon/service ticket for an account that does not exist or lacks a prior TGT request",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4624,
+    4769,
+    4768,
+    4672
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4769 --field Status=0x0 --format csv --limit 5000",
+    "forhunt search <paths> --channel Security --event-id 4624 --field LogonType=3 --field AuthenticationPackageName=Kerberos --field TargetUserSid~-500 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4768 --format csv --limit 5000"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-AD-010",
+   "title": "Silver ticket - Kerberos service logon with no matching service ticket request on any DC",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4624,
+    4769,
+    4672
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4624 --field LogonType=3 --field AuthenticationPackageName=Kerberos --format csv --limit 5000",
+    "forhunt search <paths> --channel Security --event-id 4769 --format csv --limit 5000"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-AD-011",
+   "title": "AD CS certificate request with attacker-supplied SAN (ESC1/ESC6 style)",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4886,
+    4887
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4887 --field Attributes~SAN --format llm",
+    "forhunt search <paths> --channel Security --event-id 4886 --field Attributes~SAN --format llm",
+    "forhunt search <paths> --channel Security --event-id 4887 --field Attributes~upn= --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-AD-012",
+   "title": "Certificate-based Kerberos logon (PKINIT) and KDC certificate mapping warnings",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4768
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4768 --regex CertThumbprint='.+' --format llm",
+    "forhunt search <paths> --channel System --event-id 39,41 --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-AD-013",
+   "title": "AD CS template and CA configuration changes (4898/4899/4900, CA permissions)",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4898,
+    4899,
+    4900,
+    4882,
+    4890,
+    4891,
+    4892,
+    4870
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4898,4899,4900 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4882,4890,4891,4892,4870 --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-AD-014",
+   "title": "Zerologon (CVE-2020-1472) - Netlogon secure-channel enforcement events",
+   "tactic": "active-directory",
+   "channels": [
+    "System"
+   ],
+   "event_ids": [
+    5827,
+    5828,
+    5829,
+    5830,
+    5831,
+    5805
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel System --event-id 5827,5828,5829,5830,5831 --format llm",
+    "forhunt search <paths> --channel System --event-id 5805 --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-AD-015",
+   "title": "Zerologon aftermath - DC machine account password changed by ANONYMOUS LOGON (4742)",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4742,
+    4624
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4742 --field SubjectUserName=\"ANONYMOUS LOGON\" --format llm"
+   ],
+   "severity": "critical",
+   "verified": false
+  },
+  {
+   "id": "FH-AD-016",
+   "title": "noPac / sAMAccountName spoofing - machine account renamed to a DC name without the trailing $",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4741,
+    4781,
+    4742,
+    4768,
+    4769
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4781 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4741 --format llm"
+   ],
+   "severity": "critical",
+   "verified": true
+  },
+  {
+   "id": "FH-AD-017",
+   "title": "Machine account quota abuse - computer account created by a non-admin user (4741)",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4741,
+    4673
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4741 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4673 --field PrivilegeList~SeMachineAccountPrivilege --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-AD-018",
+   "title": "RBCD and shadow credentials - writes to msDS-AllowedToActOnBehalfOfOtherIdentity / msDS-KeyCredentialLink (5136)",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    5136
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 5136 --field AttributeLDAPDisplayName=msDS-AllowedToActOnBehalfOfOtherIdentity --format llm",
+    "forhunt search <paths> --channel Security --event-id 5136 --field AttributeLDAPDisplayName=msDS-KeyCredentialLink --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-AD-019",
+   "title": "Delegation changes - constrained or unconstrained delegation enabled (4738/4742)",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4738,
+    4742,
+    5136
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4742,4738 --format llm",
+    "forhunt search <paths> --channel Security --event-id 5136 --field AttributeLDAPDisplayName=userAccountControl --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-AD-020",
+   "title": "Membership added to privileged AD groups (4728/4732/4756 and removals)",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4728,
+    4729,
+    4732,
+    4733,
+    4756,
+    4757
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4728,4732,4756 --field TargetUserName=\"Domain Admins\" --format llm",
+    "forhunt search <paths> --channel Security --event-id 4728,4732,4756 --field TargetUserName=DnsAdmins --format llm",
+    "forhunt search <paths> --channel Security --event-id 4729,4733,4757 --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-AD-021",
+   "title": "DNSAdmins abuse - ServerLevelPluginDll loaded by the DNS service (DNS Server 150/770)",
+   "tactic": "active-directory",
+   "channels": [
+    "DNS Server"
+   ],
+   "event_ids": [
+    150,
+    770,
+    771
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel \"DNS Server\" --event-id 150,770,771 --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-AD-022",
+   "title": "AdminSDHolder object modified (5136) - SDProp persistence",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    5136
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 5136 --field ObjectDN~CN=AdminSDHolder --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-AD-023",
+   "title": "SID History added to an account (4765 / 4766 / 4738 SidHistory)",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4765,
+    4766,
+    4738
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4765,4766 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4738 --field SidHistory~S-1-5-21- --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-AD-024",
+   "title": "Group Policy object tampering (5136 on groupPolicyContainer, SYSVOL writes in 5145)",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    5136,
+    5137,
+    5141,
+    5145
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 5136 --field ObjectClass=groupPolicyContainer --format llm",
+    "forhunt search <paths> --channel Security --event-id 5137,5141 --field ObjectClass=groupPolicyContainer --format llm",
+    "forhunt search <paths> --channel Security --event-id 5145 --field ShareName~SYSVOL --field RelativeTargetName~Policies --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-AD-025",
+   "title": "New domain or forest trust created or modified (4706 / 4707 / 4716 / 4865)",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4706,
+    4707,
+    4716,
+    4865
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4706,4707,4716,4865 --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-AD-026",
+   "title": "Authentication coercion - RPC pipes (lsarpc, efsrpc, spoolss, netdfs ...) accessed over IPC$ on a DC (5145)",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    5145
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName=lsarpc --format llm",
+    "forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName=efsrpc --format llm",
+    "forhunt search <paths> --channel Security --event-id 5145 --field RelativeTargetName=spoolss --format llm",
+    "forhunt search <paths> --channel Security --event-id 5145 --field SubjectUserName=\"ANONYMOUS LOGON\" --field RelativeTargetName=lsarpc --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-AD-027",
+   "title": "Machine-account NTLM network logon from a remote host (relay of coerced authentication)",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4624
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4624 --field LogonType=3 --field AuthenticationPackageName=NTLM --regex TargetUserName='\\$$' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-AD-028",
+   "title": "NTLMv1 authentication (4624 LmPackageName 'NTLM V1')",
+   "tactic": "active-directory",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4624
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4624 --field LmPackageName=\"NTLM V1\" --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-AD-029",
+   "title": "NTLM Operational log - audited NTLM use, outgoing and incoming (8001 / 8002 / 8003 / 8004)",
+   "tactic": "active-directory",
+   "channels": [
+    "Microsoft-Windows-NTLM/Operational"
+   ],
+   "event_ids": [
+    8001,
+    8002,
+    8003,
+    8004
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-NTLM/Operational --event-id 8001,8002,8003,8004 --format llm",
+    "forhunt stats <paths> --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-AD-030",
+   "title": "Expensive or inefficient LDAP queries (Directory Service 1644) and LDAP reconnaissance blind spot",
+   "tactic": "active-directory",
+   "channels": [
+    "Directory Service"
+   ],
+   "event_ids": [
+    1644
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel \"Directory Service\" --event-id 1644 --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-COLL-001",
+   "title": "Archive creation with a password via 7-Zip, WinRAR or rar",
+   "tactic": "collection-exfiltration",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~7z --field CommandLine~\" -p\" --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~rar --field CommandLine~\" a \" --format llm"
+   ],
+   "severity": "medium",
+   "verified": true
+  },
+  {
+   "id": "FH-COLL-002",
+   "title": "Archive creation with PowerShell Compress-Archive or .NET ZipFile",
+   "tactic": "collection-exfiltration",
+   "channels": [
+    "Microsoft-Windows-PowerShell/Operational"
+   ],
+   "event_ids": [
+    4104
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~Compress-Archive --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-COLL-003",
+   "title": "Archives or data dumps written to common staging directories (Sysmon 11)",
+   "tactic": "collection-exfiltration",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    11
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 11 --field TargetFilename~'\\PerfLogs\\' --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 11 --regex TargetFilename='(?i)\\\\(ProgramData|Users\\\\Public|Windows\\\\Temp)\\\\.*\\.(zip|7z|rar)$' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-COLL-004",
+   "title": "rclone (cloud sync tool) execution",
+   "tactic": "collection-exfiltration",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1,
+    11
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~rclone --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~\"--no-check-certificate\" --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 11 --field TargetFilename~rclone.conf --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-COLL-005",
+   "title": "DNS lookups for MEGA user storage",
+   "tactic": "collection-exfiltration",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    22
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 22 --field QueryName~mega.co.nz --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 22 --field QueryName~mega.nz --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-COLL-006",
+   "title": "DNS lookups for file-sharing / cloud storage domains by non-browser processes",
+   "tactic": "collection-exfiltration",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    22,
+    3
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 22 --field QueryName~dropbox --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 22 --field QueryName~transfer.sh --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-COLL-007",
+   "title": "Upload or transfer tooling by command line (WinSCP, curl, bitsadmin, MEGAcmd, pscp, ftp)",
+   "tactic": "collection-exfiltration",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~curl --field CommandLine~\"--upload-file\" --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~winscp --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~bitsadmin --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-COLL-008",
+   "title": "DNS tunnelling / exfil - long or high-entropy query names (Sysmon 22)",
+   "tactic": "collection-exfiltration",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    22
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 22 --regex QueryName='^[A-Za-z0-9+/=_-]{40,}\\.' --format llm",
+    "forhunt stats <paths> --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-COLL-009",
+   "title": "Outbound connections by archive/transfer tools or from staging hosts (Sysmon 3) - volume is not visible",
+   "tactic": "collection-exfiltration",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    3
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 3 --field Image~rclone --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 3 --field Initiated=true --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-COLL-010",
+   "title": "Clipboard capture (Sysmon 24 and PowerShell Get-Clipboard)",
+   "tactic": "collection-exfiltration",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    24
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 24 --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~Get-Clipboard --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-COLL-011",
+   "title": "Screen capture and input capture via PowerShell or tools",
+   "tactic": "collection-exfiltration",
+   "channels": [
+    "Microsoft-Windows-PowerShell/Operational"
+   ],
+   "event_ids": [
+    4104
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~CopyFromScreen --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-COLL-012",
+   "title": "Outlook mail store (PST/OST) created or copied (Sysmon 11)",
+   "tactic": "collection-exfiltration",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    11
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 11 --field TargetFilename~.pst --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-COLL-013",
+   "title": "USB mass storage connected (Security 6416)",
+   "tactic": "collection-exfiltration",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    6416
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 6416 --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-COLL-014",
+   "title": "USB device activity in DriverFrameworks-UserMode/Operational (2003, 2100)",
+   "tactic": "collection-exfiltration",
+   "channels": [
+    "Microsoft-Windows-DriverFrameworks-UserMode/Operational"
+   ],
+   "event_ids": [
+    2003,
+    2100
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel \"Microsoft-Windows-DriverFrameworks-UserMode/Operational\" --event-id 2003,2100 --format llm"
+   ],
+   "severity": "informational",
+   "verified": false
+  },
+  {
+   "id": "FH-COLL-015",
+   "title": "File copy to removable media (Security 4663 with Removable Storage auditing)",
+   "tactic": "collection-exfiltration",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4663
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4663 --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-COLL-016",
+   "title": "Printing as exfil (PrintService/Operational 307)",
+   "tactic": "collection-exfiltration",
+   "channels": [
+    "Microsoft-Windows-PrintService/Operational"
+   ],
+   "event_ids": [
+    307
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel \"Microsoft-Windows-PrintService/Operational\" --event-id 307 --format llm"
+   ],
+   "severity": "informational",
+   "verified": false
+  },
+  {
+   "id": "FH-COLL-017",
+   "title": "Bulk copy of files by robocopy / xcopy to staging or network location",
+   "tactic": "collection-exfiltration",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~robocopy --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-IMP-001",
+   "title": "Shadow copy deletion via vssadmin, wmic or diskshadow command line",
+   "tactic": "impact",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~shadow --format llm",
+    "forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~shadow --format llm"
+   ],
+   "severity": "critical",
+   "verified": true
+  },
+  {
+   "id": "FH-IMP-002",
+   "title": "Shadow copy deletion via PowerShell Win32_ShadowCopy",
+   "tactic": "impact",
+   "channels": [
+    "Microsoft-Windows-PowerShell/Operational"
+   ],
+   "event_ids": [
+    4104
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~Win32_ShadowCopy --format llm"
+   ],
+   "severity": "critical",
+   "verified": false
+  },
+  {
+   "id": "FH-IMP-003",
+   "title": "Backup catalog or system state backup deletion with wbadmin",
+   "tactic": "impact",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~wbadmin --field CommandLine~delete --format llm"
+   ],
+   "severity": "critical",
+   "verified": true
+  },
+  {
+   "id": "FH-IMP-004",
+   "title": "Boot recovery disabled with bcdedit",
+   "tactic": "impact",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~bcdedit --field CommandLine~recoveryenabled --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~bcdedit --field CommandLine~bootstatuspolicy --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-IMP-005",
+   "title": "Shadow storage shrunk to force deletion of snapshots (vssadmin resize shadowstorage)",
+   "tactic": "impact",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~vssadmin --field CommandLine~shadowstorage --format llm"
+   ],
+   "severity": "high",
+   "verified": true
+  },
+  {
+   "id": "FH-IMP-006",
+   "title": "Defender real-time protection disabled (5001)",
+   "tactic": "impact",
+   "channels": [
+    "Microsoft-Windows-Windows Defender/Operational"
+   ],
+   "event_ids": [
+    5001
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel \"Microsoft-Windows-Windows Defender/Operational\" --event-id 5001,5010,5012,5013,5007 --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-IMP-007",
+   "title": "Tamper Protection blocked a Defender setting change (5013)",
+   "tactic": "impact",
+   "channels": [
+    "Microsoft-Windows-Windows Defender/Operational"
+   ],
+   "event_ids": [
+    5013
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel \"Microsoft-Windows-Windows Defender/Operational\" --event-id 5013 --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-IMP-008",
+   "title": "Defender detection history deleted (1013)",
+   "tactic": "impact",
+   "channels": [
+    "Microsoft-Windows-Windows Defender/Operational"
+   ],
+   "event_ids": [
+    1013
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel \"Microsoft-Windows-Windows Defender/Operational\" --event-id 1013,1116,1117,1118,1119 --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-IMP-009",
+   "title": "Event log cleared as precursor (Security 1102, System 104)",
+   "tactic": "impact",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    1102,
+    104
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 1102 --format llm",
+    "forhunt search <paths> --channel System --event-id 104 --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-IMP-010",
+   "title": "Backup, AV or database service stopped (System 7036 / command line)",
+   "tactic": "impact",
+   "channels": [
+    "System"
+   ],
+   "event_ids": [
+    7036
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel System --event-id 7036 --field param2=stopped --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-IMP-011",
+   "title": "Service start type changed to disabled (System 7040) or sc config disabled",
+   "tactic": "impact",
+   "channels": [
+    "System"
+   ],
+   "event_ids": [
+    7040
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel System --event-id 7040 --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~\"start= disabled\" --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-IMP-012",
+   "title": "Service or process kill of security/backup tooling via taskkill, net stop or Stop-Service",
+   "tactic": "impact",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~\"net stop\" --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~taskkill --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-IMP-013",
+   "title": "Mass file creation or rename burst with ransom-note style names (Sysmon 11)",
+   "tactic": "impact",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    11
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 11 --regex TargetFilename='(?i)(readme|decrypt|restore|how_to).*\\.(txt|html|hta)$' --format llm",
+    "forhunt stats <paths> --format llm"
+   ],
+   "severity": "critical",
+   "verified": false
+  },
+  {
+   "id": "FH-IMP-014",
+   "title": "Mass file deletion burst (Sysmon 23 / 26)",
+   "tactic": "impact",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    23,
+    26
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 23,26 --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-IMP-015",
+   "title": "Secure deletion / free-space wipe (sdelete, cipher /w, Sysmon 28)",
+   "tactic": "impact",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1,
+    28
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~cipher --field CommandLine~/w --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1,28 --field Image~sdelete --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-IMP-016",
+   "title": "Mass password changes or resets (4723 / 4724 burst) and many account lockouts (4740)",
+   "tactic": "impact",
+   "channels": [
+    "Security"
+   ],
+   "event_ids": [
+    4723,
+    4724,
+    4740
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Security --event-id 4723,4724 --format llm",
+    "forhunt search <paths> --channel Security --event-id 4740 --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-IMP-017",
+   "title": "Safe-mode boot forced or system rebooted by script (bcdedit safeboot, shutdown)",
+   "tactic": "impact",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~shutdown --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~safeboot --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-IMP-018",
+   "title": "System shutdown or restart initiated (1074), unexpected shutdown (6008), log stop/start (6006/6005)",
+   "tactic": "impact",
+   "channels": [
+    "System"
+   ],
+   "event_ids": [
+    1074,
+    6006,
+    6008,
+    6005
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel System --event-id 1074,6005,6006,6008 --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-IMP-019",
+   "title": "Defacement or ransom wallpaper (web root writes, wallpaper registry change)",
+   "tactic": "impact",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational"
+   ],
+   "event_ids": [
+    11,
+    13
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 13 --field TargetObject~Desktop\\Wallpaper --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  }
+ ]
+}

@@ -73,14 +73,26 @@ Read it fully (it is short). Note:
 ```bash
 hayabusa dfir-timeline -d "$CASE/evidence" -t jsonl -p verbose -O -w -q -K -N -C \
   -o "$CASE/work/hayabusa.jsonl"          # Hayabusa 4.x (3.x: json-timeline -L)
-forhunt hayabusa "$CASE/work/hayabusa.jsonl" -p "$CASE/evidence" --min-level medium
+forhunt hayabusa "$CASE/work/hayabusa.jsonl" -p "$CASE/evidence" --min-level medium -g
 ```
+`-g` groups detections per rule and host (count, first/last time, sample
+ids); drop it to list detections one by one for a rule you are examining.
 `forhunt hayabusa` attaches forhunt ids to detections. Treat detections as
 leads, not conclusions: confirm each with `forhunt show` and context.
 
 ## 4. Walk every checklist (step d)
 
-Copy `references/checklist-status-template.md` to `$CASE/work/checklist-status.md`.
+Pre-fill the status file with one pass over the evidence:
+
+```bash
+forhunt checklist "$CASE/evidence" -k references/checklists/checklists.json -o "$CASE/work/checklist-status.md"
+```
+It marks `LOG_SOURCE_MISSING` where no event of the check's channel and ids
+exists, runs every `forhunt search` query of every check, and writes `HIT?`
+(with match counts and sample event ids) or `NO_HIT`. It does not decide:
+you review every row. (Without the sweep, copy
+`references/checklist-status-template.md` and fill it by hand.)
+
 Then, tactic by tactic (order in `references/checklists/INDEX.md`), for every
 check in `references/checklists/<tactic>.yaml`:
 
@@ -92,7 +104,8 @@ check in `references/checklists/<tactic>.yaml`:
 3. On hits: pivot as the check's `pivots` say (account, logon id, host,
    process, IP), using narrow searches and short `timeline` windows.
 4. Record the result: `HIT` (with event ids and a one-line finding),
-   `NO_HIT` (query used + scope), `NOT_APPLICABLE` or `LOG_SOURCE_MISSING`.
+   `NO_HIT` (query used + scope, or why a `HIT?` was a false positive),
+   `NOT_APPLICABLE` or `LOG_SOURCE_MISSING`. No `HIT?` or `REVIEW` may remain.
 5. Respect `false_positives`; a check marked `verified: false` is a lead to
    confirm, say so in the finding.
 
@@ -133,7 +146,8 @@ inferred steps; optionally a self-contained HTML file
 - `references/forhunt.md`: commands, filters, `llm` format keys, exit codes
 - `references/hayabusa.md`: Hayabusa commands, levels, filters, licence notice
 - `references/checklists/INDEX.md`: tactic order, coverage matrix, blind spots
-- `references/checklists/*.yaml`: the checks (schema in `SCHEMA.md`)
+- `references/checklists/*.yaml`: the checks (schema in `SCHEMA.md`);
+  `checklists.json` is the same content for `forhunt checklist`
 - `references/checklist-status-template.md`: working file to copy per case
 - `references/eventids.md`, `references/logontypes.md`: lookup tables
 - `references/report-template.md`, `references/attack-path.md`

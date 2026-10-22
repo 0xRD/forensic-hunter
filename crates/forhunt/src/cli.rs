@@ -31,6 +31,9 @@ pub enum Cmd {
     Show(ShowArgs),
     /// Normalise Hayabusa json-timeline output into the `llm` format.
     Hayabusa(HayabusaArgs),
+    /// Sweep every detection checklist in one pass: log source coverage,
+    /// query hits, and a pre-filled checklist-status file for review.
+    Checklist(ChecklistArgs),
 }
 
 #[derive(Args, Debug, Clone)]
@@ -229,11 +232,40 @@ pub struct HayabusaArgs {
     /// Maximum detections written (0 = unlimited).
     #[arg(long, short = 'n', default_value_t = 200)]
     pub limit: usize,
+    /// One line per (rule, level, host) with count, first/last time and up to 5
+    /// sample event ids, instead of one line per detection.
+    #[arg(long, short = 'g')]
+    pub group: bool,
     /// Directories or files holding the scanned EVTX, to attach forhunt ids to detections.
     #[arg(long, short = 'p', value_name = "PATHS")]
     pub evtx: Vec<String>,
     #[arg(long, default_value_t = 256, value_name = "N")]
     pub max_value_len: usize,
+    #[arg(long, short = 'o', default_value = "-")]
+    pub output: String,
+    #[command(flatten)]
+    pub common: Common,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum ChecklistFormat {
+    Md,
+    Json,
+}
+
+#[derive(Args, Debug)]
+pub struct ChecklistArgs {
+    /// Evidence: files, directories or globs.
+    #[arg(required = true, value_name = "PATHS")]
+    pub paths: Vec<String>,
+    /// Machine-readable checklists (skill/references/checklists/checklists.json).
+    #[arg(long, short = 'k', value_name = "FILE")]
+    pub checks: std::path::PathBuf,
+    /// Only checks of these tactics (e.g. credential-access). Repeatable.
+    #[arg(long)]
+    pub tactic: Vec<String>,
+    #[arg(long, short = 'F', value_enum, default_value_t = ChecklistFormat::Md)]
+    pub format: ChecklistFormat,
     #[arg(long, short = 'o', default_value = "-")]
     pub output: String,
     #[command(flatten)]

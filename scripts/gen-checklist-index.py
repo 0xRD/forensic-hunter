@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CL = ROOT / "skill/references/checklists"
 INDEX = CL / "INDEX.md"
 TEMPLATE = ROOT / "skill/references/checklist-status-template.md"
+JSON = CL / "checklists.json"
 
 # Walk order: roughly the attack lifecycle, AD and remote access after the
 # tactics they feed.
@@ -181,7 +182,23 @@ def gen(files):
         t.append("")
     t += ["## Summary", "", "| Tactic | HIT | NO_HIT | NOT_APPLICABLE | LOG_SOURCE_MISSING |", "|---|---|---|---|---|"]
     t += [f"| {tac} |  |  |  |  |" for tac in ORDER if tac in files]
-    return index, "\n".join(t).rstrip() + "\n"
+    import json
+    machine = {"version": 1, "checks": []}
+    for tac in ORDER:
+        if tac not in files:
+            continue
+        for c in files[tac][1]:
+            ch = c.get("channel", "")
+            chans = ch if isinstance(ch, list) else [x.strip() for x in str(ch).split(",") if x.strip()]
+            fq = c.get("forhunt") or []
+            machine["checks"].append({
+                "id": c["id"], "title": str(c.get("title", "")), "tactic": tac,
+                "channels": chans, "event_ids": [int(x) for x in (c.get("event_ids") or []) if str(x).isdigit()],
+                "forhunt": [q for q in fq if isinstance(q, str)],
+                "severity": c.get("severity"), "verified": bool(c.get("verified")),
+            })
+    machine_json = json.dumps(machine, indent=1, ensure_ascii=False) + "\n"
+    return index, "\n".join(t).rstrip() + "\n", machine_json
 
 
 def main():
@@ -189,14 +206,15 @@ def main():
     files, problems = load()
     for p in problems:
         print("checklist:", p, file=sys.stderr)
-    index, template = gen(files)
+    index, template, machine = gen(files)
     if check:
-        stale = [p for p, s in ((INDEX, index), (TEMPLATE, template)) if not p.exists() or p.read_text() != s]
+        stale = [p for p, s in ((INDEX, index), (TEMPLATE, template), (JSON, machine)) if not p.exists() or p.read_text() != s]
         for p in stale:
             print(f"out of date: {p.relative_to(ROOT)} (run scripts/gen-checklist-index.py)", file=sys.stderr)
         sys.exit(1 if problems or stale else 0)
     INDEX.write_text(index)
     TEMPLATE.write_text(template)
+    JSON.write_text(machine)
     print(f"wrote {INDEX.relative_to(ROOT)} and {TEMPLATE.relative_to(ROOT)}")
     sys.exit(1 if problems else 0)
 

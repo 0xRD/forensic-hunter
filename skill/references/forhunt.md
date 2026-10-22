@@ -10,7 +10,8 @@
 | `timeline` | events from all inputs merged by time | `llm`, cap 200 (earliest first) |
 | `show <id>... -p <paths>` | one event in full (`-F json|xml|llm`) | `json` |
 | `parse` | every event (machine use only) | `jsonl` |
-| `hayabusa <file>` | normalise Hayabusa JSON/JSONL output, attach forhunt ids (`-p <evtx dir>`) | `llm`, cap 200 |
+| `hayabusa <file>` | normalise Hayabusa JSON/JSONL output, attach forhunt ids (`-p <evtx dir>`); `-g` groups per rule and host | `llm`, cap 200 |
+| `checklist <paths> -k checklists.json` | one-pass sweep of every detection check: log source coverage, query hits, pre-filled status file (`-F md|json`, `--tactic`) | markdown |
 
 ## Filters (search, timeline, stats)
 
