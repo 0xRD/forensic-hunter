@@ -96,3 +96,13 @@ Synthetic volume: `evtx-gen ntfs-corpus --records 1000000` = 976 MiB `$MFT`
 - Full-sort timelines of millions of MFT events are slow (spill to disk of
   ~1 KB events); timelines are meant for windows. Lazy timestamp fields
   (formatted only when written) would cut both costs: next step.
+
+## Perf gate fix (2026-10-22)
+
+The CI gate reported ~13M instructions for parse + search + stats: the
+rust-cache restore had left `target/bench-gate/corpus` as an empty directory,
+so the corpus was never regenerated and the gate measured start-up only. The
+NTFS commit then "regressed" by +5.3% (larger field map to parse at start-up,
+~0.6M instructions). `bench-gate.sh` now checks the corpus by content and
+refuses to compare without it. With the corpus: 2.249G instructions, NTFS
+changes within +0.3% of the commit before them.

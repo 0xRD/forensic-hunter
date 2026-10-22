@@ -17,9 +17,17 @@ cd "$ROOT"
 
 command -v valgrind >/dev/null || { echo "valgrind is required" >&2; exit 2; }
 
-# Deterministic input: ~32 MiB of synthetic logs.
-if [ ! -d "$WORK/corpus" ]; then
+# Deterministic input: ~32 MiB of synthetic logs. Checked by content, not by
+# directory: a CI cache can restore the directory without its files, and the
+# gate would then measure start-up only.
+if ! find "$WORK/corpus" -name '*.evtx' -size +1M 2>/dev/null | grep -q .; then
+  rm -rf "$WORK/corpus"
   cargo run --release --locked -q -p evtx-gen -- corpus --out "$WORK/corpus" --size 32M --file-size 16M --seed 7 >/dev/null
+fi
+BYTES=$(find "$WORK/corpus" -name '*.evtx' -exec cat {} + | wc -c)
+if [ "$BYTES" -lt $((30 << 20)) ]; then
+  echo "benchmark corpus is missing or incomplete ($BYTES bytes)" >&2
+  exit 2
 fi
 
 count() { # binary label
