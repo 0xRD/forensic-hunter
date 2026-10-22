@@ -22,11 +22,15 @@ Last update: 2026-10-21 (session 1)
   (80 verified), INDEX with coverage matrix and blind spots, status template,
   install scripts (bash/PowerShell, pinned Hayabusa hashes), sample fetcher
 
+- `forhunt checklist` sweep, `hayabusa -g` grouping
+- Worked examples: insecurebank.local (EVTX-ATTACK-SAMPLES) with report,
+  timeline, Mermaid + HTML attack path; offline synthetic example
+
 ## In progress
-- Benchmarks on 2 GiB corpus -> README table
-- Worked example on EVTX-ATTACK-SAMPLES (report + Mermaid attack path)
+- Phase 3: perf analyst (docs/PERF-ANALYSIS.md) and reviewer (REVIEW.md)
+- Final benchmarks -> README table
 
 ## Next
-- Perf analyst and fresh-eyes reviewer subagents
+- Apply review must-fixes and top perf proposals
 - Tag v0.1.0, verify release assets, test install.sh end to end
 - Homebrew tap (deferred, B-002)
