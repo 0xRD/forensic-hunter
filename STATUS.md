@@ -41,6 +41,8 @@ Last update: 2026-10-22 (session 1)
 - NTFS: `$MFT` and `$UsnJrnl:$J` sources (D-036..D-041), differential checks
   against mft_dump (13k real records) and USN-Journal-Parser, fuzzed, synthetic
   fixtures for the WS-07 scenario, filesystem checklist (10 checks), P-011
+- NTFS hunting guide `skill/references/ntfs-hunting.md` and 21 more
+  filesystem checks (FH-FS-011..031; research subagent, reviewed)
 
 ## In progress
 - (none)
@@ -50,6 +52,13 @@ Last update: 2026-10-22 (session 1)
   (one event set per name), attribute lists (names in extension records),
   host name from the SYSTEM hive once registry support exists, lazy
   timestamp fields (P-011)
+- Binary features the NTFS checks would use: `$J` first/last time and USN
+  discontinuities in `stats` (journal reset, FH-FS-031); time bucketing for
+  burst detection; numeric comparisons (`FileSize>N`); per-file grouping
+  (`EntryNumber`+`SequenceNumber`); a `Name!~text` operator
+- ATT&CK: some checks keep revoked ids next to their replacements
+  (T1070.001/T1685.005, T1562.x/T1685/T1686, T1574.002/T1574.001), as noted
+  in each check; drop the legacy ids at the next checklist revision
 - Pre-public steps for the owner (history author, release, visibility, tap, installer test): TODO.md
 - Homebrew tap (deferred, B-002)
 - Review lower-priority items: Command and Control checklist, symlinked

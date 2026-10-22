@@ -322,6 +322,27 @@ Case: <name>  Evidence: <path>  Analyst: <name>  Started: <UTC time>
 | FH-FS-008 | Mass renames to one new extension or ransom notes (ransomware) | UsnJrnl 3,1 |  |  |
 | FH-FS-009 | Windows process names outside their system folders (masquerading) | MFT 48 |  |  |
 | FH-FS-010 | Remote execution service binaries dropped in the Windows folder | MFT 48 |  |  |
+| FH-FS-011 | Timestamp or attribute change on an executable (journal BasicInfoChange) | UsnJrnl 5,4,1 |  |  |
+| FH-FS-012 | Both timestomp indicators on the same file (any extension) | MFT 16 |  |  |
+| FH-FS-013 | Offensive and credential-theft tool names or output files | MFT 48,1 |  |  |
+| FH-FS-014 | Remote access, tunnelling and file-transfer tool binaries | MFT 48,1 |  |  |
+| FH-FS-015 | Archives in staging folders and rclone traces (collection, exfiltration) | UsnJrnl 1 |  |  |
+| FH-FS-016 | Remote-execution tool output files and random-named service binaries in \Windows | UsnJrnl 1 |  |  |
+| FH-FS-017 | Script or page files written to web roots (webshells) | UsnJrnl 1 |  |  |
+| FH-FS-018 | Scripts, binaries or shortcuts written to Startup folders | UsnJrnl 1 |  |  |
+| FH-FS-019 | New scheduled task definition files in the Tasks folder | UsnJrnl 1 |  |  |
+| FH-FS-020 | WMI repository writes and MOF files (WMI persistence) | UsnJrnl 4,1 |  |  |
+| FH-FS-021 | Driver files dropped in user-writable folders and spool\drivers\color | UsnJrnl 1 |  |  |
+| FH-FS-022 | DLL side-loading staging (trailing-space folders, DLLs in AppData and ProgramData) | UsnJrnl 1 |  |  |
+| FH-FS-023 | Credential store copies (SAM, SYSTEM, SECURITY hives, ntds.dit, IFM, browser databases) | MFT 48,1 |  |  |
+| FH-FS-024 | Anti-forensic and recovery-inhibiting tools (Prefetch), SDelete rename names | UsnJrnl 1,2,3,4 |  |  |
+| FH-FS-025 | Shell history, web server logs or backup files deleted | UsnJrnl 2 |  |  |
+| FH-FS-026 | Mark-of-the-Web removed (Zone.Identifier stream deleted or truncated) | UsnJrnl 5,4 |  |  |
+| FH-FS-027 | Alternate data streams other than Zone.Identifier | MFT 48 |  |  |
+| FH-FS-028 | Documents renamed with an appended extension (ransomware rename pattern) | UsnJrnl 3 |  |  |
+| FH-FS-029 | RDP client artefacts (bitmap cache, .rdp files) on a source host | UsnJrnl 1 |  |  |
+| FH-FS-030 | Executables renamed in staging folders and lure-style file names | UsnJrnl 3,1 |  |  |
+| FH-FS-031 | USN journal reset or late start (journal deleted) | MFT 16 |  |  |
 
 ## Summary
 

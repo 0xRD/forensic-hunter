@@ -58,7 +58,8 @@ and keeps the computer name on each event. Scope a question to one host with
 `--computer HOST`. Ask for `$MFT` and `$Extend/$J` with the event logs (KAPE
 `!SANS_Triage` / Velociraptor `Windows.KapeFiles.Targets` collect them): they
 show files created, renamed, deleted and timestomped when logs are missing or
-cleared (`references/forhunt.md`, NTFS section). They carry no host name, so
+cleared (`references/forhunt.md`, NTFS section; how to hunt and read them:
+`references/ntfs-hunting.md`). They carry no host name, so
 scope them by the host's folder, never with `--computer`.
 If the analyst wants to browse in Timeline Explorer:
 `forhunt parse "$CASE/evidence" -F csv -O "$CASE/work/csv" --split host`.
@@ -138,7 +139,8 @@ For each cluster of findings, run `forhunt timeline` on a tight window
 detections, and build the chronological table for the report. When `$MFT`
 / `$J` are in the evidence, run the window over the host's folder so file
 activity (downloads, dropped tools, deletions) sits between the events that
-explain it; use `$FILE_NAME` times (event 48) when `$SI` times look faked.
+explain it; use `$FILE_NAME` times (event 48) when `$SI` times look faked. Reading
+guide (MACB, journal reasons, timestomping): `references/ntfs-hunting.md`.
 
 ## 6. Report (step f)
 
@@ -158,6 +160,7 @@ inferred steps; optionally a self-contained HTML file
 
 - `references/forhunt.md`: commands, filters, `llm` format keys, exit codes
 - `references/hayabusa.md`: Hayabusa commands, levels, filters, licence notice
+- `references/ntfs-hunting.md`: hunting and interpreting `$MFT` / `$UsnJrnl:$J` (timestomping, staging, persistence, anti-forensics, correlation)
 - `references/checklists/INDEX.md`: tactic order, coverage matrix, blind spots
 - `references/checklists/*.yaml`: the checks (schema in `SCHEMA.md`);
   `checklists.json` is the same content for `forhunt checklist`

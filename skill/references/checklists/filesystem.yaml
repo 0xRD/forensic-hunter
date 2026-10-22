@@ -39,9 +39,11 @@ checks:
     severity: high
     sources:
       - https://attack.mitre.org/techniques/T1070/006/
+      - https://github.com/mitre/cti
+      - https://github.com/EricZimmerman/MFTECmd/blob/master/MFTECmd/Program.cs
       - https://learn.microsoft.com/en-us/windows/win32/fileio/master-file-table
     verified: false
-    notes: "Written from the NTFS format (a user-mode timestomp tool can set $SI times but not $FN times); sources cited, not re-read in this session (BLOCKERS.md B-001). Exercised by the fixture scenario (PSEXESVC.exe)."
+    notes: "Read 2026-10-22 via GitHub: ATT&CK T1070.006 text in mitre/cti (the $SI times are user-level settable, $FN is kernel-managed; 'double timestomping' sets both and defeats this check) and the MFTECmd source, which defines the indicator as $SI created < $FN created. Not marked verified: the channel and event ids are forhunt-specific and the two sources are not independent of the check's author. Exercised by the fixture scenario (PSEXESVC.exe). See references/ntfs-hunting.md."
 
   - id: FH-FS-002
     title: Timestamps with zero sub-seconds on executables
@@ -68,7 +70,7 @@ checks:
     sources:
       - https://attack.mitre.org/techniques/T1070/006/
     verified: false
-    notes: "uSecZeros looks at the $SI creation time only. Sources cited, not re-read in this session (B-001)."
+    notes: "The reference implementation (MFTECmd source, read 2026-10-22) sets the flag when the millisecond part of the $SI created or modified time is 0, so forhunt's exact definition may differ slightly. Some tools write whole-second times, so one hit is weak: use it with FH-FS-001 or FH-FS-012."
 
   - id: FH-FS-003
     title: Executables or scripts created in user-writable staging folders
@@ -185,7 +187,7 @@ checks:
   - id: FH-FS-007
     title: Event log files or Prefetch files deleted
     tactic: filesystem
-    attack: [T1070.001, T1070.004]
+    attack: [T1685.005, T1070.001, T1070.004]
     channel: UsnJrnl
     event_ids: [2]
     prerequisites:
@@ -294,3 +296,676 @@ checks:
       - https://attack.mitre.org/techniques/T1569/002/
     verified: false
     notes: "The second query lists any executable created directly in \\Windows, where service binaries copied over ADMIN$ land. Sources cited, not re-read in this session (B-001)."
+
+  - id: FH-FS-011
+    title: Timestamp or attribute change on an executable (journal BasicInfoChange)
+    tactic: filesystem
+    attack: [T1070.006]
+    channel: UsnJrnl
+    event_ids: [5, 4, 1]
+    prerequisites:
+      - "$UsnJrnl:$J collected (retention is limited)"
+    logic:
+      selection:
+        Channel: UsnJrnl
+        Reason|contains: BasicInfoChange
+        FileName|re: '\.(exe|dll|sys|ps1|bat|cmd|vbs|js|hta|scr)$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel UsnJrnl --field Reason~BasicInfoChange --regex 'FileName=\.(exe|dll|sys|ps1|bat|cmd|vbs|js|hta|scr)$' --format llm
+    pivots:
+      - "Same EntryNumber: the FileCreate record gives the real creation time; a BasicInfoChange minutes after it (and no later content change) is the typical timestomp sequence"
+      - "MFT records of that EntryNumber: compare Created0x10 with Created0x30 (FH-FS-001) and check uSecZeros (FH-FS-002)"
+      - "Process creation (4688 / Sysmon 1 and Sysmon 2 'file creation time changed') around the journal time"
+    false_positives:
+      - "Any attribute change (read-only, hidden, archive) also sets BasicInfoChange; installers, archive extractors and sync clients set times on files they write"
+      - "A BasicInfoChange merged into the creation record (FileCreate|BasicInfoChange|Close) is normal for extractors that restore original times"
+    severity: medium
+    sources:
+      - https://github.com/MicrosoftDocs/sdk-api/blob/docs/sdk-api-src/content/winioctl/ns-winioctl-usn_record_v2.md
+      - https://github.com/MicrosoftDocs/win32/blob/docs/desktop-src/FileIO/change-journal-records.md
+      - https://github.com/mitre/cti
+    verified: false
+    notes: "Both Microsoft pages (read 2026-10-22 from their GitHub source) say the reason flag marks a change of attributes or time stamps and that setting a time stamp writes DATA_OVERWRITE|BASIC_INFO_CHANGE; they come from one publisher, so not marked verified. The reason is a lead, not proof: it does not say which time was set."
+
+  - id: FH-FS-012
+    title: Both timestomp indicators on the same file (any extension)
+    tactic: filesystem
+    attack: [T1070.006]
+    channel: MFT
+    event_ids: [16]
+    prerequisites:
+      - "$MFT collected from the volume"
+    logic:
+      selection:
+        EventID: 16
+        SiLtFn: 'true'
+        uSecZeros: 'true'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel MFT --event-id 16 --field SiLtFn=true --field uSecZeros=true --format llm
+    pivots:
+      - "Files sharing the same $FN creation minute (Created0x30): the dropped toolkit; sort by Created0x30, not by Created0x10"
+      - "Journal records for the EntryNumber (FileCreate time, BasicInfoChange) and the logons or processes in that minute"
+    false_positives:
+      - "Archives and installers that restore old whole-second times on extraction (cab, zip, msi payloads)"
+      - "OS or application files copied from media with original times: many hits on the install date or one deployment minute"
+    severity: high
+    sources:
+      - https://github.com/EricZimmerman/MFTECmd/blob/master/MFTECmd/Program.cs
+      - https://github.com/mitre/cti
+    verified: false
+    notes: "FH-FS-001 limited to executable extensions; this one drops the extension filter (data files, .tmp, .dat, renamed payloads) and requires both indicators, so it is quiet. Group by date before judging: a single day with hundreds of hits is a deployment, not an intrusion. Double timestomping (both $SI and $FN set) evades both flags."
+
+  - id: FH-FS-013
+    title: Offensive and credential-theft tool names or output files
+    tactic: filesystem
+    attack: [T1588.002, T1003.001, T1087.002, T1069.002]
+    channel: MFT
+    event_ids: [48, 1]
+    prerequisites:
+      - "$MFT and/or $UsnJrnl:$J collected"
+    logic:
+      tool_names:
+        FileName|re: '^(mimikatz|mimilib|mimidrv|rubeus|sharphound|sharpdpapi|sharpwmi|safetykatz|lazagne|pypykatz|nanodump|dumpert|pwdump|fgdump|gsecdump|cachedump|kekeo|certify|seatbelt|inveigh|crackmapexec|netexec|procdump|wceaux).*\.(exe|dll|ps1|zip)$'
+      artefacts:
+        FileName|re: '(\.kirbi$|^mimilsa\.log$|^(sam|system|security|ntds)\.out$|bloodhound\.zip$|_(computers|users|groups|gpos|ous|containers)\.json$)'
+      condition: tool_names or artefacts
+    forhunt:
+      - forhunt search <paths> --channel MFT --event-id 48 --regex 'FileName=^(mimikatz|mimilib|mimidrv|rubeus|sharphound|sharpdpapi|sharpwmi|safetykatz|lazagne|pypykatz|nanodump|dumpert|pwdump|fgdump|gsecdump|cachedump|kekeo|certify|seatbelt|inveigh|crackmapexec|netexec|procdump|wceaux).*\.(exe|dll|ps1|zip)$' --format llm
+      - forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'FileName=^(mimikatz|mimilib|mimidrv|rubeus|sharphound|sharpdpapi|sharpwmi|safetykatz|lazagne|pypykatz|nanodump|dumpert|pwdump|fgdump|gsecdump|cachedump|kekeo|certify|seatbelt|inveigh|crackmapexec|netexec|procdump|wceaux).*\.(exe|dll|ps1|zip)$' --format llm
+      - forhunt search <paths> --channel UsnJrnl --regex 'FileName=(\.kirbi$|^mimilsa\.log$|^(sam|system|security|ntds)\.out$|bloodhound\.zip$|_(computers|users|groups|gpos|ous|containers)\.json$)' --format llm
+    pivots:
+      - "Process creation of the same path (4688 / Sysmon 1), the parent, and the account; Sysmon 10 on lsass at the same time"
+      - "Deletion of the file (UsnJrnl event 2) and archive creation afterwards (FH-FS-015)"
+      - "Zone.Identifier (FH-FS-004) to find where the tool came from"
+    false_positives:
+      - "Authorised red team or pentest tooling; security products and sandboxes that carry sample names"
+      - "ProcDump is a legitimate Sysinternals tool used by developers and support; judge by path and target process"
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_cred_dump_tools_dropped_files.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_hktl_mimikatz_files.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_bloodhound_collection.yml
+    verified: false
+    notes: "Names are default or well-known ones; attackers rename tools, so a miss proves nothing. The name list is the analyst's own, drawn from the cited rule projects (read 2026-10-22, only the file names they flag were used) and tool knowledge. SharpHound output is a timestamped zip ending in BloodHound.zip plus per-object json files (the domains json is left out because browsers create similarly named files). Sorting hits by time shows the order of use."
+
+  - id: FH-FS-014
+    title: Remote access, tunnelling and file-transfer tool binaries
+    tactic: filesystem
+    attack: [T1219, T1572, T1105]
+    channel: MFT
+    event_ids: [48, 1]
+    prerequisites:
+      - "$MFT and/or $UsnJrnl:$J collected"
+    logic:
+      selection:
+        FileName|re: '^(anydesk|teamviewer|screenconnect|connectwise|atera|splashtop|rustdesk|meshagent|ltsvc|dwagent|supremo|ngrok|chisel|frpc|plink|cloudflared|winscp|pscp|psftp).*\.(exe|msi)$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel MFT --event-id 48 --regex 'FileName=^(anydesk|teamviewer|screenconnect|connectwise|atera|splashtop|rustdesk|meshagent|ltsvc|dwagent|supremo|ngrok|chisel|frpc|plink|cloudflared|winscp|pscp|psftp).*\.(exe|msi)$' --format llm
+      - forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'FileName=^(anydesk|teamviewer|screenconnect|connectwise|atera|splashtop|rustdesk|meshagent|ltsvc|dwagent|supremo|ngrok|chisel|frpc|plink|cloudflared|winscp|pscp|psftp).*\.(exe|msi)$' --format llm
+      - forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=\\appdata\\roaming\\anydesk\\(user|system)\.conf$' --format llm
+    pivots:
+      - "Install or service creation (7045 / 4697), the first execution (Prefetch, 4688 / Sysmon 1) and the account that did it"
+      - "Whether the product is on the organisation's approved list; outbound connections to the vendor relay in firewall / DNS logs"
+      - "Config files written next to the binary (user.conf, system.conf): who and when"
+    false_positives:
+      - "Approved remote support software: compare with the software inventory; admins using WinSCP / PuTTY tools"
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_anydesk_artefact.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_remote_access_tools_screenconnect_artefact.yml
+    verified: false
+    notes: "Product names are an analyst list; installers are often named with a version or random suffix (hence the .* before the extension) and portable builds run from Downloads or Temp. The AnyDesk config path comes from the cited rule (read 2026-10-22). Other products' artefact paths were not checked."
+
+  - id: FH-FS-015
+    title: Archives in staging folders and rclone traces (collection, exfiltration)
+    tactic: filesystem
+    attack: [T1560.001, T1074.001, T1567.002]
+    channel: UsnJrnl
+    event_ids: [1]
+    prerequisites:
+      - "$UsnJrnl:$J and/or $MFT collected"
+    logic:
+      archives:
+        EventID: 1
+        FileName|re: '\.(7z|rar|zip|tar|gz|tgz|cab)$'
+        Path|re: '^\.\\(users\\public|programdata|windows\\temp|perflogs|temp|inetpub)\\'
+      rclone:
+        Path|re: '(\\\.config\\rclone\\|\\rclone(\.exe|\.conf)$)'
+      condition: archives or rclone
+    forhunt:
+      - forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'FileName=\.(7z|rar|zip|tar|gz|tgz|cab)$' --regex 'Path=^\.\\(users\\public|programdata|windows\\temp|perflogs|temp|inetpub)\\' --format llm
+      - forhunt search <paths> --channel MFT --event-id 48 --regex 'FileName=\.(7z|rar|zip|tar|gz|tgz|cab)$' --regex 'Path=^\.\\(users\\public|programdata|windows\\temp|perflogs|temp|inetpub)\\' --format llm
+      - forhunt search <paths> --channel MFT --event-id 48 --regex 'Path=(\\\.config\\rclone\\|\\rclone(\.exe|\.conf)$)' --format llm
+    pivots:
+      - "FileSize of the archive in the MFT record (-F jsonl); archive size close to the size of the source folder hints at a full copy"
+      - "Source files: FileCreate/DataExtend bursts or many Access times (LastAccess0x10) on a share or user folder just before the archive"
+      - "Deletion of the archive (event 2) after the transfer window; outbound traffic volume in firewall / proxy logs"
+      - "Rclone: config path names the remote; check the user profile that owns it"
+    false_positives:
+      - "Installers and updaters unpacking cabs or zips to Temp and ProgramData; backup software writing archives"
+      - "Administrators using rclone for approved backups"
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_rclone_config_files.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_perflogs_susp_files.yml
+    verified: false
+    notes: "Archives under user profile folders (Desktop, Documents, Downloads) are left out on purpose: too many are normal. Re-run with 'Path=^\\.\\\\users\\\\[^\\\\]+\\\\(desktop|documents)' once a staging user is known. The rclone config location (.config\\rclone under a user profile) was read in the cited Sigma rule on 2026-10-22; password-protected or split archives (.001, .part1.rar) are not matched."
+
+  - id: FH-FS-016
+    title: Remote-execution tool output files and random-named service binaries in \Windows
+    tactic: filesystem
+    attack: [T1021.002, T1569.002, T1047]
+    channel: UsnJrnl
+    event_ids: [1]
+    prerequisites:
+      - "$UsnJrnl:$J collected (and an $MFT beside it for paths)"
+    logic:
+      wmiexec_output:
+        Path|re: '^\.\\(windows\\)?__1\d{9}\.\d{1,7}$'
+      impacket_resume:
+        FileName|re: '^sessionresume_[a-z]{8}$'
+      random_service_binary:
+        EventID: 1
+        Path|re: '^\.\\windows\\[a-z]{8}\.exe$'
+      condition: wmiexec_output or impacket_resume or random_service_binary
+    forhunt:
+      - forhunt search <paths> --channel UsnJrnl --regex 'Path=^\.\\(windows\\)?__1\d{9}\.\d{1,7}$' --format llm
+      - forhunt search <paths> --channel UsnJrnl --regex 'FileName=^sessionresume_[a-z]{8}$' --format llm
+      - forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=^\.\\windows\\[a-z]{8}\.exe$' --format llm
+    pivots:
+      - "Network logon (4624 type 3) from the same minute, ADMIN$ / C$ access (5145), and 7045 / 4697 for the random-named service"
+      - "Source IP and account of that logon; the same names on other hosts show the movement path"
+      - "Creation followed by deletion within seconds is the normal life of these files"
+    false_positives:
+      - "Few legitimate 8-letter executables are created in \\Windows (system updates can recreate explorer.exe or splwow64.exe); PSEXESVC.exe also has eight letters, so it appears here as well as in FH-FS-010"
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_wmiexec_default_filename.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_impacket_file_indicators.yml
+    verified: false
+    notes: "The wmiexec output name (__ plus epoch seconds, written under ADMIN$ or the drive root) and the 8-letter sessionresume file (secretsdump) come from the cited Sigma rules, read 2026-10-22. That Impacket psexec/smbexec copy a random 8-letter exe to ADMIN$ is the author's tool knowledge, not confirmed from a source read in this session, and tools can use other lengths. Complements FH-FS-010 (named service binaries)."
+
+  - id: FH-FS-017
+    title: Script or page files written to web roots (webshells)
+    tactic: filesystem
+    attack: [T1505.003]
+    channel: UsnJrnl
+    event_ids: [1]
+    prerequisites:
+      - "$UsnJrnl:$J and/or $MFT collected from the web server"
+    logic:
+      selection:
+        EventID: 1
+        Path|re: '\\(inetpub\\wwwroot|frontend\\httpproxy|xampp\\htdocs|webapps\\root|wwwroot)\\.*\.(aspx?|ashx|asmx|ascx|cer|asa|php\d?|phtml|jspx?|cfm)$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=\\(inetpub\\wwwroot|frontend\\httpproxy|xampp\\htdocs|webapps\\root|wwwroot)\\.*\.(aspx?|ashx|asmx|ascx|cer|asa|php\d?|phtml|jspx?|cfm)$' --format llm
+      - forhunt search <paths> --channel MFT --event-id 48 --regex 'Path=\\(inetpub\\wwwroot|frontend\\httpproxy|xampp\\htdocs|webapps\\root|wwwroot)\\.*\.(aspx?|ashx|asmx|ascx|cer|asa|php\d?|phtml|jspx?|cfm)$' --format llm
+    pivots:
+      - "IIS logs for requests to that file name right after creation (POST with odd user agents); w3wp.exe children in 4688 / Sysmon 1"
+      - "Same minute: other files on the volume created by the same process or account (the exploit chain); Exchange aspnet_client and FrontEnd\\HttpProxy\\owa\\auth folders are classic drop places"
+      - "Small FileSize with an old-looking name (timestomped to match its neighbours): FH-FS-001/012"
+    false_positives:
+      - "Normal web deployments, CMS plugin installs and ASP.NET compile output (check who deployed and when)"
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_webshell_creation_detect.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_exchange_webshell_drop.yml
+    verified: false
+    notes: "Paths and extensions follow the two cited rules (read 2026-10-22), widened to Tomcat/XAMPP names. Custom web roots (D:\\sites) are matched only if they contain one of these folder names: add the real root. A dropped file that was later deleted is still visible as an event 2 in the journal or a Deleted record in the $MFT."
+
+  - id: FH-FS-018
+    title: Scripts, binaries or shortcuts written to Startup folders
+    tactic: filesystem
+    attack: [T1547.001]
+    channel: UsnJrnl
+    event_ids: [1]
+    prerequisites:
+      - "$UsnJrnl:$J and/or $MFT collected"
+    logic:
+      selection:
+        EventID: 1
+        Path|re: '\\start menu\\programs\\startup\\[^\\]+\.(bat|cmd|vbs|vbe|js|jse|ps1|hta|exe|dll|scr|url|wsf|lnk|jar|msi)$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=\\start menu\\programs\\startup\\[^\\]+\.(bat|cmd|vbs|vbe|js|jse|ps1|hta|exe|dll|scr|url|wsf|lnk|jar|msi)$' --format llm
+      - forhunt search <paths> --channel MFT --event-id 48 --regex 'Path=\\start menu\\programs\\startup\\[^\\]+\.(bat|cmd|vbs|vbe|js|jse|ps1|hta|exe|dll|scr|url|wsf|lnk|jar|msi)$' --format llm
+    pivots:
+      - "The user profile (or ProgramData for all users) tells who is affected; the next logon of that user is the first execution"
+      - "A .lnk or .url target points to the payload: read it from the live image; the payload path is the real IOC"
+      - "Writes from mstsc.exe into Startup mean RDP drive redirection (tsclient) was used to plant files"
+    false_positives:
+      - "Application shortcuts (.lnk) created by installers, e.g. Send to OneNote; Windows feature updates staging under $WINDOWS.~BT"
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_susp_startup_folder_persistence.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_startup_folder_file_write.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_tsclient_filewrite_startup.yml
+    verified: false
+    notes: "Both the per-user (AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup) and the all-users (ProgramData\\...\\StartUp) folders match. desktop.ini is excluded by the extension list. Script and binary extensions are strong; .lnk alone is weak."
+
+  - id: FH-FS-019
+    title: New scheduled task definition files in the Tasks folder
+    tactic: filesystem
+    attack: [T1053.005]
+    channel: UsnJrnl
+    event_ids: [1]
+    prerequisites:
+      - "$UsnJrnl:$J and/or $MFT collected"
+    logic:
+      selection:
+        EventID: 1
+        Path|re: '^\.\\windows\\system32\\tasks\\[^\\]+$'
+      legacy_job:
+        Path|re: '^\.\\windows\\tasks\\.*\.job$'
+      condition: selection or legacy_job
+    forhunt:
+      - forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=^\.\\windows\\system32\\tasks\\[^\\]+$' --format llm
+      - forhunt search <paths> --channel MFT --event-id 48 --regex 'Path=^\.\\windows\\system32\\tasks\\[^\\]+$' --format llm
+      - forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=^\.\\windows\\tasks\\.*\.job$' --format llm
+    pivots:
+      - "Security 4698 / TaskScheduler 106 for the task name, author and action; the XML in the live image or a resident $MFT copy holds the command"
+      - "Task names that mimic Microsoft ones or use random strings; creation by SYSTEM at the time of a remote logon (schtasks /s, atexec-style execution)"
+      - "Deleted task files (event 2) shortly after: one-shot execution tasks are created and removed within seconds"
+    false_positives:
+      - "Third-party updaters (Google, Adobe, OneDrive, vendor agents) register tasks in the folder root; Microsoft's own tasks live in subfolders and are excluded by the pattern"
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_susp_task_write.yml
+      - https://github.com/mitre/cti
+    verified: false
+    notes: "Task files have no extension and are named after the task. Tasks created inside a subfolder (name with a backslash) are not matched: widen to '^\\.\\\\windows\\\\system32\\\\tasks\\\\' and filter out \\Microsoft\\ by eye. The folder name was read in the cited rule (2026-10-22); the legacy .job location is from the author's knowledge."
+
+  - id: FH-FS-020
+    title: WMI repository writes and MOF files (WMI persistence)
+    tactic: filesystem
+    attack: [T1546.003, T1047]
+    channel: UsnJrnl
+    event_ids: [4, 1]
+    prerequisites:
+      - "$UsnJrnl:$J collected"
+    logic:
+      repository:
+        Path|re: '^\.\\windows\\system32\\wbem\\repository\\'
+        FileName|re: '^(objects\.data|index\.btr|mapping[123]\.map)$'
+      mof:
+        EventID: 1
+        FileName|re: '\.mof$'
+      condition: repository or mof
+    forhunt:
+      - forhunt search <paths> --channel UsnJrnl --regex 'Path=^\.\\windows\\system32\\wbem\\repository\\' --regex 'FileName=^(objects\.data|index\.btr|mapping[123]\.map)$' --limit 50 --format llm
+      - forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'FileName=\.mof$' --format llm
+    pivots:
+      - "WMI-Activity 5861 and Sysmon 19/20/21 for the subscription itself; the repository only says that something changed"
+      - "A repository write minutes after a remote logon or a script execution; compare with ordinary background writes in the days before"
+      - "A .mof created in a user or Temp folder and a mofcomp.exe execution"
+    false_positives:
+      - "The WMI repository is written routinely by system components and inventory software: a single write means nothing"
+    severity: low
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_wmi_persistence_script_event_consumer_write.yml
+      - https://github.com/mitre/cti
+    verified: false
+    notes: "Weak on its own: use it to date a subscription found elsewhere or to see an unusual write burst. The cited Sigma rule (read 2026-10-22) is process-based (scrcons.exe writing files) and does not use repository file names; the repository file names are the author's knowledge of the CIM store layout and were not confirmed from a source read here."
+
+  - id: FH-FS-021
+    title: Driver files dropped in user-writable folders and spool\drivers\color
+    tactic: filesystem
+    attack: [T1068, T1036.005]
+    channel: UsnJrnl
+    event_ids: [1]
+    prerequisites:
+      - "$UsnJrnl:$J and/or $MFT collected"
+    logic:
+      drivers:
+        EventID: 1
+        Path|re: '^\.\\(users|programdata|windows\\temp|perflogs|temp)\\.*\.sys$'
+      spool_color:
+        Path|re: '^\.\\windows\\system32\\spool\\drivers\\color\\[^\\]+\.(dll|exe|sys)$'
+      condition: drivers or spool_color
+    forhunt:
+      - forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=^\.\\(users|programdata|windows\\temp|perflogs|temp)\\.*\.sys$' --format llm
+      - forhunt search <paths> --channel MFT --event-id 48 --regex 'Path=^\.\\(users|programdata|windows\\temp|perflogs|temp)\\.*\.sys$' --format llm
+      - forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=^\.\\windows\\system32\\spool\\drivers\\color\\[^\\]+\.(dll|exe|sys)$' --format llm
+    pivots:
+      - "System 7045 / 7036 or Sysmon 6 (driver loaded) for the same file name; sc.exe or driver-loader execution (4688 / Sysmon 1)"
+      - "Known vulnerable or renamed signed drivers: hash the file from the image and look it up; process-explorer-style names (PROCEXP*.sys) written by a non-Sysinternals binary"
+      - "Security-tool tampering (Defender, EDR service stop) right after the driver load"
+    false_positives:
+      - "Driver installers and diagnostic tools that unpack a .sys to Temp before loading it (Sysinternals, vendor firmware updaters)"
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_susp_spool_drivers_color_drop.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_sysinternals_procexp_driver_susp_creation.yml
+    verified: false
+    notes: "Bring-your-own-vulnerable-driver activity is the main reason to look: the driver is signed but dropped where drivers never live. The spool\\drivers\\color folder is a known place to hide binaries because it is writable and rarely monitored (cited rule, read 2026-10-22). ATT&CK mapping is approximate (T1068 for kernel exploitation)."
+
+  - id: FH-FS-022
+    title: DLL side-loading staging (trailing-space folders, DLLs in AppData and ProgramData)
+    tactic: filesystem
+    attack: [T1574.001, T1036.005]
+    channel: UsnJrnl
+    event_ids: [1]
+    prerequisites:
+      - "$UsnJrnl:$J and/or $MFT collected"
+    logic:
+      space_folder:
+        EventID: 1
+        Path|re: '^\.\\(windows|program files|program files \(x86\)) \\'
+      user_dll:
+        EventID: 1
+        Path|re: '^\.\\(users\\[^\\]+\\appdata\\roaming|programdata)\\.*\.dll$'
+      condition: space_folder or user_dll
+    forhunt:
+      - forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=^\.\\(windows|program files|program files \(x86\)) \\' --format llm
+      - forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=^\.\\(users\\[^\\]+\\appdata\\roaming|programdata)\\.*\.dll$' --limit 100 --format llm
+    pivots:
+      - "Group by parent folder (ParentEntryNumber): a signed executable and one new DLL created together in a user-writable folder is the classic side-loading kit"
+      - "Execution of the executable from that folder (4688 / Sysmon 1) and the image-load of the DLL (Sysmon 7); hash both"
+      - "Folders named like a Windows directory with a trailing space ('C:\\Windows \\System32') exist to trick auto-elevating binaries (UAC bypass)"
+    false_positives:
+      - "The first query is almost noise-free. The second matches normal application updaters (Teams, Slack, Zoom, Chrome) writing DLLs under AppData\\Roaming and ProgramData: look for an unfamiliar folder name or an exe + dll pair"
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_dll_sideloading_space_path.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_susp_legitimate_app_dropping_archive.yml
+    verified: false
+    notes: "Only the trailing-space folder pattern comes from a rule read in this session (2026-10-22). The AppData/ProgramData DLL query is a hunting heuristic of the author. Whether a file is a legitimate signed binary needs the file itself; the $MFT only gives names and times."
+
+  - id: FH-FS-023
+    title: Credential store copies (SAM, SYSTEM, SECURITY hives, ntds.dit, IFM, browser databases)
+    tactic: filesystem
+    attack: [T1003.002, T1003.003, T1555.003]
+    channel: MFT
+    event_ids: [48, 1]
+    prerequisites:
+      - "$MFT and/or $UsnJrnl:$J collected"
+    logic:
+      hive_copies:
+        EventID: 48
+        FileName|re: '^(ntds\.dit|(sam|system|security)(\.(save|sav|bak|hive|export|bck|backup|old))?)$'
+        Path|re: '^\.\\(users|programdata|windows\\temp|perflogs|temp|inetpub)\\'
+      ifm:
+        Path|re: '\\(active directory\\ntds\.dit|registry\\(system|security))$'
+      ntds_anywhere:
+        FileName|re: '^ntds\.dit$'
+      browser_store:
+        FileName|re: '^(login data|logins\.json|key4\.db|cert9\.db|cookies|web data|local state)$'
+        Path|re: '^\.\\(users\\public|programdata|windows\\temp|perflogs|temp)\\'
+      condition: hive_copies or ifm or ntds_anywhere or browser_store
+    forhunt:
+      - forhunt search <paths> --channel MFT --event-id 48 --regex 'FileName=^(ntds\.dit|(sam|system|security)(\.(save|sav|bak|hive|export|bck|backup|old))?)$' --regex 'Path=^\.\\(users|programdata|windows\\temp|perflogs|temp|inetpub)\\' --format llm
+      - forhunt search <paths> --channel MFT --event-id 48 --regex 'Path=\\(active directory\\ntds\.dit|registry\\(system|security))$' --format llm
+      - forhunt search <paths> --channel MFT --event-id 48 --regex 'FileName=^ntds\.dit$' --format llm
+      - forhunt search <paths> --channel MFT --event-id 48 --regex 'FileName=^(login data|logins\.json|key4\.db|cert9\.db|cookies|web data|local state)$' --regex 'Path=^\.\\(users\\public|programdata|windows\\temp|perflogs|temp)\\' --format llm
+    pivots:
+      - "ntdsutil / vssadmin / diskshadow / reg save in process creation; Security 4662 or 4663 on ntds.dit; volume shadow copy creation (System 7036, VSS 8222)"
+      - "Archive creation or transfer after the copy (FH-FS-015); deletion of the copy (UsnJrnl event 2)"
+      - "Browser files copied out of the profile: the user, and any download of tools such as credential extractors (FH-FS-013)"
+    false_positives:
+      - "\\Windows\\NTDS\\ntds.dit on domain controllers is the live database (judge by path); backup and imaging tools; sysprep and recovery copies of hives"
+    severity: high
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_sam_dump.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_ntds_dit_creation.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_hktl_hivenightmare_file_exports.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_ntds_exfil_tools.yml
+    verified: false
+    notes: "Hive-copy name patterns and the ntds.dit creation idea come from the cited rules (read 2026-10-22). The IFM layout (Active Directory\\ntds.dit and registry\\SYSTEM / SECURITY) and the browser database names are the author's knowledge, not confirmed from a source read here. Run the second and third queries even on workstations: ntds.dit should not exist there at all. Event 48 is used because the $FN record keeps the name even after the copy is deleted."
+
+  - id: FH-FS-024
+    title: Anti-forensic and recovery-inhibiting tools (Prefetch), SDelete rename names
+    tactic: filesystem
+    attack: [T1070.004, T1070.006, T1490, T1685.005]
+    channel: UsnJrnl
+    event_ids: [1, 2, 3, 4]
+    prerequisites:
+      - "$UsnJrnl:$J and/or $MFT collected"
+      - "Prefetch enabled (default on client Windows, off on many servers): without it only the SDelete names are useful"
+    logic:
+      prefetch_of_tools:
+        FileName|re: '^(fsutil|wevtutil|vssadmin|wbadmin|bcdedit|cipher|sdelete|sdelete64|diskshadow|ntdsutil|esentutl)\.exe-[0-9a-f]{8}\.pf$'
+      sdelete_names:
+        EventID: [2, 3]
+        FileName|re: '\.(aaa|zzz)$'
+      condition: prefetch_of_tools or sdelete_names
+    forhunt:
+      - forhunt search <paths> --channel UsnJrnl --regex 'FileName=^(fsutil|wevtutil|vssadmin|wbadmin|bcdedit|cipher|sdelete|sdelete64|diskshadow|ntdsutil|esentutl)\.exe-[0-9a-f]{8}\.pf$' --format llm
+      - forhunt search <paths> --channel MFT --event-id 48 --regex 'FileName=^(fsutil|wevtutil|vssadmin|wbadmin|bcdedit|cipher|sdelete|sdelete64|diskshadow|ntdsutil|esentutl)\.exe-[0-9a-f]{8}\.pf$' --format llm
+      - forhunt search <paths> --channel UsnJrnl --event-id 2,3 --regex 'FileName=\.(aaa|zzz)$' --format llm
+    pivots:
+      - "Prefetch creation = first run of the tool; later updates of the same .pf (events 4 and 5) are further runs. The command line is in 4688 / Sysmon 1 if those exist"
+      - "fsutil: 'usn deletejournal' resets the journal (FH-FS-031); wevtutil: log clearing (Security 1102, System 104); vssadmin / wbadmin / bcdedit / diskshadow: shadow copy and recovery tampering before ransomware"
+      - "SDelete renames a file to repeated letters with a matching extension (AAAAAAAA.AAA ... ZZZZZZZZ.ZZZ) before deleting it: the Entry of those names is the file that was wiped; its original name is in the earlier records of that EntryNumber"
+    false_positives:
+      - "Administrators using fsutil, bcdedit, vssadmin or wevtutil for maintenance; backup software calling vssadmin or wbadmin"
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_delete/file_delete_win_sysinternals_sdelete_file_deletion.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_delete/file_delete_win_delete_prefetch.yml
+      - https://github.com/MicrosoftDocs/win32/blob/docs/desktop-src/FileIO/creating-modifying-and-deleting-a-change-journal.md
+    verified: false
+    notes: "The .aaa/.zzz delete pattern is from the cited Sigma rule (read 2026-10-22); the Prefetch tool list and file-name format (EXE-HASH.pf) are the author's knowledge. Prefetch is removed when the files are deleted (FH-FS-007), so also look at event 2 for the same names. Prefetch absence on servers or SSDs where it is disabled proves nothing."
+
+  - id: FH-FS-025
+    title: Shell history, web server logs or backup files deleted
+    tactic: filesystem
+    attack: [T1070.003, T1070.004, T1490]
+    channel: UsnJrnl
+    event_ids: [2]
+    prerequisites:
+      - "$UsnJrnl:$J collected"
+    logic:
+      history_and_logs:
+        EventID: 2
+        FileName|re: '^(consolehost_history\.txt|u_ex\d+\.log)$'
+      backups:
+        EventID: 2
+        FileName|re: '\.(bkf|wbcat|vhd|vhdx|bac)$'
+      condition: history_and_logs or backups
+    forhunt:
+      - forhunt search <paths> --channel UsnJrnl --event-id 2 --regex 'FileName=^(consolehost_history\.txt|u_ex\d+\.log)$' --format llm
+      - forhunt search <paths> --channel UsnJrnl --event-id 2 --regex 'FileName=\.(bkf|wbcat|vhd|vhdx|bac)$' --format llm
+    pivots:
+      - "Account and session active at that minute (4624 / 4688); the PowerShell history file belongs to one user profile (Path), the IIS logs to the web server"
+      - "Other cleanup in the same window: event logs, Prefetch (FH-FS-007), the tools (FH-FS-006)"
+      - "Backup deletion followed by encryption activity (FH-FS-008, FH-FS-028)"
+    false_positives:
+      - "Log rotation of IIS logs by retention policies; users who clear PSReadLine history; backup software rotating its own files and Hyper-V / Windows Backup housekeeping"
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_delete/file_delete_win_delete_powershell_command_history.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_delete/file_delete_win_delete_iis_access_logs.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_delete/file_delete_win_delete_backup_file.yml
+    verified: false
+    notes: "File names and locations follow the cited rules (read 2026-10-22). Those rules also look at the deleting process, which the journal does not record: judge by time and context. IIS logs are named u_exYYMMDD.log in the default format."
+
+  - id: FH-FS-026
+    title: Mark-of-the-Web removed (Zone.Identifier stream deleted or truncated)
+    tactic: filesystem
+    attack: [T1553.005, T1564.004]
+    channel: UsnJrnl
+    event_ids: [5, 4]
+    prerequisites:
+      - "$UsnJrnl:$J collected"
+    logic:
+      selection:
+        Channel: UsnJrnl
+        Reason|re: '(StreamChange|NamedDataTruncation)'
+        FileName|re: '\.(exe|dll|ps1|bat|cmd|vbs|js|hta|scr|msi|iso|img|lnk|zip|7z|rar|docm|xlsm)$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel UsnJrnl --regex 'Reason=(StreamChange|NamedDataTruncation)' --regex 'FileName=\.(exe|dll|ps1|bat|cmd|vbs|js|hta|scr|msi|iso|img|lnk|zip|7z|rar|docm|xlsm)$' --format llm
+    pivots:
+      - "MFT record of the same EntryNumber: ZoneIdContents empty and AdsNames without Zone.Identifier on a file created in a download folder means the mark is gone"
+      - "Journal history of that EntryNumber: NamedDataExtend|StreamChange at creation (the browser writes the stream), later StreamChange|NamedDataTruncation (removal)"
+      - "Execution of the file soon after (Prefetch, 4688 / Sysmon 1); PowerShell Unblock-File or cmd 'more < file > file' style commands in script block logs"
+    false_positives:
+      - "Users unblocking a file in Explorer properties; admins running Unblock-File on a deployment; archive tools and sync clients that rewrite streams"
+    severity: low
+    sources:
+      - https://github.com/MicrosoftDocs/sdk-api/blob/docs/sdk-api-src/content/winioctl/ns-winioctl-usn_record_v2.md
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_delete/file_delete_win_zone_identifier_ads_uncommon.yml
+    verified: false
+    notes: "The Microsoft page (read 2026-10-22) defines StreamChange as a named stream added, removed or renamed and NamedDataTruncation as truncation of a named stream; the Sigma rule shows that the Zone.Identifier deletion is an event worth watching but is process-based. Both reasons also occur when the stream is first created, so a single record is not proof: read the sequence for the EntryNumber."
+
+  - id: FH-FS-027
+    title: Alternate data streams other than Zone.Identifier
+    tactic: filesystem
+    attack: [T1564.004]
+    channel: MFT
+    event_ids: [48]
+    prerequisites:
+      - "$MFT collected"
+    logic:
+      selection:
+        EventID: 48
+        AdsNames|re: '.'
+      filter_zone:
+        AdsNames: 'Zone.Identifier'
+      condition: selection and not filter_zone
+    forhunt:
+      - forhunt search <paths> --channel MFT --event-id 48 --field AdsNames!=Zone.Identifier --regex AdsNames=. --format llm
+    pivots:
+      - "FileSize and name of the host file: a harmless-looking text file or directory carrying a large stream is the pattern; the stream data itself is only readable from the image"
+      - "Process creation with a colon path (file.txt:payload.exe), wmic / rundll32 / powershell reading streams, in 4688 / Sysmon 1 and Sysmon 15 (file stream created)"
+      - "Journal records of the host file with NamedDataExtend / StreamChange at the time of creation"
+    false_positives:
+      - "Legitimate streams: SmartScreen and download marks, thumbnails, OneDrive / Dropbox attributes, Office and Explorer property streams, backup software; most appear on many files with the same stream name, a rare name on one executable-looking file is the lead"
+    severity: medium
+    sources:
+      - https://github.com/mitre/cti
+      - https://github.com/MicrosoftDocs/win32/blob/docs/desktop-src/FileIO/file-streams.md
+    verified: false
+    notes: "ATT&CK T1564.004 text (read 2026-10-22 from mitre/cti) describes storing data in file attribute metadata such as ADS. If a file has Zone.Identifier plus another stream, the != filter still lists it, which is wanted. Use top_values of AdsNames in the summary line to see the stream names. EA (extended attribute) hiding is not visible in these fields."
+
+  - id: FH-FS-028
+    title: Documents renamed with an appended extension (ransomware rename pattern)
+    tactic: filesystem
+    attack: [T1486]
+    channel: UsnJrnl
+    event_ids: [3]
+    prerequisites:
+      - "$UsnJrnl:$J collected"
+    logic:
+      selection:
+        EventID: 3
+        Reason|contains: RenameNewName
+        FileName|re: '\.(docx?|xlsx?|pdf|jpe?g|png|pst|rtf|pptx?)\.[a-z0-9_-]{3,}$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel UsnJrnl --event-id 3 --field Reason~RenameNewName --regex 'FileName=\.(docx?|xlsx?|pdf|jpe?g|png|pst|rtf|pptx?)\.[a-z0-9_-]{3,}$' --limit 50 --format llm
+    pivots:
+      - "Read top_values of FileName in the summary line for one dominating appended extension; count hits per minute (see references/ntfs-hunting.md) to get the start and end of encryption"
+      - "First rename minute: process creation just before, the logon that started it, shadow copy and backup deletion (FH-FS-024, FH-FS-025) and ransom notes (FH-FS-008)"
+      - "Other hosts: the same extension on file servers reached over SMB shows the spread"
+    false_positives:
+      - "Backup and recovery tools adding .bak, .old, .orig, .tmp, .backup; Office autosave and conflict copies; sync clients adding conflict suffixes"
+    severity: critical
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_rename/file_rename_win_ransomware.yml
+    verified: false
+    notes: "The idea (a known document extension followed by another extension after the rename) comes from the cited Sigma rule (read 2026-10-22), which excludes backup suffixes (.bak .old .orig .temp .tmp .backup); remove those by eye. Ransomware that replaces the extension or randomises the whole name is not matched: use FH-FS-008 and the rename counts."
+
+  - id: FH-FS-029
+    title: RDP client artefacts (bitmap cache, .rdp files) on a source host
+    tactic: filesystem
+    attack: [T1021.001]
+    channel: UsnJrnl
+    event_ids: [1]
+    prerequisites:
+      - "$UsnJrnl:$J and/or $MFT collected from the host the RDP session was started from"
+    logic:
+      bitmap_cache:
+        Path|re: '\\terminal server client\\cache\\'
+      rdp_files:
+        EventID: 1
+        FileName|re: '\.rdp$'
+      condition: bitmap_cache or rdp_files
+    forhunt:
+      - forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=\\terminal server client\\cache\\' --format llm
+      - forhunt search <paths> --channel MFT --event-id 48 --regex 'Path=\\terminal server client\\cache\\' --format llm
+      - forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'FileName=\.rdp$' --format llm
+    pivots:
+      - "Creation and last-write times of the cache files bracket the RDP client use per user profile; a bitmap cache on a server nobody should connect from onward means a pivot host"
+      - "Target host: Microsoft-Windows-TerminalServices-RDPClient 1024/1102 and Security 4648 on the source; 4624 type 10 on the target"
+      - "A .rdp file written by a browser or mail client points at a phishing RDP lure (the rule project flags that origin)"
+    false_positives:
+      - "Administrators and support staff using mstsc daily; saved connection files in Documents"
+    severity: low
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_rdp_file_susp_creation.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_tsclient_filewrite_startup.yml
+    verified: false
+    notes: "The 'Terminal Server Client\\Cache' bitmap cache folder (AppData\\Local\\Microsoft under the user profile) is the author's knowledge and was not confirmed from a source read in this session. The cited rules (read 2026-10-22) cover .rdp files created by browsers and mail clients, and mstsc writing into Startup (drive redirection). This is evidence of the client side; target-side RDP is better shown in the event logs."
+
+  - id: FH-FS-030
+    title: Executables renamed in staging folders and lure-style file names
+    tactic: filesystem
+    attack: [T1036.005, T1036.007, T1036.002]
+    channel: UsnJrnl
+    event_ids: [3, 1]
+    prerequisites:
+      - "$UsnJrnl:$J collected"
+    logic:
+      renamed_exec:
+        EventID: 3
+        Reason|contains: RenameOldName
+        FileName|re: '\.(exe|dll|ps1|bat|scr)$'
+        Path|re: '^\.\\(users|programdata|windows\\temp|perflogs)\\'
+      double_extension:
+        EventID: [1, 3]
+        FileName|re: '\.(pdf|docx?|xlsx?|pptx?|jpe?g|png|txt|rtf)\.(exe|scr|bat|cmd|js|vbs|com|pif)$'
+      rtlo:
+        FileName|re: '\x{202e}'
+      condition: renamed_exec or double_extension or rtlo
+    forhunt:
+      - forhunt search <paths> --channel UsnJrnl --event-id 3 --field Reason~RenameOldName --regex 'FileName=\.(exe|dll|ps1|bat|scr)$' --regex 'Path=^\.\\(users|programdata|windows\\temp|perflogs)\\' --format llm
+      - forhunt search <paths> --channel UsnJrnl --event-id 1,3 --regex 'FileName=\.(pdf|docx?|xlsx?|pptx?|jpe?g|png|txt|rtf)\.(exe|scr|bat|cmd|js|vbs|com|pif)$' --format llm
+      - forhunt search <paths> --channel UsnJrnl --regex 'FileName=\x{202e}' --format llm
+    pivots:
+      - "Same EntryNumber: the RenameNewName record gives the new name; a new name that imitates a Windows or update component (WinUpdate.exe, svchost.exe) in Temp or ProgramData is the masquerade"
+      - "Process creation of the new name, hash of the file (same hash as the old name on other hosts)"
+      - "Double extensions and right-to-left override characters are phishing lures: look for the email attachment or download (Zone.Identifier, FH-FS-004)"
+    false_positives:
+      - "Installers that rename their payloads in Temp; updaters swapping binaries (old name -> .old, new name -> final); files named report.pdf.exe in test data"
+    severity: medium
+    sources:
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_susp_right_to_left_override_extension_spoofing.yml
+      - https://github.com/SigmaHQ/sigma/blob/master/rules/windows/file/file_event/file_event_win_susp_lnk_double_extension.yml
+      - https://github.com/MicrosoftDocs/sdk-api/blob/docs/sdk-api-src/content/winioctl/ns-winioctl-usn_record_v2.md
+    verified: false
+    notes: "A rename writes two records (RenameOldName and RenameNewName, per the Microsoft page read 2026-10-22), so match the old-name record in the staging folder and read the next one for the new name. The double-extension and RLO ideas come from the cited rules; the regex is the author's. Renames across volumes are copies and leave no rename record."
+
+  - id: FH-FS-031
+    title: USN journal reset or late start (journal deleted)
+    tactic: filesystem
+    attack: [T1070, T1070.004]
+    channel: MFT
+    event_ids: [16]
+    prerequisites:
+      - "$MFT and $UsnJrnl:$J from the same volume, collected together"
+    logic:
+      selection:
+        EventID: 16
+        Usn: 0
+        Path|re: '^\.\\(users|windows\\temp|programdata)\\.*\.(exe|dll|ps1|bat|zip|7z|rar)$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel MFT --event-id 16 --field Usn=0 --regex 'Path=^\.\\(users|windows\\temp|programdata)\\.*\.(exe|dll|ps1|bat|zip|7z|rar)$' --limit 50 --format llm
+      - forhunt search <paths> --channel UsnJrnl --regex 'FileName=^fsutil\.exe-[0-9a-f]{8}\.pf$' --format llm
+    pivots:
+      - "forhunt stats on the $J: if its first record is days or weeks after the oldest activity visible in the $MFT (Created0x10 of recent files) or after the last logon in the event logs, the journal started late or was reset"
+      - "Deleting the journal sets the USN of every file to zero before removing it (Microsoft docs), so recently created files with Usn 0 and a creation time older than the first journal record point to a reset; compare with files that do carry a Usn"
+      - "fsutil.exe Prefetch/execution and the logon that ran it; the journal restarts at a small USN"
+    false_positives:
+      - "Files created before journalling was enabled; freshly formatted or restored volumes; journals that were trimmed to their size limit simply start later (compare size with the retention you would expect)"
+    severity: high
+    sources:
+      - https://github.com/MicrosoftDocs/win32/blob/docs/desktop-src/FileIO/creating-modifying-and-deleting-a-change-journal.md
+      - https://github.com/MicrosoftDocs/win32/blob/docs/desktop-src/FileIO/change-journals.md
+    verified: false
+    notes: "Behaviour of FSCTL_DELETE_USN_JOURNAL (all file USNs reset to zero, then the journal is deleted; trimming at checkpoints beyond MaximumSize plus AllocationDelta) is from the Microsoft pages read 2026-10-22 and is one publisher only. The inference 'recent files with Usn 0 => reset' is the author's and not source-confirmed; treat the first query as a lead and read the numbers (a normal volume has few recent files with Usn 0). The check needs the stats of the $J file, which no search can express."

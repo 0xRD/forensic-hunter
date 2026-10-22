@@ -4458,6 +4458,380 @@
    ],
    "severity": "high",
    "verified": false
+  },
+  {
+   "id": "FH-FS-011",
+   "title": "Timestamp or attribute change on an executable (journal BasicInfoChange)",
+   "tactic": "filesystem",
+   "channels": [
+    "UsnJrnl"
+   ],
+   "event_ids": [
+    5,
+    4,
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel UsnJrnl --field Reason~BasicInfoChange --regex 'FileName=\\.(exe|dll|sys|ps1|bat|cmd|vbs|js|hta|scr)$' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-012",
+   "title": "Both timestomp indicators on the same file (any extension)",
+   "tactic": "filesystem",
+   "channels": [
+    "MFT"
+   ],
+   "event_ids": [
+    16
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel MFT --event-id 16 --field SiLtFn=true --field uSecZeros=true --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-013",
+   "title": "Offensive and credential-theft tool names or output files",
+   "tactic": "filesystem",
+   "channels": [
+    "MFT"
+   ],
+   "event_ids": [
+    48,
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel MFT --event-id 48 --regex 'FileName=^(mimikatz|mimilib|mimidrv|rubeus|sharphound|sharpdpapi|sharpwmi|safetykatz|lazagne|pypykatz|nanodump|dumpert|pwdump|fgdump|gsecdump|cachedump|kekeo|certify|seatbelt|inveigh|crackmapexec|netexec|procdump|wceaux).*\\.(exe|dll|ps1|zip)$' --format llm",
+    "forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'FileName=^(mimikatz|mimilib|mimidrv|rubeus|sharphound|sharpdpapi|sharpwmi|safetykatz|lazagne|pypykatz|nanodump|dumpert|pwdump|fgdump|gsecdump|cachedump|kekeo|certify|seatbelt|inveigh|crackmapexec|netexec|procdump|wceaux).*\\.(exe|dll|ps1|zip)$' --format llm",
+    "forhunt search <paths> --channel UsnJrnl --regex 'FileName=(\\.kirbi$|^mimilsa\\.log$|^(sam|system|security|ntds)\\.out$|bloodhound\\.zip$|_(computers|users|groups|gpos|ous|containers)\\.json$)' --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-014",
+   "title": "Remote access, tunnelling and file-transfer tool binaries",
+   "tactic": "filesystem",
+   "channels": [
+    "MFT"
+   ],
+   "event_ids": [
+    48,
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel MFT --event-id 48 --regex 'FileName=^(anydesk|teamviewer|screenconnect|connectwise|atera|splashtop|rustdesk|meshagent|ltsvc|dwagent|supremo|ngrok|chisel|frpc|plink|cloudflared|winscp|pscp|psftp).*\\.(exe|msi)$' --format llm",
+    "forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'FileName=^(anydesk|teamviewer|screenconnect|connectwise|atera|splashtop|rustdesk|meshagent|ltsvc|dwagent|supremo|ngrok|chisel|frpc|plink|cloudflared|winscp|pscp|psftp).*\\.(exe|msi)$' --format llm",
+    "forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=\\\\appdata\\\\roaming\\\\anydesk\\\\(user|system)\\.conf$' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-015",
+   "title": "Archives in staging folders and rclone traces (collection, exfiltration)",
+   "tactic": "filesystem",
+   "channels": [
+    "UsnJrnl"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'FileName=\\.(7z|rar|zip|tar|gz|tgz|cab)$' --regex 'Path=^\\.\\\\(users\\\\public|programdata|windows\\\\temp|perflogs|temp|inetpub)\\\\' --format llm",
+    "forhunt search <paths> --channel MFT --event-id 48 --regex 'FileName=\\.(7z|rar|zip|tar|gz|tgz|cab)$' --regex 'Path=^\\.\\\\(users\\\\public|programdata|windows\\\\temp|perflogs|temp|inetpub)\\\\' --format llm",
+    "forhunt search <paths> --channel MFT --event-id 48 --regex 'Path=(\\\\\\.config\\\\rclone\\\\|\\\\rclone(\\.exe|\\.conf)$)' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-016",
+   "title": "Remote-execution tool output files and random-named service binaries in \\Windows",
+   "tactic": "filesystem",
+   "channels": [
+    "UsnJrnl"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel UsnJrnl --regex 'Path=^\\.\\\\(windows\\\\)?__1\\d{9}\\.\\d{1,7}$' --format llm",
+    "forhunt search <paths> --channel UsnJrnl --regex 'FileName=^sessionresume_[a-z]{8}$' --format llm",
+    "forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=^\\.\\\\windows\\\\[a-z]{8}\\.exe$' --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-017",
+   "title": "Script or page files written to web roots (webshells)",
+   "tactic": "filesystem",
+   "channels": [
+    "UsnJrnl"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=\\\\(inetpub\\\\wwwroot|frontend\\\\httpproxy|xampp\\\\htdocs|webapps\\\\root|wwwroot)\\\\.*\\.(aspx?|ashx|asmx|ascx|cer|asa|php\\d?|phtml|jspx?|cfm)$' --format llm",
+    "forhunt search <paths> --channel MFT --event-id 48 --regex 'Path=\\\\(inetpub\\\\wwwroot|frontend\\\\httpproxy|xampp\\\\htdocs|webapps\\\\root|wwwroot)\\\\.*\\.(aspx?|ashx|asmx|ascx|cer|asa|php\\d?|phtml|jspx?|cfm)$' --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-018",
+   "title": "Scripts, binaries or shortcuts written to Startup folders",
+   "tactic": "filesystem",
+   "channels": [
+    "UsnJrnl"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=\\\\start menu\\\\programs\\\\startup\\\\[^\\\\]+\\.(bat|cmd|vbs|vbe|js|jse|ps1|hta|exe|dll|scr|url|wsf|lnk|jar|msi)$' --format llm",
+    "forhunt search <paths> --channel MFT --event-id 48 --regex 'Path=\\\\start menu\\\\programs\\\\startup\\\\[^\\\\]+\\.(bat|cmd|vbs|vbe|js|jse|ps1|hta|exe|dll|scr|url|wsf|lnk|jar|msi)$' --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-019",
+   "title": "New scheduled task definition files in the Tasks folder",
+   "tactic": "filesystem",
+   "channels": [
+    "UsnJrnl"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=^\\.\\\\windows\\\\system32\\\\tasks\\\\[^\\\\]+$' --format llm",
+    "forhunt search <paths> --channel MFT --event-id 48 --regex 'Path=^\\.\\\\windows\\\\system32\\\\tasks\\\\[^\\\\]+$' --format llm",
+    "forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=^\\.\\\\windows\\\\tasks\\\\.*\\.job$' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-020",
+   "title": "WMI repository writes and MOF files (WMI persistence)",
+   "tactic": "filesystem",
+   "channels": [
+    "UsnJrnl"
+   ],
+   "event_ids": [
+    4,
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel UsnJrnl --regex 'Path=^\\.\\\\windows\\\\system32\\\\wbem\\\\repository\\\\' --regex 'FileName=^(objects\\.data|index\\.btr|mapping[123]\\.map)$' --limit 50 --format llm",
+    "forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'FileName=\\.mof$' --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-021",
+   "title": "Driver files dropped in user-writable folders and spool\\drivers\\color",
+   "tactic": "filesystem",
+   "channels": [
+    "UsnJrnl"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=^\\.\\\\(users|programdata|windows\\\\temp|perflogs|temp)\\\\.*\\.sys$' --format llm",
+    "forhunt search <paths> --channel MFT --event-id 48 --regex 'Path=^\\.\\\\(users|programdata|windows\\\\temp|perflogs|temp)\\\\.*\\.sys$' --format llm",
+    "forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=^\\.\\\\windows\\\\system32\\\\spool\\\\drivers\\\\color\\\\[^\\\\]+\\.(dll|exe|sys)$' --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-022",
+   "title": "DLL side-loading staging (trailing-space folders, DLLs in AppData and ProgramData)",
+   "tactic": "filesystem",
+   "channels": [
+    "UsnJrnl"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=^\\.\\\\(windows|program files|program files \\(x86\\)) \\\\' --format llm",
+    "forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=^\\.\\\\(users\\\\[^\\\\]+\\\\appdata\\\\roaming|programdata)\\\\.*\\.dll$' --limit 100 --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-023",
+   "title": "Credential store copies (SAM, SYSTEM, SECURITY hives, ntds.dit, IFM, browser databases)",
+   "tactic": "filesystem",
+   "channels": [
+    "MFT"
+   ],
+   "event_ids": [
+    48,
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel MFT --event-id 48 --regex 'FileName=^(ntds\\.dit|(sam|system|security)(\\.(save|sav|bak|hive|export|bck|backup|old))?)$' --regex 'Path=^\\.\\\\(users|programdata|windows\\\\temp|perflogs|temp|inetpub)\\\\' --format llm",
+    "forhunt search <paths> --channel MFT --event-id 48 --regex 'Path=\\\\(active directory\\\\ntds\\.dit|registry\\\\(system|security))$' --format llm",
+    "forhunt search <paths> --channel MFT --event-id 48 --regex 'FileName=^ntds\\.dit$' --format llm",
+    "forhunt search <paths> --channel MFT --event-id 48 --regex 'FileName=^(login data|logins\\.json|key4\\.db|cert9\\.db|cookies|web data|local state)$' --regex 'Path=^\\.\\\\(users\\\\public|programdata|windows\\\\temp|perflogs|temp)\\\\' --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-024",
+   "title": "Anti-forensic and recovery-inhibiting tools (Prefetch), SDelete rename names",
+   "tactic": "filesystem",
+   "channels": [
+    "UsnJrnl"
+   ],
+   "event_ids": [
+    1,
+    2,
+    3,
+    4
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel UsnJrnl --regex 'FileName=^(fsutil|wevtutil|vssadmin|wbadmin|bcdedit|cipher|sdelete|sdelete64|diskshadow|ntdsutil|esentutl)\\.exe-[0-9a-f]{8}\\.pf$' --format llm",
+    "forhunt search <paths> --channel MFT --event-id 48 --regex 'FileName=^(fsutil|wevtutil|vssadmin|wbadmin|bcdedit|cipher|sdelete|sdelete64|diskshadow|ntdsutil|esentutl)\\.exe-[0-9a-f]{8}\\.pf$' --format llm",
+    "forhunt search <paths> --channel UsnJrnl --event-id 2,3 --regex 'FileName=\\.(aaa|zzz)$' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-025",
+   "title": "Shell history, web server logs or backup files deleted",
+   "tactic": "filesystem",
+   "channels": [
+    "UsnJrnl"
+   ],
+   "event_ids": [
+    2
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel UsnJrnl --event-id 2 --regex 'FileName=^(consolehost_history\\.txt|u_ex\\d+\\.log)$' --format llm",
+    "forhunt search <paths> --channel UsnJrnl --event-id 2 --regex 'FileName=\\.(bkf|wbcat|vhd|vhdx|bac)$' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-026",
+   "title": "Mark-of-the-Web removed (Zone.Identifier stream deleted or truncated)",
+   "tactic": "filesystem",
+   "channels": [
+    "UsnJrnl"
+   ],
+   "event_ids": [
+    5,
+    4
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel UsnJrnl --regex 'Reason=(StreamChange|NamedDataTruncation)' --regex 'FileName=\\.(exe|dll|ps1|bat|cmd|vbs|js|hta|scr|msi|iso|img|lnk|zip|7z|rar|docm|xlsm)$' --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-027",
+   "title": "Alternate data streams other than Zone.Identifier",
+   "tactic": "filesystem",
+   "channels": [
+    "MFT"
+   ],
+   "event_ids": [
+    48
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel MFT --event-id 48 --field AdsNames!=Zone.Identifier --regex AdsNames=. --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-028",
+   "title": "Documents renamed with an appended extension (ransomware rename pattern)",
+   "tactic": "filesystem",
+   "channels": [
+    "UsnJrnl"
+   ],
+   "event_ids": [
+    3
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel UsnJrnl --event-id 3 --field Reason~RenameNewName --regex 'FileName=\\.(docx?|xlsx?|pdf|jpe?g|png|pst|rtf|pptx?)\\.[a-z0-9_-]{3,}$' --limit 50 --format llm"
+   ],
+   "severity": "critical",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-029",
+   "title": "RDP client artefacts (bitmap cache, .rdp files) on a source host",
+   "tactic": "filesystem",
+   "channels": [
+    "UsnJrnl"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'Path=\\\\terminal server client\\\\cache\\\\' --format llm",
+    "forhunt search <paths> --channel MFT --event-id 48 --regex 'Path=\\\\terminal server client\\\\cache\\\\' --format llm",
+    "forhunt search <paths> --channel UsnJrnl --event-id 1 --regex 'FileName=\\.rdp$' --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-030",
+   "title": "Executables renamed in staging folders and lure-style file names",
+   "tactic": "filesystem",
+   "channels": [
+    "UsnJrnl"
+   ],
+   "event_ids": [
+    3,
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel UsnJrnl --event-id 3 --field Reason~RenameOldName --regex 'FileName=\\.(exe|dll|ps1|bat|scr)$' --regex 'Path=^\\.\\\\(users|programdata|windows\\\\temp|perflogs)\\\\' --format llm",
+    "forhunt search <paths> --channel UsnJrnl --event-id 1,3 --regex 'FileName=\\.(pdf|docx?|xlsx?|pptx?|jpe?g|png|txt|rtf)\\.(exe|scr|bat|cmd|js|vbs|com|pif)$' --format llm",
+    "forhunt search <paths> --channel UsnJrnl --regex 'FileName=\\x{202e}' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-FS-031",
+   "title": "USN journal reset or late start (journal deleted)",
+   "tactic": "filesystem",
+   "channels": [
+    "MFT"
+   ],
+   "event_ids": [
+    16
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel MFT --event-id 16 --field Usn=0 --regex 'Path=^\\.\\\\(users|windows\\\\temp|programdata)\\\\.*\\.(exe|dll|ps1|bat|zip|7z|rar)$' --limit 50 --format llm",
+    "forhunt search <paths> --channel UsnJrnl --regex 'FileName=^fsutil\\.exe-[0-9a-f]{8}\\.pf$' --format llm"
+   ],
+   "severity": "high",
+   "verified": false
   }
  ]
 }
