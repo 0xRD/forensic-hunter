@@ -52,6 +52,11 @@ cp -a <source>/*.evtx "$CASE/evidence/" && chmod -R a-w "$CASE/evidence"
 ```
 On macOS use `shasum -a 256`; on Windows `Get-FileHash -Algorithm SHA256`.
 Record collection source, hostnames and the time of acquisition.
+Collections from several endpoints go under one `evidence/` tree (e.g. one
+folder per host); every forhunt command takes the whole tree, merges all hosts
+and keeps the computer name on each event. Scope a question to one host with
+`--computer HOST`. If the analyst wants to browse in Timeline Explorer:
+`forhunt parse "$CASE/evidence" -F csv -O "$CASE/work/csv" --split host`.
 
 ## 2. Triage with stats (step b)
 

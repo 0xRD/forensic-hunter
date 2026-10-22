@@ -81,11 +81,26 @@ impl From<OutFormat> for forhunt_output::Format {
     }
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum Split {
+    /// One output file per input EVTX file.
+    File,
+    /// One output file per computer (endpoint) name.
+    Host,
+}
+
 #[derive(Args, Debug, Clone)]
 pub struct OutputArgs {
-    /// Output file (`-` for stdout).
+    /// Output file (`-` for stdout). All inputs are concatenated into it.
     #[arg(long, short = 'o', default_value = "-")]
     pub output: String,
+    /// Write one file per input file or per host into this directory
+    /// instead of a single output (see --split).
+    #[arg(long, short = 'O', value_name = "DIR")]
+    pub output_dir: Option<std::path::PathBuf>,
+    /// With --output-dir: split by input file (default) or by computer name.
+    #[arg(long, value_enum, default_value_t = Split::File, requires = "output_dir")]
+    pub split: Split,
     /// `llm` format: maximum characters per value before truncation (0 = no limit).
     #[arg(long, default_value_t = 256, value_name = "N")]
     pub max_value_len: usize,
@@ -127,6 +142,10 @@ pub struct ParseArgs {
     pub paths: Vec<String>,
     #[arg(long, short = 'F', value_enum, default_value_t = OutFormat::Jsonl)]
     pub format: OutFormat,
+    /// Only events from this computer (exact, or the short name of an FQDN). Repeatable.
+    /// Other filters live in `search`.
+    #[arg(long, value_name = "HOST")]
+    pub computer: Vec<String>,
     #[command(flatten)]
     pub out: OutputArgs,
     #[command(flatten)]

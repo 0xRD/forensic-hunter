@@ -42,7 +42,9 @@ forhunt search  ./evidence -e 4625 -f IpAddress=203.0.113.50
 forhunt search  ./evidence -c sysmon -e 1 -r 'CommandLine=-enc\s'
 forhunt timeline ./evidence --since 2024-03-11T10:00:00Z --until 2024-03-11T10:30:00Z
 forhunt show 4a2aa2ed:53413 -p ./evidence -F xml     # one event in full
-forhunt parse   ./evidence -F csv -o all.csv         # full export (jsonl, csv)
+forhunt parse   ./evidence -F csv -o all.csv         # full export, all hosts in one file
+forhunt parse   ./evidence -F csv --computer WS-07 -o ws07.csv   # one host only
+forhunt parse   ./evidence -F csv -O out/ --split host   # one file per host (or --split file)
 forhunt hayabusa hayabusa.jsonl -p ./evidence        # normalise Hayabusa detections
 ```
 
@@ -51,7 +53,14 @@ Filters: `--event-id 4624,4720-4738`, `--channel Security|Sysmon|PS|...`,
 hex-aware), `Name!=value`, `Name~substring`, `--regex [Name=]REGEX`,
 `--computer HOST`, `--limit N`. Common options: `--threads`, `--no-progress`,
 `--tz Europe/Paris` (display only), `--strict`, `--checksums`, `-q`.
-Paths may be files, directories (recursive) or globs.
+Paths may be files, directories (recursive) or globs; any number of them, from
+any number of endpoints. Results are concatenated into one output by default
+(each row/line carries its source file and computer); `-O DIR --split file|host`
+writes one output file per input file or per computer instead.
+
+CSV output (`-F csv`) uses EvtxECmd's column layout (`TimeCreated`, `EventId`,
+`MapDescription`, `PayloadData1..6`, `ExecutableInfo`, `Payload`...) plus a
+`ForhuntId` column, so it opens directly in Timeline Explorer and similar tools.
 
 Example `llm` output:
 

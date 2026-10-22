@@ -125,7 +125,7 @@ pub fn run(a: ShowArgs) -> anyhow::Result<()> {
                             );
                             buf.push(b'\n');
                         }
-                        ShowFormat::Llm => llm.write(ev, &mut buf),
+                        ShowFormat::Llm => llm.write(ev, &path, &mut buf),
                         ShowFormat::Xml => {}
                     }
                 }
@@ -155,7 +155,7 @@ pub fn run(a: ShowArgs) -> anyhow::Result<()> {
                                 );
                                 buf.push(b'\n');
                             }
-                            ShowFormat::Llm => llm.write(ev, &mut buf),
+                            ShowFormat::Llm => llm.write(ev, &path, &mut buf),
                             ShowFormat::Xml => {}
                         }
                     }

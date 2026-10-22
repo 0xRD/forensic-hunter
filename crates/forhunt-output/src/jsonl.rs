@@ -4,7 +4,7 @@ use forhunt_core::{EventView, Val};
 
 use crate::{Writer, json};
 
-pub fn write(w: &Writer<'_>, ev: &EventView<'_>, out: &mut Vec<u8>) {
+pub fn write(w: &Writer<'_>, ev: &EventView<'_>, source: &str, out: &mut Vec<u8>) {
     out.extend_from_slice(b"{\"id\":\"");
     ev.id.write(out);
     out.extend_from_slice(b"\",\"timestamp\":\"");
@@ -42,6 +42,10 @@ pub fn write(w: &Writer<'_>, ev: &EventView<'_>, out: &mut Vec<u8>) {
     if !ev.activity_id.is_empty() {
         out.extend_from_slice(b",\"activity_id\":");
         json::str(out, &ev.activity_id);
+    }
+    if !source.is_empty() {
+        out.extend_from_slice(b",\"source_file\":");
+        json::str(out, source);
     }
     out.extend_from_slice(b",\"data\":{");
     for (i, f) in ev.fields.iter().enumerate() {

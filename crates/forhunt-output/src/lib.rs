@@ -68,11 +68,22 @@ impl<'m> Writer<'m> {
         }
     }
 
-    pub fn write(&self, ev: &EventView<'_>, out: &mut Vec<u8>) {
+    /// Appends one event. `source` is the input file path (CSV `SourceFile`,
+    /// JSONL `source_file`; not in the compact `llm` format).
+    pub fn write(&self, ev: &EventView<'_>, source: &str, out: &mut Vec<u8>) {
         match self.format {
-            Format::Csv => csv::write(self, ev, out),
-            Format::Jsonl => jsonl::write(self, ev, out),
+            Format::Csv => csv::write(self, ev, source, out),
+            Format::Jsonl => jsonl::write(self, ev, source, out),
             Format::Llm => llm::write(self, ev, out),
+        }
+    }
+
+    /// File extension for this format.
+    pub fn extension(&self) -> &'static str {
+        match self.format {
+            Format::Csv => "csv",
+            Format::Jsonl => "jsonl",
+            Format::Llm => "llm.jsonl",
         }
     }
 

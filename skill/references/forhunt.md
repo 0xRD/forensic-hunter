@@ -1,7 +1,8 @@
 # forhunt reference
 
 `forhunt <command> <paths...> [options]`. Paths are files, directories
-(recursive, `*.evtx`) or globs. Inputs are only read (memory-mapped, read-only).
+(recursive, `*.evtx`) or globs, from any number of hosts. Inputs are only read
+(opened read-only, positional reads).
 
 | Command | Purpose | Default format |
 |---|---|---|
@@ -35,6 +36,31 @@ names are those Windows writes in EventData/UserData (`TargetUserName`,
 Other options: `-n, --limit N` (0 = no cap), `-F, --format llm|jsonl|csv`,
 `--max-value-len N` (default 256), `--all-fields`, `--tz Europe/Paris`
 (display only), `-t, --threads N`, `--strict`, `--checksums`, `-q`.
+`parse` takes `--computer HOST` too (no other filters).
+
+## Multiple inputs and output files
+
+All inputs are concatenated into one output (stdout or `-o FILE`); JSONL lines
+carry `source_file`, CSV rows `SourceFile` and `Computer`. To get one file per
+input or per host instead (`parse` and `search`, not `timeline`):
+
+```bash
+forhunt parse ./collection -F csv -O out/ --split file   # out/HOST1__Security.csv ...
+forhunt parse ./collection -F csv -O out/ --split host   # out/ws-07.contoso.local.csv ...
+```
+
+Per-file names are the input path relative to the common input directory,
+with separators replaced by `__`. The summary line still goes to stdout.
+
+## CSV (Timeline Explorer)
+
+`-F csv` writes RFC 4180 UTF-8 with EvtxECmd's column names and order:
+`RecordNumber, EventRecordId, TimeCreated, EventId, Level, Provider, Channel,
+ProcessId, ThreadId, Computer, UserId, MapDescription, UserName, RemoteHost,
+PayloadData1..6, ExecutableInfo, HiddenRecord, SourceFile, Keywords, Payload`,
+then `ForhuntId`. `TimeCreated` is `yyyy-MM-dd HH:mm:ss.fffffff` (UTC unless
+`--tz`); `PayloadData*` hold the event's key fields as `Name: value`;
+`Payload` holds every field as JSON. CSV values are never truncated (`--max-value-len` applies to `llm` only).
 
 ## `llm` format
 

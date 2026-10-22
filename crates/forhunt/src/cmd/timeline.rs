@@ -68,6 +68,7 @@ struct UnitOut {
 struct UnitSink<'a> {
     filter: &'a Filter,
     writer: &'a Writer<'a>,
+    source: &'a str,
     src: u32,
     out: &'a mut UnitOut,
 }
@@ -84,7 +85,7 @@ impl Sink for UnitSink<'_> {
             f.add(ev);
         }
         let start = self.out.buf.len();
-        self.writer.write(ev, &mut self.out.buf);
+        self.writer.write(ev, self.source, &mut self.out.buf);
         let key = Key {
             ts: ev.ts.0,
             file: ev.id.file.0,
@@ -246,6 +247,12 @@ fn merge(runs: Vec<tempfile::NamedTempFile>, out: &mut dyn Write) -> anyhow::Res
 
 pub fn run(a: TimelineArgs) -> anyhow::Result<()> {
     let ctx = Ctx::new(&a.common)?;
+    if a.out.output_dir.is_some() {
+        anyhow::bail!(
+            "timeline merges all inputs into one sorted output; use --computer to keep one host, \
+             or `search --output-dir` for per-file / per-host files"
+        );
+    }
     let filter = ctx.filter(&a.filter)?;
     let started = Instant::now();
     let inputs = ctx.open(&a.paths)?;
@@ -286,9 +293,11 @@ pub fn run(a: TimelineArgs) -> anyhow::Result<()> {
                 rep: UnitReport::default(),
             };
             let rep = {
+                let path = src.path().display().to_string();
                 let mut sink = UnitSink {
                     filter: &filter,
                     writer: &writer,
+                    source: &path,
                     src: u.source as u32,
                     out: &mut uo,
                 };

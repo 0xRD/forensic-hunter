@@ -333,11 +333,87 @@ fn csv_output() {
     assert!(
         l.next()
             .unwrap()
-            .starts_with("id,timestamp,computer,channel,event_id")
+            .starts_with("RecordNumber,EventRecordId,TimeCreated,EventId,Level,Provider")
     );
     let row = l.next().unwrap();
     assert!(row.contains("PSEXESVC"), "{row}");
+    assert!(row.contains(",7045,"), "{row}");
+    assert!(row.contains("System.evtx"), "{row}");
     assert!(l.next().is_none());
+}
+
+fn dir_files(d: &std::path::Path) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(d)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn folder_input_concatenates_and_filters_by_host() {
+    let all = ok(&["parse", "-q", &fx(""), "-F", "csv"]);
+    // One header, rows from both hosts.
+    assert_eq!(all.matches("RecordNumber,").count(), 1);
+    assert!(all.contains("WS-07"));
+    assert!(all.to_lowercase().contains("dc01"));
+    let dc = ok(&["parse", "-q", &fx(""), "-F", "csv", "--computer", "dc01"]);
+    let rows: Vec<&str> = dc.lines().skip(1).collect();
+    assert!(!rows.is_empty());
+    assert!(rows.iter().all(|r| !r.contains("WS-07")), "{dc}");
+}
+
+#[test]
+fn split_output_per_file_and_per_host() {
+    let d = tempfile::tempdir().unwrap();
+    let out = d.path().join("by-file");
+    ok(&[
+        "parse",
+        "-q",
+        &fx(""),
+        "-F",
+        "csv",
+        "-O",
+        out.to_str().unwrap(),
+        "--split",
+        "file",
+    ]);
+    let files = dir_files(&out);
+    assert!(files.contains(&"Security.csv".to_string()), "{files:?}");
+    assert!(
+        files.contains(&"dc01__Security.csv".to_string()),
+        "{files:?}"
+    );
+    for f in &files {
+        let s = std::fs::read_to_string(out.join(f)).unwrap();
+        assert!(s.starts_with("RecordNumber,"), "{f}");
+        assert_eq!(s.matches("RecordNumber,").count(), 1, "{f}");
+    }
+
+    let out = d.path().join("by-host");
+    ok(&[
+        "parse",
+        "-q",
+        &fx(""),
+        "-F",
+        "jsonl",
+        "-O",
+        out.to_str().unwrap(),
+        "--split",
+        "host",
+    ]);
+    let files = dir_files(&out);
+    assert!(files.len() >= 2, "{files:?}");
+    assert!(files.iter().all(|f| f.ends_with(".jsonl")), "{files:?}");
+    for f in &files {
+        let s = std::fs::read_to_string(out.join(f)).unwrap();
+        let hosts: std::collections::BTreeSet<String> = lines(&s)
+            .iter()
+            .map(|v| v["computer"].as_str().unwrap_or("").to_lowercase())
+            .collect();
+        assert_eq!(hosts.len(), 1, "{f}: {hosts:?}");
+    }
 }
 
 #[test]
