@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to (re)build and publish, e.g. v0.1.0. Empty: dry run of the current branch (build and package only)"
+        description: "Release to publish from the selected branch head, e.g. v0.1.0 (the tag is created on that commit if missing). Empty: dry run (build and package only)"
         required: false
         default: ""
 
@@ -21,7 +21,8 @@ env:
   # Dry run (manual run without a tag): build the branch, publish nothing.
   DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag == '' }}
   TAG: ${{ github.event.inputs.tag || (github.event_name == 'push' && github.ref_name) || '' }}
-  REF: ${{ github.event.inputs.tag || github.ref }}
+  # Manual runs build the dispatched commit; tag pushes build the tag.
+  REF: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.ref }}
 
 jobs:
   build:
@@ -117,7 +118,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ env.REF }}
       - uses: actions/download-artifact@v4
         with:
           pattern: dist-*
@@ -131,6 +132,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
+          target_commitish: ${{ github.sha }}
           name: Forensic Hunter ${{ env.TAG }}
           prerelease: ${{ contains(env.TAG, '-') }}
           generate_release_notes: true
@@ -151,7 +153,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ env.REF }}
       - name: Skip without tap token
         if: env.HOMEBREW_TAP_TOKEN == ''
         run: echo "::warning::HOMEBREW_TAP_TOKEN is not set; skipping the tap update (see BLOCKERS.md B-002 or run scripts/update-tap.sh)"
