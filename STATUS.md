@@ -42,7 +42,7 @@ Last update: 2026-10-22 (session 1)
 - (none)
 
 ## Next
-- install.sh against the real release once the repository is public
+- Pre-public steps for the owner (history author, release, visibility, tap, installer test): TODO.md
 - Homebrew tap (deferred, B-002)
 - Review lower-priority items: Command and Control checklist, symlinked
   inputs, option-value errors exit 1 (docs say 2), refuse `-o` inside the
