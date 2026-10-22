@@ -32,9 +32,11 @@ Last update: 2026-10-22 (session 1)
 - install.sh tested end to end against a local mirror of the release assets
   (checksums verified, tampered archive refused)
 
+- Final benchmarks in README (2 GiB corpus); P-010 event-id pre-check
+- Release dry run: all 5 targets built and packaged
+
 ## In progress
-- Final benchmarks -> README table
-- Release dry run (workflow_dispatch without tag), then tag v0.1.0
+- Tag v0.1.0
 
 ## Next
 - install.sh against the real release once the repository is public

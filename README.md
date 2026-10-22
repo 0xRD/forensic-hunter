@@ -21,10 +21,7 @@ forensic analyst.
 ## Install
 
 ```bash
-# Homebrew (macOS, Linux)
-brew install 0xRD/tap/forhunt
-
-# or the skill installer (forhunt + Hayabusa, SHA-256 verified)
+# skill installer (forhunt + Hayabusa, SHA-256 verified)
 bash skill/scripts/install.sh            # Windows: skill/scripts/install.ps1
 
 # or from source
@@ -33,6 +30,7 @@ cargo install --git https://github.com/0xRD/forensic-hunter forhunt
 
 Release archives with SHA-256 checksums: [Releases](https://github.com/0xRD/forensic-hunter/releases)
 (x86_64/aarch64 Linux musl, x86_64/aarch64 macOS, x86_64 Windows).
+Homebrew (`brew install 0xRD/tap/forhunt`) is coming.
 
 ## Usage
 
@@ -91,7 +89,31 @@ IOCs, coverage and gaps.
 
 ## Benchmarks
 
-BENCHMARK_TABLE
+Corpus: synthetic `evtx-gen corpus --size 2G` = 2,048 MiB, 3,016,365 events. Machine: x86_64, 4 cores, Linux (cloud VM); 3 runs each with [hyperfine](https://github.com/sharkdp/hyperfine), 2026-10-22, forhunt 0.1.0.
+
+| Task | Wall time (mean ± σ) | MiB/s | Events/s | Peak RSS |
+|---|---|---|---|---|
+| forhunt parse jsonl (all cores) | 1.84 s ± 0.05 | 1,111 | 1,636,110 | 89 MiB |
+| forhunt parse jsonl (1 thread) | 5.87 s ± 0.25 | 349 | 513,832 | 21 MiB |
+| forhunt parse csv (all cores) | 2.86 s ± 0.10 | 716 | 1,054,841 | 78 MiB |
+| forhunt search filtered (all cores) | 0.70 s ± 0.06 | 2,945 | 4,337,778 | 105 MiB |
+| forhunt stats (all cores) | 1.47 s ± 0.07 | 1,393 | 2,051,722 | 36 MiB |
+| forhunt timeline jsonl, full sort (all cores) | 5.92 s ± 0.68 | 346 | 509,267 | 381 MiB |
+| evtx_dump jsonl (all cores) | 1.72 s ± 0.03 | 1,189 | 1,750,414 | 7 MiB |
+| evtx_dump jsonl (1 thread) | 3.80 s ± 0.06 | 540 | 794,789 | 4 MiB |
+
+- `search filtered` is `-e 4624 -f LogonType=3`: records whose event id does
+  not match are skipped before their values are decoded.
+- `evtx_dump` (evtx 0.12.3, the parser forhunt builds on) is faster at a plain
+  dump, especially single-threaded (~1.5x): it only renders JSON, while
+  forhunt also normalises each event (field map, stable id, source path) for
+  filtering and output. Closing that gap is the next optimisation
+  ([docs/PERF.md](docs/PERF.md), P-010).
+- Timeline sorts everything in memory up to `--mem-budget` (default 256 MiB),
+  then spills sorted runs to temporary files; peak RSS includes buffers on top
+  of the budget.
+- EvtxECmd (needs .NET) and Hayabusa (rule evaluation, a different workload:
+  12+ minutes on this corpus, D-024) are not in the table.
 
 Reproduce: `scripts/bench.sh --size 2G` (generates the synthetic corpus with
 `tools/evtx-gen`; set `EVTX_DUMP`, `HAYABUSA`, `EVTXECMD` to include other
