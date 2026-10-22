@@ -1,6 +1,9 @@
-//! Micro-benchmarks of the hot path stages on one EVTX file:
-//! `render` (evtx crate, chunk -> JSON), `decode` (JSON -> EventView) and
-//! `filter`. Input: $FORHUNT_BENCH_EVTX, or the synthetic fixture.
+//! Micro-benchmarks of the hot path on one EVTX file:
+//! - `source_fast` / `source_json`: whole file through `EvtxSource` with the
+//!   template fast path, or forced through the JSON path;
+//! - `render` (evtx crate, chunk -> JSON), `decode` (JSON -> EventView) and
+//!   `filter` stages of the JSON path.
+//! Input: $FORHUNT_BENCH_EVTX, or the synthetic Security fixture.
 
 use std::hint::black_box;
 use std::path::PathBuf;
@@ -8,6 +11,8 @@ use std::sync::Arc;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use forhunt_core::EventView;
+use forhunt_core::artifact::{ParseOptions, Source};
+use forhunt_core::evtx::EvtxSource;
 use forhunt_core::evtx::decode::decode;
 use forhunt_core::filter::{FieldCond, Filter};
 
@@ -17,7 +22,7 @@ fn input() -> PathBuf {
         .unwrap_or_else(|| {
             PathBuf::from(concat!(
                 env!("CARGO_MANIFEST_DIR"),
-                "/../../fixtures/synthetic/mixed.evtx"
+                "/../../fixtures/synthetic/Security.evtx"
             ))
         })
 }
@@ -50,6 +55,22 @@ fn bench(c: &mut Criterion) {
 
     let mut g = c.benchmark_group("hot_path");
     g.throughput(Throughput::Bytes(data.len() as u64));
+    for (name, slow) in [("source_fast", false), ("source_json", true)] {
+        let opts = ParseOptions {
+            validate_checksums: false,
+            slow_decoder: slow,
+        };
+        let src = EvtxSource::from_bytes(path.clone(), data.clone(), &opts).unwrap();
+        g.bench_function(name, |b| {
+            b.iter(|| {
+                let mut n = 0usize;
+                for u in 0..src.units() {
+                    src.parse_unit(u, &mut |ev: &EventView<'_>| n += ev.fields.len());
+                }
+                n
+            })
+        });
+    }
     g.bench_function("render", |b| b.iter(|| black_box(rendered(&data)).len()));
     g.throughput(Throughput::Bytes(json_bytes as u64));
     g.bench_function("decode", |b| {
