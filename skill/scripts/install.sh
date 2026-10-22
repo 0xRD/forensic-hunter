@@ -74,7 +74,8 @@ if [ "$FORHUNT_VERSION" = "latest" ]; then
 fi
 ver="${FORHUNT_VERSION#v}"
 archive="forhunt-${ver}-${target}.tar.gz"
-base="https://github.com/$FORHUNT_REPO/releases/download/v${ver}"
+# FORHUNT_BASE_URL: optional mirror holding the release assets (offline labs).
+base="${FORHUNT_BASE_URL:-https://github.com/$FORHUNT_REPO/releases/download/v${ver}}"
 echo "forhunt v${ver} (${target})"
 curl -fsSL -o "$tmp/$archive" "$base/$archive" || die "download failed: $base/$archive"
 if [ -f "$HERE/checksums/forhunt-${ver}.sha256" ]; then

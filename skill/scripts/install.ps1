@@ -61,7 +61,8 @@ try {
   }
   $ver = $ForhuntVersion.TrimStart('v')
   $zip = "forhunt-$ver-$target.zip"
-  $base = "https://github.com/$Repo/releases/download/v$ver"
+  # FORHUNT_BASE_URL: optional mirror holding the release assets (offline labs).
+  $base = if ($env:FORHUNT_BASE_URL) { $env:FORHUNT_BASE_URL } else { "https://github.com/$Repo/releases/download/v$ver" }
   Write-Host "forhunt v$ver ($target)"
   Invoke-WebRequest -UseBasicParsing -Uri "$base/$zip" -OutFile (Join-Path $tmp $zip)
   $pinned = Join-Path $Here "checksums\forhunt-$ver.sha256"
