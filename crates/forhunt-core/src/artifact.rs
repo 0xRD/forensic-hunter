@@ -51,6 +51,11 @@ pub trait Sink {
     fn want_time(&mut self, _header_ts: crate::Ts) -> bool {
         true
     }
+    /// Called with the event id before the record's values are decoded,
+    /// when the parser can read it cheaply.
+    fn want_event_id(&mut self, _event_id: u32) -> bool {
+        true
+    }
     fn event(&mut self, ev: &EventView<'_>);
 }
 

@@ -911,6 +911,11 @@ pub(crate) fn decode_chunk(
         if !sink.want_time(header_ts) {
             continue;
         }
+        if let Some(eid) = raw_event_id(&r.plan.sys.event_id, &r.values, chunk)
+            && !sink.want_event_id(eid)
+        {
+            continue;
+        }
         text.clear();
         vals.clear();
         for &(ty, a, b) in &r.values {
@@ -1027,6 +1032,29 @@ fn str_val<'x>(src: &'x Option<Src>, vals: &[V], text: &'x str) -> Cow<'x, str> 
         Some(Val::Str(c)) | Some(Val::Num(c)) => c,
         Some(Val::Bool(b)) => Cow::Borrowed(if b { "true" } else { "false" }),
         _ => Cow::Borrowed(""),
+    }
+}
+
+/// The event id straight from the record bytes (integer substitution or
+/// template text), without decoding any value; `None` when it is stored
+/// some other way.
+fn raw_event_id(src: &Option<Src>, values: &[(u8, usize, usize)], chunk: &[u8]) -> Option<u32> {
+    match src {
+        Some(Src::Sub(i)) => {
+            let &(ty, a, b) = values.get(*i as usize)?;
+            let n = match (ty, b.checked_sub(a)?) {
+                (0x04, 1) => u64::from(chunk[a]),
+                (0x06 | 0x08 | 0x0a | 0x14 | 0x15, len @ (2 | 4 | 8)) => {
+                    let mut buf = [0u8; 8];
+                    buf[..len].copy_from_slice(chunk.get(a..b)?);
+                    u64::from_le_bytes(buf)
+                }
+                _ => return None,
+            };
+            Some(n as u32)
+        }
+        Some(Src::Text(t)) => t.trim().parse().ok(),
+        None => None,
     }
 }
 

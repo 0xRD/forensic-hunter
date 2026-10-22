@@ -46,3 +46,24 @@ JSON scanner ~34%, jsonl writer ~14%, allocation ~6%.
   unit in the workers and merge.
 - Keep JSON-escaped strings borrowed (re-escape on output only when needed)
   to avoid allocating for every Windows path.
+
+## P-010 — event-id pre-check before value decoding (2026-10-22)
+
+The fast path decoded every substitution value (timestamps, GUIDs, SIDs,
+strings) before the filter saw the event, so `search -e ...` paid the full
+decode cost for records it then dropped. The EventID is now read straight
+from the record bytes (integer substitution or template text) and offered to
+the sink (`Sink::want_event_id`) first.
+
+256 MiB synthetic Security log, 1 thread: `search -e 99999` 0.57 s -> 0.23 s;
+`search -e 4688,4625` 0.23 s. Output is unchanged (checked against
+`--slow-decoder`, which does not use the pre-check).
+
+Known gap: on the synthetic corpus `evtx_dump -t 1 -o jsonl` is ~1.6x faster
+than `forhunt parse -t 1` (Security 256 MiB: 0.49 s vs 0.81 s), although all
+chunks take the fast path. forhunt builds the normalised event (field map,
+stable id, source path) and writes it through the filter/writer pipeline;
+profiling shows `decode_value` (~35% with its allocations) and record
+scanning as the main costs. With all cores the gap is ~10% (1.87 s vs
+1.70 s on 2 GiB). Next step: decode values lazily, only for fields the
+writer or filter reads.

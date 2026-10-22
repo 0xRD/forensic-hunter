@@ -239,6 +239,14 @@ impl Filter {
             && self.regexes.is_empty()
     }
 
+    /// Cheap pre-check on the event id, before the record is decoded.
+    #[inline]
+    pub fn want_event_id(&self, id: u32) -> bool {
+        self.event_ids
+            .as_ref()
+            .is_none_or(|ids| ids.binary_search(&id).is_ok())
+    }
+
     /// Pre-check on the record header timestamp, before the record is
     /// rendered. The header holds the time the record was *written*, which
     /// can lag `TimeCreated` (forwarded events), hence the slack.

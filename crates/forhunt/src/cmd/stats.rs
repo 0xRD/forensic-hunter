@@ -77,6 +77,9 @@ impl Sink for PartSink<'_> {
     fn want_time(&mut self, t: Ts) -> bool {
         self.filter.want_header_time(t)
     }
+    fn want_event_id(&mut self, id: u32) -> bool {
+        self.filter.want_event_id(id)
+    }
     fn event(&mut self, ev: &EventView<'_>) {
         if !self.filter.matches(ev) {
             return;
