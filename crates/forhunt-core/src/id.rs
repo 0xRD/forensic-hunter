@@ -99,16 +99,28 @@ pub(crate) fn itoa_buf() -> [u8; 20] {
     [0u8; 20]
 }
 
+const DIGITS2: &[u8; 200] = b"0001020304050607080910111213141516171819\
+2021222324252627282930313233343536373839\
+4041424344454647484950515253545556575859\
+6061626364656667686970717273747576777879\
+8081828384858687888990919293949596979899";
+
 /// Formats `v` in decimal into `buf`, returning the used tail.
 pub fn fmt_u64(buf: &mut [u8; 20], mut v: u64) -> &[u8] {
     let mut i = buf.len();
-    loop {
+    while v >= 100 {
+        let d = (v % 100) as usize * 2;
+        v /= 100;
+        i -= 2;
+        buf[i..i + 2].copy_from_slice(&DIGITS2[d..d + 2]);
+    }
+    if v >= 10 {
+        let d = v as usize * 2;
+        i -= 2;
+        buf[i..i + 2].copy_from_slice(&DIGITS2[d..d + 2]);
+    } else {
         i -= 1;
-        buf[i] = b'0' + (v % 10) as u8;
-        v /= 10;
-        if v == 0 {
-            break;
-        }
+        buf[i] = b'0' + v as u8;
     }
     &buf[i..]
 }
@@ -126,6 +138,14 @@ mod tests {
         assert_eq!(v, b"a1b2c3d4:4821");
         assert!("xyz:1".parse::<EventRef>().is_err());
         assert!("a1b2c3d4".parse::<EventRef>().is_err());
+    }
+
+    #[test]
+    fn decimal() {
+        let mut b = [0u8; 20];
+        for v in [0u64, 7, 10, 99, 100, 101, 999, 1000, 4294967295, u64::MAX] {
+            assert_eq!(fmt_u64(&mut b, v), v.to_string().as_bytes());
+        }
     }
 
     #[test]

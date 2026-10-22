@@ -483,34 +483,121 @@ fn instance(
 
 /// Per-thread cache of plans keyed by a hash of the template definition
 /// bytes (the same template is redefined in every chunk).
-type Entry<T> = (usize, Vec<u8>, Option<Rc<T>>);
+/// Cached plan with the canonical template form it was built from.
+type Entry<T> = (Vec<u8>, Option<Rc<T>>);
 
 #[derive(Default)]
 pub(crate) struct PlanCache {
     outer: HashMap<u64, Entry<Plan>>,
     payload: HashMap<u64, Entry<PayloadPlan>>,
+    canon: Vec<u8>,
 }
 
-/// The template definition bytes at `off` (header included).
-fn def_bytes(chunk: &[u8], off: usize) -> Option<&[u8]> {
-    let size = u32::from_le_bytes(chunk.get(off + 20..off + 24)?.try_into().ok()?) as usize;
-    chunk.get(off..off.checked_add(24 + size)?)
+/// Appends the name referenced at the cursor (resolved, length-prefixed
+/// UTF-16), skipping it when inline.
+fn canon_name(c: &mut Cur<'_>, chunk: &[u8], out: &mut Vec<u8>) -> R<()> {
+    let off = c.u32()? as usize;
+    let len = u16::from_le_bytes(chunk.get(off + 6..off + 8)?.try_into().ok()?) as usize;
+    out.extend_from_slice(&(len as u16).to_le_bytes());
+    out.extend_from_slice(chunk.get(off + 8..off + 8 + len * 2)?);
+    if off == c.i {
+        c.i += 8 + len * 2 + 2;
+    }
+    Some(())
 }
 
-/// Cache key for the template definition at `off`.
-fn def_key(chunk: &[u8], off: usize) -> Option<u64> {
-    let def = def_bytes(chunk, off)?;
-    // Skip the chunk-local "next" link. Names are referenced by chunk
-    // offset: equal bytes at a different offset could resolve to different
-    // names, so the offset is keyed too.
-    Some(hash_bytes(&def[4..], off as u64))
+fn canon_value(c: &mut Cur<'_>, out: &mut Vec<u8>) -> R<()> {
+    match c.peek()? {
+        0x05 | 0x45 => {
+            let start = c.i;
+            c.i += 2;
+            let n = c.u16()? as usize;
+            c.i += n * 2;
+            out.extend_from_slice(c.b.get(start..c.i)?);
+        }
+        0x0D | 0x0E => {
+            out.extend_from_slice(c.b.get(c.i..c.i + 4)?);
+            c.i += 4;
+        }
+        _ => return None,
+    }
+    Some(())
+}
+
+fn canon_content(c: &mut Cur<'_>, chunk: &[u8], out: &mut Vec<u8>, depth: usize) -> R<()> {
+    if depth > 32 {
+        return None;
+    }
+    loop {
+        match c.peek()? {
+            t @ (0x00 | 0x04) => {
+                c.i += 1;
+                out.push(t);
+                return Some(());
+            }
+            0x01 | 0x41 => canon_element(c, chunk, out, depth + 1)?,
+            0x05 | 0x45 | 0x0D | 0x0E => canon_value(c, out)?,
+            0x0F => {
+                out.extend_from_slice(c.b.get(c.i..c.i + 4)?);
+                c.i += 4;
+            }
+            _ => return None,
+        }
+    }
+}
+
+fn canon_element(c: &mut Cur<'_>, chunk: &[u8], out: &mut Vec<u8>, depth: usize) -> R<()> {
+    let tok = c.u8()?;
+    out.push(tok);
+    c.i += 6; // dependency id, data size (depends on where names are stored)
+    canon_name(c, chunk, out)?;
+    if tok & 0x40 != 0 {
+        c.i += 4; // attribute list size
+        loop {
+            let t = c.u8()?;
+            out.push(t);
+            if t & 0x3F != 0x06 {
+                return None;
+            }
+            canon_name(c, chunk, out)?;
+            canon_value(c, out)?;
+            if t & 0x40 == 0 {
+                break;
+            }
+        }
+    }
+    let close = c.u8()?;
+    out.push(close);
+    match close {
+        0x02 => canon_content(c, chunk, out, depth),
+        0x03 => Some(()),
+        _ => None,
+    }
+}
+
+/// Canonical form of the template definition at `off`: its tokens with every
+/// name reference replaced by the name itself. Two definitions with the same
+/// canonical form produce the same plan in any chunk, although their bytes
+/// differ (names are referenced by absolute chunk offset).
+fn canonical(chunk: &[u8], off: usize, out: &mut Vec<u8>) -> R<()> {
+    out.clear();
+    let mut c = Cur {
+        b: chunk,
+        i: off + 4,
+    };
+    out.extend_from_slice(chunk.get(c.i..c.i + 16)?); // GUID
+    c.i += 20;
+    if c.peek()? != 0x0F {
+        return None;
+    }
+    canon_content(&mut c, chunk, out, 0)
 }
 
 /// A fast 64-bit hash (multiply-xor over 8-byte words). Only selects the cache
-/// bucket: entries also store the definition bytes, compared on every hit.
-fn hash_bytes(b: &[u8], seed: u64) -> u64 {
+/// bucket: entries also store the canonical form, compared on every hit.
+fn hash_bytes(b: &[u8]) -> u64 {
     const K: u64 = 0x9E37_79B9_7F4A_7C15;
-    let mut h = seed ^ (b.len() as u64).wrapping_mul(K);
+    let mut h = (b.len() as u64).wrapping_mul(K);
     let mut words = b.chunks_exact(8);
     for w in &mut words {
         let x = u64::from_le_bytes(w.try_into().unwrap());
@@ -524,15 +611,12 @@ fn hash_bytes(b: &[u8], seed: u64) -> u64 {
 
 fn cached<T>(
     map: &mut HashMap<u64, Entry<T>>,
-    chunk: &[u8],
-    off: usize,
+    canon: &[u8],
     make: impl FnOnce() -> Option<T>,
 ) -> Option<Rc<T>> {
-    let k = def_key(chunk, off)?;
-    let def = def_bytes(chunk, off)?;
-    if let Some((o, bytes, p)) = map.get(&k)
-        && *o == off
-        && bytes[4..] == def[4..]
+    let k = hash_bytes(canon);
+    if let Some((c, p)) = map.get(&k)
+        && c.as_slice() == canon
     {
         return p.clone();
     }
@@ -540,19 +624,28 @@ fn cached<T>(
         map.clear();
     }
     let p = make().map(Rc::new);
-    map.insert(k, (off, def.to_vec(), p.clone()));
+    map.insert(k, (canon.to_vec(), p.clone()));
     p
 }
 
 impl PlanCache {
     fn get(&mut self, chunk: &[u8], off: usize) -> Option<Rc<Plan>> {
-        cached(&mut self.outer, chunk, off, || parse_template(chunk, off))
+        let mut canon = std::mem::take(&mut self.canon);
+        let r = canonical(chunk, off, &mut canon)
+            .and_then(|_| cached(&mut self.outer, &canon, || parse_template(chunk, off)));
+        self.canon = canon;
+        r
     }
 
     fn get_payload(&mut self, chunk: &[u8], off: usize) -> Option<Rc<PayloadPlan>> {
-        cached(&mut self.payload, chunk, off, || {
-            payload_plan(&template_root(chunk, off)?)
-        })
+        let mut canon = std::mem::take(&mut self.canon);
+        let r = canonical(chunk, off, &mut canon).and_then(|_| {
+            cached(&mut self.payload, &canon, || {
+                payload_plan(&template_root(chunk, off)?)
+            })
+        });
+        self.canon = canon;
+        r
     }
 }
 
@@ -565,6 +658,7 @@ fn scan(chunk: &[u8], cache: &mut PlanCache) -> R<Vec<Rec>> {
     let mut out = Vec::new();
     // Templates per chunk are few: a linear scan beats hashing per record.
     let mut local: Vec<(u32, Rc<Plan>)> = Vec::new();
+    let mut local_payload: Vec<(u32, Rc<PayloadPlan>)> = Vec::new();
     while off + 24 <= end {
         let mut c = Cur { b: chunk, i: off };
         if c.u32()? != 0x0000_2a2a {
@@ -618,7 +712,14 @@ fn scan(chunk: &[u8], cache: &mut PlanCache) -> R<Vec<Rec>> {
                         };
                         probe.u32()? as usize
                     };
-                    let pp = cache.get_payload(chunk, inner_def)?;
+                    let pp = match local_payload.iter().find(|(o, _)| *o == inner_def as u32) {
+                        Some((_, p)) => p.clone(),
+                        None => {
+                            let p = cache.get_payload(chunk, inner_def)?;
+                            local_payload.push((inner_def as u32, p.clone()));
+                            p
+                        }
+                    };
                     let (_, inner) = instance(&mut n, chunk, b, None)?;
                     Some((pp, inner))
                 }
@@ -649,8 +750,10 @@ enum V {
 const HEX_UP: &[u8; 16] = b"0123456789ABCDEF";
 const HEX_LO: &[u8; 16] = b"0123456789abcdef";
 
-fn hex_lower(out: &mut String, v: u64) {
-    let mut buf = [0u8; 18];
+// The text buffer holds UTF-8 bytes built by the functions below (ASCII or
+// `char::encode_utf8` output), validated once per record before slicing.
+fn hex_lower(out: &mut Vec<u8>, v: u64) {
+    let mut buf = [0u8; 16];
     let mut i = buf.len();
     let mut x = v;
     loop {
@@ -661,30 +764,29 @@ fn hex_lower(out: &mut String, v: u64) {
             break;
         }
     }
-    out.push_str("0x");
-    // ASCII by construction.
-    out.push_str(std::str::from_utf8(&buf[i..]).unwrap_or(""));
+    out.extend_from_slice(b"0x");
+    out.extend_from_slice(&buf[i..]);
 }
 
-fn push_u64(out: &mut String, v: u64) {
+fn push_u64(out: &mut Vec<u8>, v: u64) {
     let mut b = [0u8; 20];
-    out.push_str(std::str::from_utf8(crate::id::fmt_u64(&mut b, v)).unwrap_or(""));
+    out.extend_from_slice(crate::id::fmt_u64(&mut b, v));
 }
 
-fn push_i64(out: &mut String, v: i64) {
+fn push_i64(out: &mut Vec<u8>, v: i64) {
     if v < 0 {
-        out.push('-');
+        out.push(b'-');
     }
     push_u64(out, v.unsigned_abs());
 }
 
-fn push_hex_byte(out: &mut String, x: u8) {
-    out.push(HEX_UP[(x >> 4) as usize] as char);
-    out.push(HEX_UP[(x & 0xf) as usize] as char);
+fn push_hex_byte(out: &mut Vec<u8>, x: u8) {
+    out.push(HEX_UP[(x >> 4) as usize]);
+    out.push(HEX_UP[(x & 0xf) as usize]);
 }
 
 /// UTF-16LE to UTF-8, with an ASCII fast path; stops at a NUL like the JSON path.
-fn push_utf16(out: &mut String, raw: &[u8]) {
+fn push_utf16(out: &mut Vec<u8>, raw: &[u8]) {
     let units = raw.len() / 2;
     out.reserve(units);
     let mut i = 0;
@@ -694,7 +796,7 @@ fn push_utf16(out: &mut String, raw: &[u8]) {
             if lo == 0 {
                 return;
             }
-            out.push(lo as char);
+            out.push(lo);
             i += 1;
             continue;
         }
@@ -702,18 +804,19 @@ fn push_utf16(out: &mut String, raw: &[u8]) {
         let it = raw[2 * i..units * 2]
             .chunks_exact(2)
             .map(|c| u16::from_le_bytes([c[0], c[1]]));
+        let mut tmp = [0u8; 4];
         for ch in char::decode_utf16(it) {
             let ch = ch.unwrap_or('\u{FFFD}');
             if ch == '\0' {
                 return;
             }
-            out.push(ch);
+            out.extend_from_slice(ch.encode_utf8(&mut tmp).as_bytes());
         }
         return;
     }
 }
 
-fn decode_value(chunk: &[u8], ty: u8, a: usize, b: usize, text: &mut String) -> V {
+fn decode_value(chunk: &[u8], ty: u8, a: usize, b: usize, text: &mut Vec<u8>) -> V {
     let raw = &chunk[a..b];
     let start = text.len();
     let le = |n: usize| -> u64 {
@@ -747,7 +850,7 @@ fn decode_value(chunk: &[u8], ty: u8, a: usize, b: usize, text: &mut String) -> 
             const ORDER: [usize; 16] = [3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15];
             for (i, &idx) in ORDER.iter().enumerate() {
                 if matches!(i, 4 | 6 | 8 | 10) {
-                    text.push('-');
+                    text.push(b'-');
                 }
                 push_hex_byte(text, raw[idx]);
             }
@@ -755,22 +858,20 @@ fn decode_value(chunk: &[u8], ty: u8, a: usize, b: usize, text: &mut String) -> 
         0x11 => {
             let ft = le(8) as i64;
             let t = Ts((ft - EPOCH_TICKS) / 10 * 10);
-            let mut buf = Vec::with_capacity(27);
-            t.write_iso(&mut buf);
-            text.push_str(std::str::from_utf8(&buf).unwrap_or(""));
+            t.write_iso(text);
         }
         0x13 => {
             if raw.len() < 8 {
-                text.push_str("S-?");
+                text.extend_from_slice(b"S-?");
             } else {
                 let authority =
                     u64::from_be_bytes([0, 0, raw[2], raw[3], raw[4], raw[5], raw[6], raw[7]]);
-                text.push_str("S-");
+                text.extend_from_slice(b"S-");
                 push_u64(text, raw[0] as u64);
-                text.push('-');
+                text.push(b'-');
                 push_u64(text, authority);
                 for c in raw[8..].chunks_exact(4).take(raw[1] as usize) {
-                    text.push('-');
+                    text.push(b'-');
                     push_u64(text, u32::from_le_bytes([c[0], c[1], c[2], c[3]]) as u64);
                 }
             }
@@ -801,7 +902,7 @@ pub(crate) fn decode_chunk(
     let Some(recs) = scan(chunk, cache) else {
         return false;
     };
-    let mut text = String::with_capacity(4096);
+    let mut text: Vec<u8> = Vec::with_capacity(4096);
     let mut vals: Vec<V> = Vec::with_capacity(64);
     let mut spare: Vec<Field<'static>> = Vec::new();
     for r in &recs {
@@ -826,7 +927,10 @@ pub(crate) fn decode_chunk(
                 vals.push(decode_value(chunk, ty, a, b, &mut text));
             }
         }
-        let text: &str = &text;
+        // Built from ASCII and `char::encode_utf8` output: always valid.
+        let Ok(text) = std::str::from_utf8(&text) else {
+            continue;
+        };
         let vals: &[V] = &vals;
         let get = |src| get_val(src, vals, text);
         let s = |src| str_val(src, vals, text);

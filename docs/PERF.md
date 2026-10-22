@@ -27,6 +27,12 @@ Reference input: `security_big_sample.evtx` (30.1 MiB, 62,031 events) from the
 | P-006 | Fast path value formatting without `fmt` (itoa, hex tables, ASCII UTF-16 fast path) | 1.52 G instr, 166 ms | 1.33 G instr, 153 ms | -12% instructions |
 | P-007 | Per-record template lookup by linear scan; cheap hash for the plan cache (bytes compared on hit) | SipHash 8% of instructions | removed | ~-8% instructions |
 
+| P-008 | Plan cache keyed by a canonical template form (names resolved, offsets dropped), so plans are reused across chunks; per-chunk payload plan lookup | 1.33 G instr (real), 757 M (synthetic slice) | 1.15 G, 679 M | -13% / -10% |
+| P-009 | Value text built in a byte buffer (validated once per record), two-digit itoa, reused per-thread chunk read buffer (no 64 KiB zeroing) | 1.15 G instr, 153 ms | 1.04 G instr, 134 ms (1 t), 45 ms (4 t) | -10% |
+
+Cumulative on security_big_sample, 1 thread: 2.78 G -> 1.04 G instructions,
+320 ms -> 134 ms. All cores: 130 ms -> 45 ms (evtx_dump: 57 ms with 4 threads).
+
 All cores, security_big_sample after P-007: 50 ms (608 MiB/s) vs evtx_dump 57 ms.
 
 Profile after P-003 (callgrind, 1 thread): evtx render+IR build ~42%, our

@@ -68,13 +68,19 @@ import json, platform, sys
 d = json.load(open(sys.argv[1]))
 mib = int(sys.argv[2]) / 2**20
 events = int(sys.argv[3])
-print(f"Corpus: synthetic `evtx-gen corpus --size {sys.argv[5]}` = {mib:.0f} MiB, {events:,} events. "
+print(f"Corpus: synthetic `evtx-gen corpus --size {sys.argv[5]}` = {mib:,.0f} MiB, {events:,} events. "
       f"Machine: {platform.machine()}, {sys.argv[4]} cores, {platform.system()}.\n")
 print("| Task | Wall time (mean ± σ) | MiB/s | Events/s | Peak RSS |")
 print("|---|---|---|---|---|")
 for r in d["results"]:
-    m, s = r["mean"], r["stddev"] or 0
-    rss = max(r.get("memory_usage_byte") or [0]) / 2**20
-    print(f"| {r['command']} | {m:.2f} s ± {s:.2f} | {mib/m:,.0f} | {events/m:,.0f} | {rss:,.0f} MiB |")
+    if "summary" in r:  # hyperfine >= 2
+        w = r["summary"]["time_wall_clock"]
+        m, s = w["mean"], w.get("stddev") or 0
+        rss = r["summary"].get("memory_peak_resident", {}).get("max", 0) / 2**20
+    else:  # hyperfine 1.x
+        m, s = r["mean"], r.get("stddev") or 0
+        rss = max(r.get("memory_usage_byte") or [0]) / 2**20
+    name = r.get("name") or r["command"]
+    print(f"| {name} | {m:.2f} s ± {s:.2f} | {mib/m:,.0f} | {events/m:,.0f} | {rss:,.0f} MiB |")
 PY
 cat "$OUT/results.md"

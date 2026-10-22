@@ -6,6 +6,8 @@ mod fast;
 
 thread_local! {
     static PLANS: std::cell::RefCell<fast::PlanCache> = Default::default();
+    /// Reused read buffer: allocated and zeroed once per thread.
+    static CHUNK_BUF: std::cell::Cell<Vec<u8>> = const { std::cell::Cell::new(Vec::new()) };
 }
 
 use std::borrow::Cow;
@@ -76,6 +78,33 @@ impl Data {
                 let mut buf = vec![0u8; (end - off) as usize];
                 read_exact_at(file, &mut buf, off)?;
                 Ok(Cow::Owned(buf))
+            }
+        }
+    }
+}
+
+impl Data {
+    /// Like [`Data::read`], into a caller-owned buffer that is reused across
+    /// calls (no allocation or zeroing once it has grown).
+    fn read_into<'s>(
+        &'s self,
+        off: u64,
+        n: usize,
+        buf: &'s mut Vec<u8>,
+    ) -> std::io::Result<&'s [u8]> {
+        let end = (off + n as u64).min(self.len());
+        if off >= end {
+            return Ok(&[]);
+        }
+        let len = (end - off) as usize;
+        match self {
+            Data::Owned(v) => Ok(&v[off as usize..end as usize]),
+            Data::File { file, .. } => {
+                if buf.len() < len {
+                    buf.resize(len, 0);
+                }
+                read_exact_at(file, &mut buf[..len], off)?;
+                Ok(&buf[..len])
             }
         }
     }
@@ -184,15 +213,19 @@ impl EvtxSource {
     }
 
     fn parse_chunk(&self, unit: usize, sink: &mut dyn Sink, rep: &mut UnitReport) {
-        let raw = match self.chunk_bytes(unit) {
-            Ok(r) => r,
+        let mut buf = CHUNK_BUF.take();
+        let off = (FILE_HEADER_SIZE + unit * CHUNK_SIZE) as u64;
+        match self.data.read_into(off, CHUNK_SIZE, &mut buf) {
+            Ok(raw) => self.parse_raw(unit, raw, sink, rep),
             Err(e) => {
                 rep.bad_unit = true;
                 rep.note(|| format!("chunk {unit}: read error: {e}"));
-                return;
             }
-        };
-        let raw: &[u8] = &raw;
+        }
+        CHUNK_BUF.set(buf);
+    }
+
+    fn parse_raw(&self, unit: usize, raw: &[u8], sink: &mut dyn Sink, rep: &mut UnitReport) {
         if raw.iter().all(|&b| b == 0) {
             return; // preallocated, never written
         }
