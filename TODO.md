@@ -85,7 +85,16 @@ Expected: `sha256 ok` for each download, `forhunt 0.1.0`, no Gatekeeper
 prompt (curl downloads are not quarantined). On Windows (if available):
 `powershell -ExecutionPolicy Bypass -File skill\scripts\install.ps1`.
 
-## 6. Close out
+## 6. Delete the leftover snapshot branch
+
+`wip/ntfs-hunting` was a backup of unfinished work, now merged into master
+(the build session cannot delete remote branches):
+
+```bash
+git push origin --delete wip/ntfs-hunting
+```
+
+## 7. Close out
 
 Update `STATUS.md` (move these items to Done) and `BLOCKERS.md` (B-002, B-003
 resolved), commit, push, and delete this file.
