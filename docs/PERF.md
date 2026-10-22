@@ -4,7 +4,7 @@ Every optimisation with its measured effect. Machine for numbers below unless
 noted: 4-core Intel Xeon @ 2.8 GHz (cloud VM, noisy: expect +-10%), Linux,
 release profile (fat LTO, codegen-units=1, mimalloc).
 Reference input: `security_big_sample.evtx` (30.1 MiB, 62,031 events) from the
-`evtx` crate's samples (not committed; `scripts/fetch-samples.sh`).
+`evtx` crate's samples (not committed; `skill/scripts/fetch-samples.sh`).
 
 ## Baselines
 

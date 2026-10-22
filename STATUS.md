@@ -1,9 +1,9 @@
 # Status
 
-Last update: 2026-10-21 (session 1)
+Last update: 2026-10-22 (session 1)
 
 ## Done
-- Spec review, PLAN.md, DECISIONS.md (D-001..D-024), BLOCKERS.md (B-001..B-004)
+- Spec review, PLAN.md, DECISIONS.md (D-001..D-034), BLOCKERS.md (B-001..B-004)
 - forhunt-core: event model, Artifact/Source traits, EVTX source (positional
   reads, per-chunk panic isolation, truncated-tail recovery, damaged string
   table retry), fast template-value decoder + JSON fallback (byte-identical),
@@ -26,11 +26,21 @@ Last update: 2026-10-21 (session 1)
 - Worked examples: insecurebank.local (EVTX-ATTACK-SAMPLES) with report,
   timeline, Mermaid + HTML attack path; offline synthetic example
 
+- Timeline Explorer CSV (EvtxECmd layout), `-O DIR --split file|host`,
+  `parse --computer` (D-027, D-028)
+- Fresh-eyes review (REVIEW.md): all must-fixes applied (D-029..D-034)
+- install.sh tested end to end against a local mirror of the release assets
+  (checksums verified, tampered archive refused)
+
 ## In progress
-- Phase 3: perf analyst (docs/PERF-ANALYSIS.md) and reviewer (REVIEW.md)
 - Final benchmarks -> README table
+- Release dry run (workflow_dispatch without tag), then tag v0.1.0
 
 ## Next
-- Apply review must-fixes and top perf proposals
-- Tag v0.1.0, verify release assets, test install.sh end to end
+- install.sh against the real release once the repository is public
 - Homebrew tap (deferred, B-002)
+- Review lower-priority items: Command and Control checklist, symlinked
+  inputs, option-value errors exit 1 (docs say 2), refuse `-o` inside the
+  evidence tree, `--max-value-len` counts bytes, Mermaid from CDN in the HTML
+  attack path, forhunt checksums served by the same release
+- Perf analyst report was lost to a container restart; not re-run

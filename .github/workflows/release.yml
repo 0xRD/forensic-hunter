@@ -9,15 +9,19 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to (re)build, e.g. v0.1.0"
-        required: true
+        description: "Existing tag to (re)build and publish, e.g. v0.1.0. Empty: dry run of the current branch (build and package only)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
 env:
   CARGO_TERM_COLOR: always
-  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  # Dry run (manual run without a tag): build the branch, publish nothing.
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag == '' }}
+  TAG: ${{ github.event.inputs.tag || (github.event_name == 'push' && github.ref_name) || '' }}
+  REF: ${{ github.event.inputs.tag || github.ref }}
 
 jobs:
   build:
@@ -35,7 +39,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ env.REF }}
+      - name: Check tag matches the crate version
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          if [ "$DRY_RUN" = true ]; then
+            echo "PKG_VER=${ver}-dryrun" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          case "${TAG#v}" in
+            "$ver"|"$ver"-*) echo "PKG_VER=${TAG#v}" >> "$GITHUB_ENV" ;;
+            *) echo "::error::tag $TAG does not match Cargo.toml version $ver"; exit 1 ;;
+          esac
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -66,7 +83,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ver="${TAG#v}"
+          ver="$PKG_VER"
           name="forhunt-${ver}-${{ matrix.target }}"
           mkdir -p "dist/$name"
           bin=target/${{ matrix.target }}/release/forhunt
@@ -93,6 +110,7 @@ jobs:
   publish:
     name: publish release
     needs: build
+    if: ${{ !(github.event_name == 'workflow_dispatch' && github.event.inputs.tag == '') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -114,6 +132,7 @@ jobs:
         with:
           tag_name: ${{ env.TAG }}
           name: Forensic Hunter ${{ env.TAG }}
+          prerelease: ${{ contains(env.TAG, '-') }}
           generate_release_notes: true
           files: |
             dist/*.tar.gz
@@ -124,6 +143,8 @@ jobs:
   homebrew:
     name: update Homebrew tap
     needs: publish
+    # Pre-releases (v1.2.3-rc1) never reach the tap.
+    if: ${{ !contains(github.event.inputs.tag || github.ref_name, '-') }}
     runs-on: ubuntu-latest
     env:
       HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

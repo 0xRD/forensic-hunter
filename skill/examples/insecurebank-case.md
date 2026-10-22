@@ -16,7 +16,10 @@ Tools: forhunt 0.1.0, Hayabusa 4.2.0 (rules bundled with the release).
 bash skill/scripts/fetch-samples.sh ~/samples
 CASE=~/cases/insecurebank; mkdir -p $CASE/{evidence,work}
 cd ~/samples/EVTX-ATTACK-SAMPLES
-cp -a "Credential Access/CA_DCSync_4662.evtx" "Persistence/DACL_DCSync_Right_Powerview_ Add-DomainObjectAcl.evtx" … $CASE/evidence/
+# the 18 files recorded on insecurebank.local hosts
+find . -name '*.evtx' | sort | while IFS= read -r f; do
+  forhunt search "$f" -q -F jsonl -n 1 -f 'Computer~insecurebank.local' | grep -q . && cp -a "$f" $CASE/evidence/
+done
 chmod -R a-w $CASE/evidence
 (cd $CASE/evidence && find . -name '*.evtx' -exec sha256sum {} + | sort -k2) > $CASE/work/hashes-before.txt
 ```
@@ -62,7 +65,7 @@ forhunt hayabusa $CASE/work/hayabusa.jsonl -p $CASE/evidence --min-level medium 
 {"rule":"Windows Default Domain GPO Modification","lvl":"medium","h":"DC1.insecurebank.local","n":22,…}
 {"rule":"Active Directory Replication from Non Machine Account - DcSync Indicator","lvl":"medium","h":"DC1.insecurebank.local","n":4,…}
 {"rule":"Possible DC Shadow Attack","lvl":"medium","h":"DC1.insecurebank.local","n":2,…,"ids":["4662e471:3","4662e471:5"]}
-…  (28 groups)
+…  (27 groups)
 {"summary":{"cmd":"hayabusa","detections":92,"shown":92,"below_min_level":84,"with_forhunt_id":92,"levels":{"critical":4,"high":37,"medium":51},…}}
 ```
 `-g` collapses 92 detections into 28 lines; every group carries forhunt ids

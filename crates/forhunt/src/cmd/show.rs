@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use forhunt_core::artifact::Source;
+use forhunt_core::id::FileKey;
 use forhunt_core::{EventRef, EventView, Val};
 use forhunt_output::{Format, WriteOptions, Writer};
 use serde_json::{Map, Value, json};
@@ -75,7 +76,22 @@ fn candidate_units(src: &dyn Source, rid: u64) -> Vec<usize> {
 pub fn run(a: ShowArgs) -> anyhow::Result<()> {
     let ctx = Ctx::new(&a.common)?;
     let ids: Vec<EventRef> = a.ids.iter().map(|s| s.parse()).collect::<Result<_, _>>()?;
-    let inputs = ctx.open(&a.path)?;
+    let mut inputs = ctx.open(&a.path)?;
+    // An id whose key matches no sampled key may use a full-content key
+    // (given to a file whose sampled key collided with another file's).
+    if ids
+        .iter()
+        .any(|id| !inputs.sources.iter().any(|s| s.key() == id.file))
+    {
+        let mut extra = Vec::new();
+        for s in &inputs.sources {
+            let k = FileKey::of_file(s.path())?;
+            if k != s.key() && ids.iter().any(|id| id.file == k) {
+                extra.push(ctx.open_keyed(s.path(), k)?);
+            }
+        }
+        inputs.sources.extend(extra);
+    }
     let mut out = common::output(&a.output)?;
     let mut totals = Totals::default();
     let mut missing = Vec::new();

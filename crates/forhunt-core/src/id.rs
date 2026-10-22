@@ -40,6 +40,37 @@ impl FileKey {
         let b = out.as_bytes();
         FileKey(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
     }
+
+    /// Key from the whole content, for the rare file whose sampled key is
+    /// already taken by a different file in the same run.
+    pub fn of_file(path: &std::path::Path) -> std::io::Result<FileKey> {
+        let mut h = blake3::Hasher::new();
+        h.update(b"forhunt full-content key");
+        h.update_reader(std::fs::File::open(path)?)?;
+        let out = h.finalize();
+        let b = out.as_bytes();
+        Ok(FileKey(u32::from_be_bytes([b[0], b[1], b[2], b[3]])))
+    }
+
+    /// True when both files have identical content.
+    pub fn same_content(a: &std::path::Path, b: &std::path::Path) -> std::io::Result<bool> {
+        use std::io::Read;
+        let (mut fa, mut fb) = (std::fs::File::open(a)?, std::fs::File::open(b)?);
+        if fa.metadata()?.len() != fb.metadata()?.len() {
+            return Ok(false);
+        }
+        let (mut ba, mut bb) = (vec![0u8; 1 << 16], vec![0u8; 1 << 16]);
+        loop {
+            let n = fa.read(&mut ba)?;
+            if n == 0 {
+                return Ok(true);
+            }
+            fb.read_exact(&mut bb[..n])?;
+            if ba[..n] != bb[..n] {
+                return Ok(false);
+            }
+        }
+    }
 }
 
 impl fmt::Display for FileKey {

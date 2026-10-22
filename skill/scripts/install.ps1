@@ -7,7 +7,9 @@
   checksums\forhunt-<version>.sha256 next to this script), Hayabusa against
   hayabusa.sha256 pinned in this skill. Installs into $Prefix
   (default %LOCALAPPDATA%\forensic-hunter) and creates bin\forhunt.exe and
-  bin\hayabusa.cmd. Nothing is embedded in the skill.
+  bin\hayabusa.cmd. Nothing is embedded in the skill. -NoForhunt or
+  -NoHayabusa install only the other tool; $env:FORHUNT_BASE_URL points to a
+  mirror of the forhunt release assets.
 
   Hayabusa is GPL-3.0 software by Yamato Security, downloaded unmodified from
   https://github.com/Yamato-Security/hayabusa (source code available there).
@@ -19,7 +21,8 @@ param(
   [string]$Prefix = (Join-Path $env:LOCALAPPDATA 'forensic-hunter'),
   [string]$ForhuntVersion = 'latest',
   [string]$HayabusaVersion = '4.2.0',
-  [switch]$NoHayabusa
+  [switch]$NoHayabusa,
+  [switch]$NoForhunt
 )
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -53,11 +56,12 @@ $tmp = Join-Path ([IO.Path]::GetTempPath()) ("fh-" + [Guid]::NewGuid())
 New-Item -ItemType Directory -Force -Path $tmp, (Join-Path $Prefix 'bin') | Out-Null
 try {
   # --- forhunt ---
+  if (-not $NoForhunt) {
   if ($ForhuntVersion -eq 'latest') {
     $req = [Net.WebRequest]::Create("https://github.com/$Repo/releases/latest")
     $req.AllowAutoRedirect = $true
     $resp = $req.GetResponse(); $ForhuntVersion = ($resp.ResponseUri.AbsoluteUri -split '/tag/')[1]; $resp.Close()
-    if (-not $ForhuntVersion) { throw 'cannot resolve the latest forhunt release' }
+    if (-not $ForhuntVersion) { throw 'no published forhunt release found; pass -ForhuntVersion vX.Y.Z' }
   }
   $ver = $ForhuntVersion.TrimStart('v')
   $zip = "forhunt-$ver-$target.zip"
@@ -67,13 +71,19 @@ try {
   Invoke-WebRequest -UseBasicParsing -Uri "$base/$zip" -OutFile (Join-Path $tmp $zip)
   $pinned = Join-Path $Here "checksums\forhunt-$ver.sha256"
   if (Test-Path $pinned) { $sums = Get-Content $pinned }
-  else { $sums = (Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS").Content -split "`n" }
+  else {
+    # Windows PowerShell 5.1 returns octet-stream bodies as byte[].
+    $c = (Invoke-WebRequest -UseBasicParsing -Uri "$base/SHA256SUMS").Content
+    if ($c -is [byte[]]) { $c = [Text.Encoding]::UTF8.GetString($c) }
+    $sums = $c -split "`n"
+  }
   $expected = Find-Sum $sums $zip
   if (-not $expected) { throw "no checksum listed for $zip" }
   Verify-Sha256 (Join-Path $tmp $zip) $expected
   Expand-Archive -Force -Path (Join-Path $tmp $zip) -DestinationPath $tmp
   Copy-Item -Force (Join-Path $tmp "forhunt-$ver-$target\forhunt.exe") (Join-Path $Prefix 'bin\forhunt.exe')
   & (Join-Path $Prefix 'bin\forhunt.exe') --version
+  }
 
   # --- Hayabusa ---
   if (-not $NoHayabusa) {

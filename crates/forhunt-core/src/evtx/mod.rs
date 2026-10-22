@@ -189,7 +189,9 @@ impl EvtxSource {
             Some((a, b)) => Some(data.read(a, (b - a) as usize)?),
             None => None,
         };
-        let key = FileKey::from_samples(len, bytes, tail.as_deref());
+        let key = opts
+            .key
+            .unwrap_or_else(|| FileKey::from_samples(len, bytes, tail.as_deref()));
         drop(tail);
         drop(head);
         let settings = ParserSettings::new()
@@ -249,7 +251,20 @@ impl EvtxSource {
         buf.resize(CHUNK_SIZE, 0);
         // A truncated chunk can never pass its checksum, but the records
         // before the cut are intact.
-        let validate = self.validate && !partial;
+        let mut validate = self.validate && !partial;
+        if break_string_cycles(&mut buf) {
+            // The edited copy no longer matches its checksum: check the original.
+            if validate
+                && !EvtxChunkData::new(raw.to_vec(), true).is_ok_and(|c| c.validate_checksum())
+            {
+                rep.bad_unit = true;
+                rep.note(|| format!("chunk {unit}: checksum mismatch"));
+                return;
+            }
+            validate = false;
+            rep.bad_unit = true;
+            rep.note(|| format!("chunk {unit}: cyclic string table, cycle cut"));
+        }
         let mut chunk = match EvtxChunkData::new(buf, validate) {
             Ok(c) => c,
             Err(e) => {
@@ -264,6 +279,7 @@ impl EvtxSource {
             let mut retry = Vec::with_capacity(CHUNK_SIZE);
             retry.extend_from_slice(raw);
             retry.resize(CHUNK_SIZE, 0);
+            break_string_cycles(&mut retry);
             retry[128..384].fill(0);
             if let Ok(mut c) = EvtxChunkData::new(retry, false)
                 && c.parse(Arc::clone(&self.settings)).is_ok()
@@ -387,6 +403,7 @@ impl Source for EvtxSource {
         };
         let mut buf = raw.to_vec();
         buf.resize(CHUNK_SIZE, 0);
+        break_string_cycles(&mut buf);
         let res = catch_unwind(AssertUnwindSafe(|| -> Option<anyhow::Result<String>> {
             let mut chunk = EvtxChunkData::new(buf, false).ok()?;
             let mut parsed = chunk.parse(Arc::clone(&self.settings)).ok()?;
@@ -414,4 +431,46 @@ impl Source for EvtxSource {
         }
         rep
     }
+}
+
+/// Cuts cycles in the chunk's string table chains (64 bucket heads at
+/// 128..384, each entry starting with the u32 offset of the next one).
+/// `evtx` follows these chains until a 0 or self-link, so a longer cycle in
+/// a corrupt chunk would make it loop forever. Returns true if `buf` changed.
+fn break_string_cycles(buf: &mut [u8]) -> bool {
+    let u32_at = |b: &[u8], i: usize| -> Option<u32> {
+        Some(u32::from_le_bytes(b.get(i..i + 4)?.try_into().ok()?))
+    };
+    let mut seen = vec![0u64; CHUNK_SIZE / 64];
+    let mut marked: Vec<usize> = Vec::new();
+    let mut changed = false;
+    for head in 0..64 {
+        let Some(mut pos) = u32_at(buf, 128 + head * 4).map(|o| o as usize) else {
+            break;
+        };
+        let mut prev: Option<usize> = None;
+        while pos != 0 && pos < buf.len() {
+            if seen[pos / 64] & (1 << (pos % 64)) != 0 {
+                // Revisited: drop the link that closed the loop (or the head).
+                let at = prev.unwrap_or(128 + head * 4);
+                buf[at..at + 4].fill(0);
+                changed = true;
+                break;
+            }
+            seen[pos / 64] |= 1 << (pos % 64);
+            marked.push(pos);
+            let Some(next) = u32_at(buf, pos).map(|o| o as usize) else {
+                break;
+            };
+            if next == pos {
+                break;
+            }
+            prev = Some(pos);
+            pos = next;
+        }
+        for p in marked.drain(..) {
+            seen[p / 64] &= !(1 << (p % 64));
+        }
+    }
+    changed
 }

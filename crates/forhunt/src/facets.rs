@@ -210,7 +210,10 @@ pub fn write_summary(s: &SummaryInput<'_>, out: &mut Vec<u8>) {
 }
 
 fn quote(v: &str) -> String {
-    if v.chars()
+    if v.is_empty() {
+        "''".into()
+    } else if v
+        .chars()
         .any(|c| c.is_whitespace() || "\"'$&|;<>()`\\*?".contains(c))
     {
         format!("'{}'", v.replace('\'', "'\\''"))
@@ -226,13 +229,13 @@ fn suggestions(s: &SummaryInput<'_>) -> Vec<(String, u64)> {
     if f.eid.len() > 1
         && let Some(((ch, id), n)) = eids.first()
     {
-        out.push((
-            format!(
-                "--channel {} --event-id {id}",
-                quote(s.map.channel_alias(ch))
-            ),
-            *n,
-        ));
+        let alias = s.map.channel_alias(ch);
+        let narrow = if alias.is_empty() {
+            format!("--event-id {id}")
+        } else {
+            format!("--channel {} --event-id {id}", quote(alias))
+        };
+        out.push((narrow, *n));
     }
     if f.host.len() > 1
         && let Some((h, n)) = top(f.host.iter().map(|(k, v)| (k.clone(), *v)), 1).first()

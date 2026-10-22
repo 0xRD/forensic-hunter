@@ -60,6 +60,7 @@ fn bench(c: &mut Criterion) {
         let opts = ParseOptions {
             validate_checksums: false,
             slow_decoder: slow,
+            key: None,
         };
         let src = EvtxSource::from_bytes(path.clone(), data.clone(), &opts).unwrap();
         g.bench_function(name, |b| {

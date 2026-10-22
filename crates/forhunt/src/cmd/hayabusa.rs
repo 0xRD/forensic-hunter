@@ -1,4 +1,4 @@
-//! `hayabusa`: normalise Hayabusa `json-timeline` output into the `llm` format.
+//! `hayabusa`: normalise Hayabusa JSON/JSONL output (`dfir-timeline -t jsonl`, or 2.x `json-timeline`) into the `llm` format.
 //!
 //! Hayabusa is an external GPLv3 tool; nothing of it is linked or vendored.
 //! This command only reads its JSON output. When the scanned EVTX files are
@@ -186,7 +186,8 @@ fn read_input(path: &str) -> anyhow::Result<Vec<Value>> {
 /// exported logs.
 struct KeyResolver {
     by_path: HashMap<PathBuf, (FileKey, PathBuf)>,
-    by_name: HashMap<String, Option<(FileKey, PathBuf)>>,
+    /// Path components of each input, lowercased, last first.
+    by_suffix: Vec<(Vec<String>, FileKey, PathBuf)>,
     cache: HashMap<String, Option<(FileKey, PathBuf)>>,
     remap: HashMap<FileKey, HashMap<u64, u64>>,
 }
@@ -195,7 +196,7 @@ impl KeyResolver {
     fn new(ctx: &Ctx, paths: &[String]) -> anyhow::Result<KeyResolver> {
         let mut r = KeyResolver {
             by_path: HashMap::new(),
-            by_name: HashMap::new(),
+            by_suffix: Vec::new(),
             cache: HashMap::new(),
             remap: HashMap::new(),
         };
@@ -203,13 +204,8 @@ impl KeyResolver {
             let inputs = ctx.open(paths)?;
             for s in &inputs.sources {
                 let p = s.path().to_path_buf();
-                if let Some(n) = p.file_name() {
-                    let n = n.to_string_lossy().to_lowercase();
-                    r.by_name
-                        .entry(n)
-                        .and_modify(|v| *v = None)
-                        .or_insert(Some((s.key(), p.clone())));
-                }
+                r.by_suffix
+                    .push((components(&p.to_string_lossy()), s.key(), p.clone()));
                 let canon = p.canonicalize().unwrap_or(p.clone());
                 r.by_path.insert(canon, (s.key(), p));
             }
@@ -226,15 +222,7 @@ impl KeyResolver {
             .canonicalize()
             .ok()
             .and_then(|c| self.by_path.get(&c).cloned())
-            .or_else(|| {
-                let n = p
-                    .file_name()
-                    .or_else(|| file.rsplit(['\\', '/']).next().map(std::ffi::OsStr::new))?;
-                self.by_name
-                    .get(&n.to_string_lossy().to_lowercase())
-                    .cloned()
-                    .flatten()
-            })
+            .or_else(|| self.by_suffix_match(file))
             .or_else(|| {
                 // The scanned file itself may be reachable.
                 let src = forhunt_core::evtx::EvtxSource::open(p, &ParseOptions::default()).ok()?;
@@ -243,6 +231,22 @@ impl KeyResolver {
             });
         self.cache.insert(file.to_string(), k.clone());
         k
+    }
+
+    /// The input sharing the longest trailing path (`C:\\case\\HOST1\\Security.evtx`
+    /// matches `./evidence/HOST1/Security.evtx`), if exactly one does.
+    fn by_suffix_match(&self, file: &str) -> Option<(FileKey, PathBuf)> {
+        let want = components(file);
+        let mut best = (0, None, false);
+        for (have, key, path) in &self.by_suffix {
+            let n = want.iter().zip(have).take_while(|(a, b)| a == b).count();
+            if n > best.0 {
+                best = (n, Some((*key, path.clone())), false);
+            } else if n == best.0 && n > 0 {
+                best.2 = true;
+            }
+        }
+        if best.2 { None } else { best.1 }
     }
 
     /// Maps an `EventRecordID` to the record header id (identity for native logs).
@@ -570,6 +574,14 @@ fn write_groups(ctx: &Ctx, dets: &[Det], limit: usize, buf: &mut Vec<u8>) {
         }
         buf.extend_from_slice(b"]}\n");
     }
+}
+
+/// Path components split on both separators, lowercased, last first.
+fn components(p: &str) -> Vec<String> {
+    p.rsplit(['\\', '/'])
+        .filter(|c| !c.is_empty() && *c != ".")
+        .map(str::to_lowercase)
+        .collect()
 }
 
 #[cfg(test)]

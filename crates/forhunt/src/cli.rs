@@ -29,7 +29,7 @@ pub enum Cmd {
     Timeline(TimelineArgs),
     /// Show one event in full by its stable id (`<file key>:<record id>`).
     Show(ShowArgs),
-    /// Normalise Hayabusa json-timeline output into the `llm` format.
+    /// Normalise Hayabusa JSON/JSONL detections into the `llm` format.
     Hayabusa(HayabusaArgs),
     /// Sweep every detection checklist in one pass: log source coverage,
     /// query hits, and a pre-filled checklist-status file for review.
@@ -38,8 +38,9 @@ pub enum Cmd {
 
 #[derive(Args, Debug, Clone)]
 pub struct Common {
-    /// Worker threads (0 = one per physical core).
-    #[arg(long, short = 't', default_value_t = 0, global = true)]
+    /// Worker threads (0 = one per physical core; at most 1024).
+    #[arg(long, short = 't', default_value_t = 0, global = true,
+          value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(0..=1024))]
     pub threads: usize,
     /// Disable the progress line on stderr.
     #[arg(long, global = true)]
@@ -242,7 +243,7 @@ pub struct ShowArgs {
 
 #[derive(Args, Debug)]
 pub struct HayabusaArgs {
-    /// Hayabusa `json-timeline` output (JSONL with -L, or a JSON array). `-` for stdin.
+    /// Hayabusa output: `dfir-timeline -t jsonl` (4.x) or `json-timeline` (2.x), JSONL or a JSON array. `-` for stdin.
     #[arg(value_name = "FILE")]
     pub input: String,
     /// Only keep detections at or above this level (informational, low, medium, high, critical).

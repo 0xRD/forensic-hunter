@@ -18,7 +18,7 @@ tools/evtx-gen          synthetic EVTX generator (fixtures, multi-GB bench corpu
 skill/                  Claude skill: SKILL.md, install scripts, references, checklists
 ```
 
-Hot path: mmap file -> 64 KiB chunk = unit of work -> `evtx` chunk parse and
+Hot path: positional read (D-021) -> 64 KiB chunk = unit of work -> `evtx` chunk parse and
 JSON render -> custom JSON scanner into a borrowed `EventView` -> filter ->
 writer appends to a per-unit buffer -> consumer writes units in order.
 

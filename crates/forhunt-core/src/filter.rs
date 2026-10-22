@@ -115,34 +115,54 @@ pub struct RegexCond {
     /// `None`: match against any payload value and the System strings.
     pub field: Option<String>,
     pub re: Regex,
+    /// With `field`: the whole argument as a pattern, used on events that
+    /// have no such field (`pAA==$` is a pattern, not field `pAA`).
+    whole: Option<Regex>,
 }
 
 impl RegexCond {
-    /// `Name=PATTERN` targets one field when `Name` looks like a field name,
-    /// otherwise the whole argument is the pattern. Case-insensitive.
+    /// `Name=PATTERN` targets field `Name` on events that have it; on other
+    /// events the whole argument is matched against every value, so patterns
+    /// containing `=` (base64 padding...) still work. Case-insensitive.
     pub fn parse(s: &str) -> anyhow::Result<RegexCond> {
-        let (field, pat) = match s.split_once('=') {
-            Some((n, p)) if is_field_name(n) => (Some(n.to_string()), p),
-            _ => (None, s),
+        let build = |pat: &str| {
+            RegexBuilder::new(pat)
+                .case_insensitive(true)
+                .size_limit(32 << 20)
+                .build()
         };
-        let re = RegexBuilder::new(pat)
-            .case_insensitive(true)
-            .size_limit(32 << 20)
-            .build()
-            .map_err(|e| anyhow::anyhow!("--regex `{s}`: {e}"))?;
-        Ok(RegexCond { field, re })
+        let err = |e: regex::Error| anyhow::anyhow!("--regex `{s}`: {e}");
+        match s.split_once('=') {
+            Some((n, p)) if is_field_name(n) && (build(p).is_ok() || build(s).is_err()) => {
+                Ok(RegexCond {
+                    field: Some(n.to_string()),
+                    re: build(p).map_err(err)?,
+                    whole: build(s).ok(),
+                })
+            }
+            _ => Ok(RegexCond {
+                field: None,
+                re: build(s).map_err(err)?,
+                whole: None,
+            }),
+        }
     }
 
     fn matches(&self, ev: &EventView<'_>) -> bool {
         match &self.field {
-            Some(f) => ev.get_ci(f).is_some_and(|v| self.re.is_match(&v)),
-            None => {
-                ev.fields.iter().any(|f| self.re.is_match(f.value.as_str()))
-                    || self.re.is_match(&ev.computer)
-                    || self.re.is_match(&ev.provider)
-            }
+            Some(f) => match ev.get_ci(f) {
+                Some(v) => self.re.is_match(&v),
+                None => self.whole.as_ref().is_some_and(|w| any_value(w, ev)),
+            },
+            None => any_value(&self.re, ev),
         }
     }
+}
+
+fn any_value(re: &Regex, ev: &EventView<'_>) -> bool {
+    ev.fields.iter().any(|f| re.is_match(f.value.as_str()))
+        || re.is_match(&ev.computer)
+        || re.is_match(&ev.provider)
 }
 
 fn is_field_name(s: &str) -> bool {
@@ -400,6 +420,17 @@ mod tests {
         assert!(r("POWERSHELL").matches(&e));
         assert!(!r("TargetUserName=bob").matches(&e));
         assert!(r("a=b|alice").matches(&e) || r("alice").matches(&e));
+        // Not a field of this event: the whole argument is the pattern.
+        assert!(r("alic=?e$").matches(&e));
+        assert!(r("TargetUserName=^alice$").matches(&e));
+        assert!(!r("TargetUserName=x=y").matches(&e));
+        let mut b = e.clone();
+        b.fields.push(Field {
+            name: "ScriptBlockText".into(),
+            value: Val::Str(Cow::Borrowed("-e JABpAA==")),
+        });
+        assert!(r("pAA==$").matches(&b));
+        assert!(r("ScriptBlockText=pAA==$").matches(&b));
     }
 
     #[test]

@@ -114,6 +114,9 @@ fn compile(ctx: &Ctx, text: &str) -> Option<Filter> {
     {
         return None;
     }
+    if argv.iter().any(|a| is_placeholder(a)) {
+        return None;
+    }
     for a in argv.iter_mut().skip(2) {
         if a.starts_with('<') && a.ends_with('>') {
             *a = ".".into();
@@ -123,6 +126,23 @@ fn compile(ctx: &Ctx, text: &str) -> Option<Filter> {
         Cmd::Search(s) => ctx.filter(&s.filter).ok(),
         _ => None,
     }
+}
+
+/// Pivot queries carry example values to replace with case data
+/// (documentation IPs, sample accounts, fixed time windows): a sweep cannot
+/// evaluate them, and a miss on them would read as a false `NO_HIT`.
+fn is_placeholder(arg: &str) -> bool {
+    const EXAMPLES: [&str; 7] = [
+        "192.0.2.",
+        "198.51.100.",
+        "203.0.113.",
+        "example.com",
+        "example.local",
+        "jdoe",
+        "--since",
+    ];
+    let a = arg.to_ascii_lowercase();
+    EXAMPLES.iter().any(|e| a.contains(e)) || a.starts_with("--until")
 }
 
 #[derive(Default, Clone)]
@@ -283,13 +303,15 @@ pub fn run(a: ChecklistArgs) -> anyhow::Result<()> {
         .zip(&queries)
         .zip(&total.counts)
         .map(|((c, qs), k)| {
-            let any_eval = qs.iter().any(|q| q.filter.is_some());
+            // NO_HIT only when every query was evaluated: a check whose
+            // pivot or stats/timeline queries were skipped needs review.
+            let all_eval = !qs.is_empty() && qs.iter().all(|q| q.filter.is_some());
             let hit = k.hits.iter().any(|h| *h > 0);
             let status = if k.source == 0 {
                 "LOG_SOURCE_MISSING"
             } else if hit {
                 "HIT?"
-            } else if any_eval {
+            } else if all_eval {
                 "NO_HIT"
             } else {
                 "REVIEW"

@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use forhunt_core::artifact::{self, ParseOptions, Source, UnitReport};
 use forhunt_core::filter::{FieldCond, Filter, RegexCond, parse_event_ids};
+use forhunt_core::id::FileKey;
 use forhunt_core::normalize::FieldMap;
 use forhunt_core::{Ts, input};
 use rayon::prelude::*;
@@ -83,6 +84,23 @@ impl Ctx {
     /// Expands paths and opens every input in parallel. Unreadable or
     /// non-artifact files are reported and skipped; byte-identical inputs
     /// (same file key) are opened once.
+    fn parse_options(&self) -> ParseOptions {
+        ParseOptions {
+            validate_checksums: self.common.checksums,
+            slow_decoder: self.common.slow_decoder,
+            key: None,
+        }
+    }
+
+    /// Opens one file under an explicit key (full-content key fallback).
+    pub fn open_keyed(&self, path: &Path, key: FileKey) -> anyhow::Result<Arc<dyn Source>> {
+        let o = ParseOptions {
+            key: Some(key),
+            ..self.parse_options()
+        };
+        open_one(&artifact::registry(), path, &o)
+    }
+
     pub fn open(&self, paths: &[String]) -> anyhow::Result<Inputs> {
         let arts = artifact::registry();
         let exp = input::expand(paths, &arts)?;
@@ -92,10 +110,7 @@ impl Ctx {
         if exp.files.is_empty() {
             return Err(fail(exit::NO_INPUT, "no input files found"));
         }
-        let opts = ParseOptions {
-            validate_checksums: self.common.checksums,
-            slow_decoder: self.common.slow_decoder,
-        };
+        let opts = self.parse_options();
         let opened: Vec<_> = self.pool.install(|| {
             exp.files
                 .par_iter()
@@ -104,23 +119,43 @@ impl Ctx {
         });
         let mut sources: Vec<Arc<dyn Source>> = Vec::new();
         let mut failed = 0usize;
-        let mut seen = std::collections::HashMap::new();
+        let mut seen: std::collections::HashMap<FileKey, std::path::PathBuf> =
+            std::collections::HashMap::new();
         for (path, r) in exp.files.iter().zip(opened) {
             match r {
                 Ok(s) => {
                     for w in s.open_warnings() {
                         self.warn(&format!("{}: {w}", path.display()));
                     }
-                    if let Some(prev) = seen.insert(s.key(), path.clone()) {
-                        self.warn(&format!(
-                            "{}: same content as {} (key {}), skipped",
-                            path.display(),
-                            prev.display(),
-                            s.key()
-                        ));
-                        seen.insert(s.key(), prev);
-                        continue;
-                    }
+                    let s = match seen.get(&s.key()) {
+                        None => s,
+                        Some(prev) if FileKey::same_content(prev, path).unwrap_or(false) => {
+                            self.warn(&format!(
+                                "{}: same content as {} (key {}), skipped",
+                                path.display(),
+                                prev.display(),
+                                s.key()
+                            ));
+                            continue;
+                        }
+                        Some(prev) => {
+                            // Different content, same sampled key: key this
+                            // file by its whole content so ids stay unique.
+                            let key = FileKey::of_file(path)?;
+                            self.warn(&format!(
+                                "{}: sampled key {} also used by {}; using full-content key {key}",
+                                path.display(),
+                                s.key(),
+                                prev.display()
+                            ));
+                            let o = ParseOptions {
+                                key: Some(key),
+                                ..opts.clone()
+                            };
+                            open_one(&arts, path, &o)?
+                        }
+                    };
+                    seen.entry(s.key()).or_insert_with(|| path.to_path_buf());
                     sources.push(s);
                 }
                 Err(e) => {

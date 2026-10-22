@@ -1,7 +1,8 @@
 # SHA-256 of Hayabusa release archives, pinned by the Forensic Hunter
 # maintainers (Hayabusa publishes no checksum files). Source:
 # https://github.com/Yamato-Security/hayabusa/releases/tag/v4.2.0
-# To pin a new version: scripts/pin-hayabusa.sh <version> (in the repository).
+# To pin a new version: download each zip from the release page, check it
+# against the release notes, and add its `sha256sum` line here.
 8831343fdfd2c25ea313c4ab58c2e8a22ef5a91922cb0bb3ce482b26cbf9353d  hayabusa-4.2.0-lin-aarch64-musl.zip
 8060dac9c6b61da5566a638bfc11b0db4c0c51b0600113901fd2a84b3360b4c6  hayabusa-4.2.0-lin-x64-musl.zip
 b488486561a8ab73ca753f330d997853eb9f5d0563a9e8bfeada4571c4b3c828  hayabusa-4.2.0-mac-aarch64.zip

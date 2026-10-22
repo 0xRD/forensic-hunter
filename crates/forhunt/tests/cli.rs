@@ -441,6 +441,40 @@ fn hayabusa_normalisation() {
 }
 
 #[test]
+fn hayabusa_windows_paths_resolve_by_suffix() {
+    // Hayabusa run on Windows: backslash paths that do not exist here. Two
+    // inputs are named Security.evtx; the parent folder disambiguates.
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("hb.jsonl");
+    let dc = fx("dc01/Security.evtx");
+    let rec = lines(&ok(&["search", "-q", &dc, "-F", "jsonl", "-n", "1"]))[0]["record_id"]
+        .as_u64()
+        .unwrap();
+    let line = |f: &str| {
+        format!(
+            "{{\"Timestamp\":\"2024-03-11T08:00:00Z\",\"RuleTitle\":\"R\",\"Level\":\"high\",\"Computer\":\"DC01\",\"Channel\":\"Sec\",\"EventID\":4634,\"RecordID\":{rec},\"Details\":\"-\",\"EvtxFile\":{}}}\n",
+            serde_json::to_string(f).unwrap()
+        )
+    };
+    let hb = line("C:\\cases\\x\\dc01\\Security.evtx") + &line("C:\\cases\\Security.evtx");
+    std::fs::write(&p, hb).unwrap();
+    let v = lines(&ok(&[
+        "hayabusa",
+        "-q",
+        &p.display().to_string(),
+        "-p",
+        &fx(""),
+    ]));
+    let dc_key = lines(&ok(&["search", "-q", &dc, "-F", "jsonl", "-n", "1"]))[0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(v[0]["id"], dc_key.as_str());
+    // `cases\Security.evtx` matches both inputs equally: no id rather than a wrong one.
+    assert!(v[1].get("id").is_none() || v[1]["id"].is_null(), "{}", v[1]);
+}
+
+#[test]
 fn broken_pipe_is_not_an_error() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_forhunt"))
         .args(["parse", "-q", &fx("Security.evtx")])
@@ -526,4 +560,69 @@ fn checklist_sweep() {
         "impact",
     ]);
     assert!(md.contains("## impact") && !md.contains("## execution"));
+}
+
+#[test]
+fn cyclic_string_table_does_not_hang() {
+    // Header + first chunk of a fixture, with two string-table entries
+    // pointing at each other (A -> B -> A).
+    let data = std::fs::read(fx("Security.evtx")).unwrap();
+    let mut d = data[..4096 + 65536].to_vec();
+    let c = 4096;
+    let heads: Vec<usize> = (0..64)
+        .map(|i| u32::from_le_bytes(d[c + 128 + i * 4..c + 132 + i * 4].try_into().unwrap()))
+        .filter(|&o| o != 0)
+        .map(|o| o as usize)
+        .collect();
+    assert!(heads.len() >= 2);
+    let (a, b) = (heads[0], heads[1]);
+    d[c + a..c + a + 4].copy_from_slice(&(b as u32).to_le_bytes());
+    d[c + b..c + b + 4].copy_from_slice(&(a as u32).to_le_bytes());
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("cycle.evtx");
+    std::fs::write(&p, &d).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_forhunt"))
+        .args(["stats", "-q", "--slow-decoder", p.to_str().unwrap()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    for _ in 0..200 {
+        if let Some(st) = child.try_wait().unwrap() {
+            assert!(st.success(), "{st:?}");
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    child.kill().ok();
+    panic!("forhunt hung on a cyclic string table");
+}
+
+#[test]
+fn sampled_key_collision_keeps_both_files() {
+    // corrupt.evtx has the same size and intact ends as Security.evtx, so the
+    // sampled keys collide; it must still be parsed (and fail --strict).
+    let (sec, bad) = (fx("Security.evtx"), fx("corrupt.evtx"));
+    let o = forhunt(&["stats", "--strict", "-q", &sec, &bad]);
+    assert_eq!(o.status.code(), Some(4));
+    let out = ok(&["search", "-q", &sec, &bad, "-F", "jsonl"]);
+    let v = lines(&out);
+    let id = v
+        .iter()
+        .find(|e| {
+            e["source_file"]
+                .as_str()
+                .unwrap_or("")
+                .ends_with("corrupt.evtx")
+        })
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(!id.starts_with("4a2aa2ed"), "{id}");
+    // Resolvable with or without the colliding file among the inputs.
+    for p in [&bad, &fixtures().display().to_string()] {
+        let s = lines(&ok(&["show", &id, "-p", p, "-F", "llm"]));
+        assert_eq!(s[0]["id"], id.as_str());
+    }
 }

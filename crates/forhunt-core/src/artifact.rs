@@ -67,6 +67,9 @@ pub struct ParseOptions {
     pub validate_checksums: bool,
     /// Force the JSON decoding path (differential testing, debugging).
     pub slow_decoder: bool,
+    /// Use this file key instead of the sampled one (set when two different
+    /// files share a sampled key; see [`FileKey::of_file`]).
+    pub key: Option<FileKey>,
 }
 
 pub trait Source: Send + Sync {

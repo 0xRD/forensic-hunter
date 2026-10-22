@@ -5,7 +5,7 @@ DFIR, built to be driven by an LLM with a limited context window, plus a
 **Claude skill** that turns Claude into a systematic, checklist-driven Windows
 forensic analyst.
 
-- **Fast**: memory-mapped input, 64 KiB chunks processed in parallel across
+- **Fast**: 64 KiB chunks read with positional I/O and processed in parallel across
   files and directories, purpose-built decoder, streaming output.
   See [benchmarks](#benchmarks).
 - **One static binary** for Linux (musl), macOS and Windows. No runtime.
@@ -14,7 +14,7 @@ forensic analyst.
   200 events and a final summary line with suggested filters to narrow.
 - **Robust**: corrupt or truncated logs never crash it; bad chunks and records
   are counted and reported (`--strict` makes them fatal).
-- **Forensically sound**: inputs are only read (read-only mmap).
+- **Forensically sound**: inputs are only opened read-only, never modified.
 - **Extensible**: an `Artifact`/`Source` abstraction ready for MFT, registry,
   prefetch, LNK, jump lists, shellbags and amcache.
 

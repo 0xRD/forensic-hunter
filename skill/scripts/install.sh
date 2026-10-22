@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # Installs forhunt and Hayabusa for the Forensic Hunter skill (Linux, macOS).
 #
-#   install.sh [--prefix DIR] [--forhunt-version vX.Y.Z] [--no-hayabusa]
+#   install.sh [--prefix DIR] [--forhunt-version vX.Y.Z] [--hayabusa-version X.Y.Z]
+#              [--no-hayabusa | --no-forhunt]
 #
 # - Detects OS and architecture.
 # - Downloads release archives from GitHub over HTTPS and verifies SHA-256:
 #   forhunt against the SHA256SUMS published with its release (or a pinned
 #   checksums/forhunt-<version>.sha256 file next to this script when present),
 #   Hayabusa against hayabusa.sha256 pinned in this skill.
-# - Installs into $PREFIX (default ~/.local/share/forensic-hunter) and links
-#   forhunt and hayabusa into $PREFIX/bin. Nothing is embedded in the skill.
+# - Installs into --prefix, or $FORHUNT_PREFIX (default
+#   ~/.local/share/forensic-hunter), with forhunt and a hayabusa wrapper in
+#   <prefix>/bin. Nothing is embedded in the skill.
+# - FORHUNT_BASE_URL: optional mirror holding the forhunt release assets.
 #
 # Hayabusa is GPL-3.0 software by Yamato Security, downloaded unmodified from
 # https://github.com/Yamato-Security/hayabusa (source code available there).
@@ -18,8 +21,9 @@ set -euo pipefail
 FORHUNT_REPO="0xRD/forensic-hunter"
 FORHUNT_VERSION="${FORHUNT_VERSION:-latest}"
 HAYABUSA_VERSION="${HAYABUSA_VERSION:-4.2.0}"
-PREFIX="${PREFIX:-$HOME/.local/share/forensic-hunter}"
+PREFIX="${FORHUNT_PREFIX:-$HOME/.local/share/forensic-hunter}"
 WITH_HAYABUSA=1
+WITH_FORHUNT=1
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 while [ $# -gt 0 ]; do
@@ -28,7 +32,8 @@ while [ $# -gt 0 ]; do
     --forhunt-version) FORHUNT_VERSION="$2"; shift 2 ;;
     --hayabusa-version) HAYABUSA_VERSION="$2"; shift 2 ;;
     --no-hayabusa) WITH_HAYABUSA=0; shift ;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    --no-forhunt) WITH_FORHUNT=0; shift ;;
+    -h|--help) sed -n '2,/^set -euo/p' "$0" | sed -n 's/^# \{0,1\}//p'; exit 0 ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
 done
@@ -67,10 +72,15 @@ tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$PREFIX/bin"
 
 # --- forhunt -----------------------------------------------------------------
+if [ "$WITH_FORHUNT" = 1 ]; then
 if [ "$FORHUNT_VERSION" = "latest" ]; then
   # Resolve the tag through the redirect of /releases/latest (no API token needed).
-  FORHUNT_VERSION="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$FORHUNT_REPO/releases/latest" | sed 's#.*/tag/##')"
-  [ -n "$FORHUNT_VERSION" ] || die "cannot resolve the latest forhunt release"
+  url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$FORHUNT_REPO/releases/latest")" \
+    || die "cannot reach https://github.com/$FORHUNT_REPO/releases/latest"
+  case "$url" in
+    */tag/*) FORHUNT_VERSION="${url##*/tag/}" ;;
+    *) die "no published forhunt release found; pass --forhunt-version vX.Y.Z" ;;
+  esac
 fi
 ver="${FORHUNT_VERSION#v}"
 archive="forhunt-${ver}-${target}.tar.gz"
@@ -89,6 +99,7 @@ verify "$tmp/$archive" "$expected"
 tar xzf "$tmp/$archive" -C "$tmp"
 install -m 0755 "$tmp/forhunt-${ver}-${target}/forhunt" "$PREFIX/bin/forhunt"
 "$PREFIX/bin/forhunt" --version
+fi
 
 # --- Hayabusa ----------------------------------------------------------------
 if [ "$WITH_HAYABUSA" = 1 ]; then
