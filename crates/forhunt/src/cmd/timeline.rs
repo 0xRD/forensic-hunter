@@ -130,11 +130,23 @@ impl Collector {
                 idx,
                 runs,
             } => {
-                idx.push((key, buf.len() as u32, line.len() as u32));
-                buf.extend_from_slice(line);
-                if buf.len() + idx.len() * 16 >= *budget || buf.len() > (u32::MAX as usize) / 2 {
+                // Spill before a Vec would double past the budget (capacity,
+                // not length, is what the process holds).
+                let item = std::mem::size_of::<(Key, u32, u32)>();
+                let grow_buf = buf.len() + line.len() > buf.capacity();
+                let grow_idx = idx.len() == idx.capacity();
+                let buf_cap = if grow_buf {
+                    (buf.capacity() * 2).max(buf.len() + line.len())
+                } else {
+                    buf.capacity()
+                };
+                let idx_cap = if grow_idx { idx.capacity().max(4) * 2 } else { idx.capacity() };
+                let too_big = buf_cap + idx_cap * item > *budget || buf_cap > (u32::MAX as usize) / 2;
+                if (grow_buf || grow_idx) && too_big && !idx.is_empty() {
                     runs.push(spill(buf, idx)?);
                 }
+                idx.push((key, buf.len() as u32, line.len() as u32));
+                buf.extend_from_slice(line);
             }
         }
         Ok(())

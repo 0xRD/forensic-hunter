@@ -158,8 +158,9 @@ pub struct TimelineArgs {
     pub limit: Option<usize>,
     #[arg(long, short = 'F', value_enum, default_value_t = OutFormat::Llm)]
     pub format: OutFormat,
-    /// Memory budget for sorting before spilling to temporary files, in MiB.
-    #[arg(long, default_value_t = 512, value_name = "MIB")]
+    /// Memory budget for sorting before spilling to temporary files, in MiB
+    /// (smaller sorted runs are also more cache-friendly).
+    #[arg(long, default_value_t = 256, value_name = "MIB")]
     pub mem_budget: usize,
     #[command(flatten)]
     pub out: OutputArgs,
