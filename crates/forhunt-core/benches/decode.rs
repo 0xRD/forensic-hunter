@@ -3,6 +3,7 @@
 //!   template fast path, or forced through the JSON path;
 //! - `render` (evtx crate, chunk -> JSON), `decode` (JSON -> EventView) and
 //!   `filter` stages of the JSON path.
+//!
 //! Input: $FORHUNT_BENCH_EVTX, or the synthetic Security fixture.
 
 use std::hint::black_box;
