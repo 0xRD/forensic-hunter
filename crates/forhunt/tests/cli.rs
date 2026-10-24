@@ -1185,3 +1185,30 @@ fn overlapping_copies_of_one_log_are_reported() {
     let o = forhunt(&["stats", &fx("Security.evtx"), &fx("Sysmon.evtx")]);
     assert!(!String::from_utf8_lossy(&o.stderr).contains("overlapping"));
 }
+
+#[test]
+fn checklist_queries_paste_safely_into_a_shell() {
+    // zsh stops on an unquoted [ ] * ? that matches no file ("no matches
+    // found"); bash may expand it. Every such argument must be quoted.
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../skill/references/checklists/checklists.json");
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    for c in v["checks"].as_array().unwrap() {
+        for q in c["forhunt"].as_array().unwrap() {
+            let q = q.as_str().unwrap();
+            let mut quote: Option<char> = None;
+            for ch in q.chars() {
+                match quote {
+                    Some(qc) if ch == qc => quote = None,
+                    Some(_) => {}
+                    None if ch == '\'' || ch == '"' => quote = Some(ch),
+                    None => assert!(
+                        !matches!(ch, '[' | ']' | '*' | '?'),
+                        "{}: unquoted `{ch}` in {q}",
+                        c["id"]
+                    ),
+                }
+            }
+        }
+    }
+}

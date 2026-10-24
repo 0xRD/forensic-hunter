@@ -265,7 +265,7 @@ checks:
       Data[3]|contains: HostVersion=2.
     condition: selection and not filter_legit_v2_host
   forhunt:
-  - forhunt search <paths> --channel "Windows PowerShell" --event-id 400 --field Data[3]~EngineVersion=2.
+  - forhunt search <paths> --channel "Windows PowerShell" --event-id 400 --field 'Data[3]~EngineVersion=2.'
     --format llm
   pivots:
   - HostApplication line in the same event shows the exact command line used
@@ -306,7 +306,7 @@ checks:
     condition: selection
   forhunt:
   - forhunt search <paths> --channel "Windows PowerShell" --event-id 600 --format llm
-  - forhunt search <paths> --channel "Windows PowerShell" --event-id 600 --field Data[3]~HostApplication=
+  - forhunt search <paths> --channel "Windows PowerShell" --event-id 600 --field 'Data[3]~HostApplication='
     --format llm
   pivots:
   - HostApplication=... shows the command line when PowerShell was launched without 4688/Sysmon coverage
@@ -1008,3 +1008,44 @@ checks:
   notes: 'NOT VERIFIED 2026-10-24. Added after a lab case where a macro started a hidden PowerShell TCP
     reverse shell and no check covered it. The 4104 regex needs both TCPClient and GetStream in one
     script block. Confirm field semantics and false positives against independent sources.'
+- id: FH-EXE-021
+  title: PowerShell running a script file with the execution policy bypassed (-ExecutionPolicy Bypass -File)
+  tactic: execution
+  attack:
+  - T1059.001
+  channel:
+  - Microsoft-Windows-Sysmon/Operational
+  - Security
+  event_ids:
+  - 1
+  - 4688
+  prerequisites:
+  - '1 branch: Sysmon installed with a config that logs event 1 (process creation)'
+  - '4688 branch: Audit Process Creation plus "Include command line in process creation events"'
+  logic:
+    selection_policy:
+      CommandLine|re: \s[-/](ep|ex[a-z]*)\s+(bypass|unrestricted)\b
+    selection_file:
+      CommandLine|re: \s[-/]f(i|il|ile)?\s
+    condition: selection_policy and selection_file
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --regex 'CommandLine=\s[-/](ep|ex[a-z]*)\s+(bypass|unrestricted)\b'
+    --regex 'CommandLine=\s[-/]f(i|il|ile)?\s' --format llm
+  - forhunt search <paths> --channel Security --event-id 4688 --regex 'CommandLine=\s[-/](ep|ex[a-z]*)\s+(bypass|unrestricted)\b'
+    --regex 'CommandLine=\s[-/]f(i|il|ile)?\s' --format llm
+  pivots:
+  - 'The script path: where it came from (4104 / Sysmon 11 / Sysmon 3 download just before, MFT, $J)'
+  - 4104 script blocks of the same host and minute hold the script content
+  - 'ParentImage / ParentProcessName and the logon behind it (LogonId -> 4624)'
+  false_positives:
+  - Management agents and installers that ship scripts and bypass the policy (SCCM, Intune, monitoring);
+    check the script path (Temp, user folders and C:\temp are suspicious) and the parent
+  severity: medium
+  sources:
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-24. Added after a lab case where the ransomware script was started with
+    powershell -ExecutionPolicy Bypass -File C:\temp\... and no check covered it. PowerShell accepts any
+    unambiguous prefix of -ExecutionPolicy (and the alias -ep) and of -File; the regexes follow that.
+    Lab volume: 3 Sysmon 1 and 3 Security 4688 matches (the ransomware launcher and an AnyDesk install
+    script), out of 711 and 1080 events.'

@@ -371,7 +371,7 @@
     400
    ],
    "forhunt": [
-    "forhunt search <paths> --channel \"Windows PowerShell\" --event-id 400 --field Data[3]~EngineVersion=2. --format llm"
+    "forhunt search <paths> --channel \"Windows PowerShell\" --event-id 400 --field 'Data[3]~EngineVersion=2.' --format llm"
    ],
    "severity": "medium",
    "verified": true
@@ -388,7 +388,7 @@
    ],
    "forhunt": [
     "forhunt search <paths> --channel \"Windows PowerShell\" --event-id 600 --format llm",
-    "forhunt search <paths> --channel \"Windows PowerShell\" --event-id 600 --field Data[3]~HostApplication= --format llm"
+    "forhunt search <paths> --channel \"Windows PowerShell\" --event-id 600 --field 'Data[3]~HostApplication=' --format llm"
    ],
    "severity": "low",
    "verified": false
@@ -628,6 +628,25 @@
     "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --regex 'CommandLine=Sockets\\.TCPClient|\\bnc(at)?(\\.exe)?\\s.*\\s-e\\s' --format llm"
    ],
    "severity": "critical",
+   "verified": false
+  },
+  {
+   "id": "FH-EXE-021",
+   "title": "PowerShell running a script file with the execution policy bypassed (-ExecutionPolicy Bypass -File)",
+   "tactic": "execution",
+   "channels": [
+    "Microsoft-Windows-Sysmon/Operational",
+    "Security"
+   ],
+   "event_ids": [
+    1,
+    4688
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --regex 'CommandLine=\\s[-/](ep|ex[a-z]*)\\s+(bypass|unrestricted)\\b' --regex 'CommandLine=\\s[-/]f(i|il|ile)?\\s' --format llm",
+    "forhunt search <paths> --channel Security --event-id 4688 --regex 'CommandLine=\\s[-/](ep|ex[a-z]*)\\s+(bypass|unrestricted)\\b' --regex 'CommandLine=\\s[-/]f(i|il|ile)?\\s' --format llm"
+   ],
+   "severity": "medium",
    "verified": false
   },
   {
@@ -1886,8 +1905,8 @@
     "forhunt search <paths> --channel Security --event-id 4688 --field 'NewProcessName~\\ntdsutil.exe' --format llm",
     "forhunt search <paths> --channel Application --event-id 216,325,326,327 --field Provider=ESENT --format llm",
     "forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~ntds.dit --format llm",
-    "forhunt search <paths> --channel Application --event-id 325,326,327 --field Data[5]~ntds.dit --format llm",
-    "forhunt search <paths> --channel Application --event-id 216 --field Data[4]~ntds.dit --format llm"
+    "forhunt search <paths> --channel Application --event-id 325,326,327 --field 'Data[5]~ntds.dit' --format llm",
+    "forhunt search <paths> --channel Application --event-id 216 --field 'Data[4]~ntds.dit' --format llm"
    ],
    "severity": "critical",
    "verified": false
@@ -2433,16 +2452,22 @@
    "title": "PsExec clones and Impacket-style remote service install (random names, known clone names)",
    "tactic": "lateral-movement",
    "channels": [
-    "System"
+    "System",
+    "Security",
+    "Microsoft-Windows-Sysmon/Operational"
    ],
    "event_ids": [
     7045,
-    4697
+    4697,
+    4688,
+    1
    ],
    "forhunt": [
     "forhunt search <paths> --channel System --event-id 7045 --regex ImagePath='^%systemroot%\\\\[a-zA-Z]{8}\\.exe$' --format llm",
     "forhunt search <paths> --channel System --event-id 7045 --field ServiceName~PAExec --format llm",
-    "forhunt search <paths> --channel Security --event-id 4697 --regex ServiceFileName='^%systemroot%\\\\[a-zA-Z]{8}\\.exe$' --format llm"
+    "forhunt search <paths> --channel Security --event-id 4697 --regex ServiceFileName='^%systemroot%\\\\[a-zA-Z]{8}\\.exe$' --format llm",
+    "forhunt search <paths> --channel Security --event-id 4688 --regex 'NewProcessName=^C:\\\\Windows\\\\[a-zA-Z]{8}\\.exe$' --field 'ParentProcessName~\\services.exe' --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --regex 'Image=^C:\\\\Windows\\\\[a-zA-Z]{8}\\.exe$' --field 'ParentImage~\\services.exe' --format llm"
    ],
    "severity": "high",
    "verified": false

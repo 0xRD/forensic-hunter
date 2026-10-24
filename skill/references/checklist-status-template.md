@@ -51,6 +51,7 @@ Case: <name>  Evidence: <path>  Analyst: <name>  Started: <UTC time>
 | FH-EXE-018 | Msbuild, InstallUtil or csc launched by unusual parent or with remote content | Microsoft-Windows-Sysmon/Operational 1 |  |  |
 | FH-EXE-019 | AMSI DLL loaded into a LOLBin that does not normally scan content | Microsoft-Windows-Sysmon/Operational 7 |  |  |
 | FH-EXE-020 | Interactive reverse shell (TCP client stream read as a command loop) in PowerShell or a command line | Microsoft-Windows-PowerShell/Operational 4104,4688,1 |  |  |
+| FH-EXE-021 | PowerShell running a script file with the execution policy bypassed (-ExecutionPolicy Bypass -File) | Microsoft-Windows-Sysmon/Operational, Security 1,4688 |  |  |
 
 ## Persistence
 
@@ -181,7 +182,7 @@ Case: <name>  Evidence: <path>  Analyst: <name>  Started: <UTC time>
 | Id | Check | Source | Status | Evidence / reason |
 |---|---|---|---|---|
 | FH-LAT-001 | PsExec service installed on target (PSEXESVC) | System 7045 |  |  |
-| FH-LAT-002 | PsExec clones and Impacket-style remote service install (random names, known clone names) | System 7045,4697 |  |  |
+| FH-LAT-002 | PsExec clones and Impacket-style remote service install (random names, known clone names) | System, Security, Microsoft-Windows-Sysmon/Operational 7045,4697,4688,1 |  |  |
 | FH-LAT-003 | Named-pipe traffic of PsExec and clones over IPC$ (stdin/stdout/stderr pipes) | Security 5145 |  |  |
 | FH-LAT-004 | Remote service control over the svcctl pipe (sc.exe \\host, smbexec, PsExec) | Security 5145 |  |  |
 | FH-LAT-005 | Remote scheduled task creation over the atsvc pipe (atexec, schtasks /s) | Security 5145 |  |  |

@@ -66,14 +66,20 @@ checks:
   attack:
   - T1569.002
   - T1543.003
-  channel: System
+  channel:
+  - System
+  - Security
+  - Microsoft-Windows-Sysmon/Operational
   provider: Service Control Manager
   event_ids:
   - 7045
   - 4697
+  - 4688
+  - 1
   prerequisites:
   - System log retained (7045)
   - Audit Security System Extension (Success) for the Security 4697 variant
+  - '4688 / Sysmon 1 variant: process creation auditing or Sysmon event 1 (the service binary starting)'
   logic:
     selection_7045:
       EventID: 7045
@@ -94,11 +100,17 @@ checks:
   - forhunt search <paths> --channel System --event-id 7045 --field ServiceName~PAExec --format llm
   - forhunt search <paths> --channel Security --event-id 4697 --regex ServiceFileName='^%systemroot%\\[a-zA-Z]{8}\.exe$'
     --format llm
+  - forhunt search <paths> --channel Security --event-id 4688 --regex 'NewProcessName=^C:\\Windows\\[a-zA-Z]{8}\.exe$'
+    --field 'ParentProcessName~\services.exe' --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --regex 'Image=^C:\\Windows\\[a-zA-Z]{8}\.exe$'
+    --field 'ParentImage~\services.exe' --format llm
   pivots:
   - 'Same time window: 5145 on IPC$ with RelativeTargetName RemCom_stdin/RemCom_stdout/RemCom_stderr (Impacket
     psexec.py)'
   - 4624 LogonType 3 with LogonProcessName NtLmSsp from the same IpAddress
   - Dropped executable in %SystemRoot% (Sysmon 11 TargetFilename, MFT)
+  - 'The service binary starting: 4688 / Sysmon 1 of C:\Windows\<8 letters>.exe with services.exe as
+    parent (lab: 1 match each, the Metasploit psexec service, out of 1080 / 711 process creations)'
   false_positives:
   - Software installers that create 8-letter random service binaries are uncommon but possible; check
     the file hash and signer
