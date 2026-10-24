@@ -255,6 +255,17 @@ fn is_field_name(s: &str) -> bool {
         && c.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '[' | ']' | '-'))
 }
 
+/// `--computer` semantics (both sides lowercase): exact, short name of an
+/// FQDN, or (event logged under its short name) the first label of the
+/// wanted FQDN.
+pub fn computer_matches(want: &str, host: &str) -> bool {
+    host == want
+        || host.strip_prefix(want).is_some_and(|r| r.starts_with('.'))
+        || (!host.is_empty()
+            && !host.contains('.')
+            && want.split_once('.').is_some_and(|(short, _)| short == host))
+}
+
 /// A compiled filter. The default filter matches everything.
 #[derive(Debug, Clone, Default)]
 pub struct Filter {
@@ -361,6 +372,11 @@ impl Filter {
         &self.channels
     }
 
+    /// The computers this filter keeps, lowercased (empty: any).
+    pub fn computer_list(&self) -> &[String] {
+        &self.computers
+    }
+
     /// The event ids this filter keeps (`None`: any).
     pub fn event_id_list(&self) -> Option<&[u32]> {
         self.event_ids.as_deref()
@@ -408,18 +424,7 @@ impl Filter {
         }
         if !self.computers.is_empty() {
             let host = ev.computer.to_lowercase();
-            // Exact, short name of an FQDN, or (event logged under its
-            // short name) the first label of the wanted FQDN.
-            let ok = self.computers.iter().any(|c| {
-                host == *c
-                    || host
-                        .strip_prefix(c.as_str())
-                        .is_some_and(|r| r.starts_with('.'))
-                    || (!host.is_empty()
-                        && !host.contains('.')
-                        && c.split_once('.').is_some_and(|(short, _)| short == host))
-            });
-            if !ok {
+            if !self.computers.iter().any(|c| computer_matches(c, &host)) {
                 return false;
             }
         }

@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use forhunt_core::filter::computer_matches;
 use forhunt_core::normalize::FieldMap;
 use forhunt_core::{EventView, Filter, Ts};
 use forhunt_output::json;
@@ -24,17 +25,6 @@ pub struct Facets {
     pub last: Option<Ts>,
 }
 
-fn pick(ev: &EventView<'_>, names: &[&'static str]) -> Option<(&'static str, String)> {
-    for n in names {
-        if let Some(v) = ev.field(n)
-            && !v.is_blank()
-        {
-            return Some((*n, v.as_str().to_string()));
-        }
-    }
-    None
-}
-
 impl Facets {
     pub fn add(&mut self, ev: &EventView<'_>) {
         self.n += 1;
@@ -49,9 +39,15 @@ impl Facets {
         let secs = ev.ts.secs();
         *self.day.entry(secs.div_euclid(86_400)).or_default() += 1;
         *self.hour.entry(secs.div_euclid(3600)).or_default() += 1;
+        // Every field is counted (not only the first of its group), so a
+        // count is exactly what `--field Name=value` returns.
         for names in [USER_FIELDS, IP_FIELDS, PROC_FIELDS] {
-            if let Some(k) = pick(ev, names) {
-                *self.vals.entry(k).or_default() += 1;
+            for n in names {
+                if let Some(v) = ev.field(n)
+                    && !v.is_blank()
+                {
+                    *self.vals.entry((*n, v.as_str().to_string())).or_default() += 1;
+                }
             }
         }
         self.first = Some(self.first.map_or(ev.ts, |f| f.min(ev.ts)));
@@ -228,8 +224,12 @@ fn quote(v: &str) -> String {
 fn suggestions(s: &SummaryInput<'_>) -> Vec<(String, u64)> {
     let f = s.facets;
     let mut out = Vec::new();
+    // Repeated --event-id / --channel / --computer values are ORed: adding
+    // one to a filter that already has some would not narrow it.
     let eids = top(f.eid.iter().map(|(k, v)| (k.clone(), *v)), 2);
     if f.eid.len() > 1
+        && s.filter.event_id_list().is_none()
+        && s.filter.channel_list().is_empty()
         && let Some(((ch, id), n)) = eids.first()
     {
         let alias = s.map.channel_alias(ch);
@@ -241,23 +241,39 @@ fn suggestions(s: &SummaryInput<'_>) -> Vec<(String, u64)> {
         out.push((narrow, *n));
     }
     if f.host.len() > 1
-        && let Some((h, n)) = top(f.host.iter().map(|(k, v)| (k.clone(), *v)), 1).first()
+        && s.filter.computer_list().is_empty()
+        && let Some((h, _)) = top(f.host.iter().map(|(k, v)| (k.clone(), *v)), 1).first()
     {
-        out.push((format!("--computer {}", quote(h)), *n));
+        // `--computer FQDN` also keeps events logged under the short name.
+        let want = h.to_lowercase();
+        let n = f
+            .host
+            .iter()
+            .filter(|(k, _)| computer_matches(&want, &k.to_lowercase()))
+            .map(|(_, v)| *v)
+            .sum();
+        out.push((format!("--computer {}", quote(h)), n));
     }
-    let span_days = f.day.len();
-    if span_days > 1 {
-        if let Some((d, n)) = top(f.day.iter().map(|(k, v)| (*k, *v)), 1).first() {
-            let a = Ts(d * 86_400 * 10_000_000);
-            let b = Ts((d + 1) * 86_400 * 10_000_000 - 1);
-            out.push((format!("--since {} --until {}", a.iso(), b.iso()), *n));
-        }
-    } else if f.hour.len() > 1
-        && let Some((h, n)) = top(f.hour.iter().map(|(k, v)| (*k, *v)), 1).first()
-    {
-        let a = Ts(h * 3600 * 10_000_000);
-        let b = Ts((h + 1) * 3600 * 10_000_000 - 1);
-        out.push((format!("--since {} --until {}", a.iso(), b.iso()), *n));
+    // --since / --until cannot be given twice: no time bucket once the
+    // filter has a window.
+    let timed = s.filter.since.is_some() || s.filter.until.is_some();
+    let bucket = if timed {
+        None
+    } else if f.day.len() > 1 {
+        top(f.day.iter().map(|(k, v)| (*k, *v)), 1)
+            .first()
+            .map(|(d, n)| (d * 86_400, 86_400, *n))
+    } else if f.hour.len() > 1 {
+        top(f.hour.iter().map(|(k, v)| (*k, *v)), 1)
+            .first()
+            .map(|(h, n)| (h * 3600, 3600, *n))
+    } else {
+        None
+    };
+    if let Some((start, len, n)) = bucket {
+        let a = Ts(start * 10_000_000);
+        let b = Ts((start + len) * 10_000_000 - 1);
+        out.push((format!("--since {} --until {}", a.iso(), b.iso()), n));
     }
     let vals = top(f.vals.iter().map(|(k, v)| (k.clone(), *v)), 3);
     for ((field, v), n) in vals {

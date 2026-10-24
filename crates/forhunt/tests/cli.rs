@@ -914,3 +914,78 @@ fn checklist_service_queries_do_not_rely_on_translated_text() {
         }
     }
 }
+
+/// Splits a `narrow` suggestion (`--field 'A!=b$'`) into arguments.
+fn split_flag(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quoted = false;
+    for c in s.chars() {
+        match c {
+            '\'' => quoted = !quoted,
+            ' ' if !quoted => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            _ => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+#[test]
+fn summary_counts_are_what_the_filters_return() {
+    // top_values and narrow counts must be exactly what the analyst gets
+    // by adding the filter: they decide what to look at next.
+    let count = |base: &[&str], extra: &[String]| {
+        let mut args = vec!["search", "-q", "-n", "0"];
+        args.extend_from_slice(base);
+        args.extend(extra.iter().map(String::as_str));
+        let v = lines(&ok(&args));
+        summary(&v)["matches"].as_u64().unwrap()
+    };
+    let sec = fx("Security.evtx");
+    let all = fx("");
+    for base in [
+        vec![sec.as_str(), "-e", "4688"],
+        vec![sec.as_str(), "-e", "4624"],
+        vec![all.as_str(), "-e", "4624,4688,1"],
+        vec![
+            sec.as_str(),
+            "-e",
+            "4624",
+            "--since",
+            "2024-03-11T08:30:00Z",
+        ],
+        vec![all.as_str(), "--computer", "WS-07"],
+    ] {
+        let mut args = vec!["search", "-q", "-n", "1"];
+        args.extend_from_slice(&base);
+        let v = lines(&ok(&args));
+        let s = summary(&v);
+        for tv in s["top_values"].as_array().unwrap() {
+            let (f, val, n) = (
+                tv[0].as_str().unwrap(),
+                tv[1].as_str().unwrap(),
+                tv[2].as_u64().unwrap(),
+            );
+            assert_eq!(
+                count(&base, &["-f".into(), format!("{f}={val}")]),
+                n,
+                "{base:?}: top value {f}={val}"
+            );
+        }
+        for nw in s["narrow"].as_array().unwrap() {
+            let add = nw["add"].as_str().unwrap();
+            assert_eq!(
+                count(&base, &split_flag(add)),
+                nw["matches"].as_u64().unwrap(),
+                "{base:?}: narrow {add}"
+            );
+        }
+    }
+}
