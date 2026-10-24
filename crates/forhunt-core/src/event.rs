@@ -106,7 +106,15 @@ impl<'a> EventView<'a> {
             "userid" | "user_sid" => &self.user_sid,
             "eventid" => return Some(Cow::Owned(self.event_id.to_string())),
             "level" => return Some(Cow::Owned(self.level.to_string())),
-            "eventrecordid" => return Some(Cow::Owned(self.id.record.to_string())),
+            // The System value (what Windows and Hayabusa show), not the
+            // record header id: they differ in exported logs.
+            "eventrecordid" => {
+                let n = match self.event_record_id {
+                    0 => self.id.record,
+                    n => n,
+                };
+                return Some(Cow::Owned(n.to_string()));
+            }
             _ => return None,
         };
         Some(Cow::Borrowed(sys.as_ref()))

@@ -502,6 +502,18 @@ mod tests {
     }
 
     #[test]
+    fn event_record_id_is_the_system_value() {
+        // Exported logs renumber record headers: the analyst sees (and
+        // Hayabusa reports) System/EventRecordID, not the header id.
+        let mut e = ev();
+        e.id.record = 1;
+        e.event_record_id = 3166;
+        let f = |s: &str| Filter::new().fields(vec![FieldCond::parse(s).unwrap()]);
+        assert!(f("EventRecordID=3166").matches(&e));
+        assert!(!f("EventRecordID=1").matches(&e));
+    }
+
+    #[test]
     fn ids() {
         assert_eq!(
             parse_event_ids(&["4624, 4625".into(), "1-3".into()]).unwrap(),
