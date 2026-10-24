@@ -19,12 +19,11 @@ use crate::{Writer, json};
 /// Appends a truncated, escaped string value.
 pub fn trunc_str(out: &mut Vec<u8>, s: &str, max: usize) {
     out.push(b'"');
-    if max > 0 && s.len() > max {
-        // Cut on a char boundary at or below `max` bytes.
-        let mut cut = max;
-        while !s.is_char_boundary(cut) {
-            cut -= 1;
-        }
+    // `max` counts characters; byte length is a cheap upper bound.
+    if max > 0
+        && s.len() > max
+        && let Some((cut, _)) = s.char_indices().nth(max)
+    {
         let rest = s[cut..].chars().count();
         json::raw(out, &s[..cut]);
         out.extend_from_slice("…[+".as_bytes());
@@ -143,8 +142,12 @@ mod tests {
     #[test]
     fn truncation_marker() {
         let mut o = Vec::new();
+        // The limit counts characters (as --help says), not UTF-8 bytes.
         trunc_str(&mut o, &"é".repeat(10), 5);
-        assert_eq!(String::from_utf8(o).unwrap(), "\"éé…[+8 chars]\"");
+        assert_eq!(String::from_utf8(o).unwrap(), "\"ééééé…[+5 chars]\"");
+        let mut o = Vec::new();
+        trunc_str(&mut o, &"é".repeat(5), 5);
+        assert_eq!(String::from_utf8(o).unwrap(), "\"ééééé\"");
         let mut o = Vec::new();
         trunc_str(&mut o, "short", 5);
         assert_eq!(o, b"\"short\"");
