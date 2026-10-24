@@ -1,6 +1,6 @@
 # Status
 
-Last update: 2026-10-24 (session 2)
+Last update: 2026-10-24 (session 2, v0.2.0)
 
 ## Done
 - Session 2 (2026-10-24, on a Mac): repository public; authors rewritten to
