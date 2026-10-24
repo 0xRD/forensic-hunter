@@ -119,7 +119,7 @@ pub struct FilterArgs {
     /// Event ids: `4624`, `4624,4625`, `4720-4738`. Repeatable.
     #[arg(long = "event-id", short = 'e', value_name = "IDS")]
     pub event_id: Vec<String>,
-    /// Channel name or alias (Security, Sysmon, PS, ...), `*` globs allowed. Repeatable.
+    /// Channel name or alias (Security, Sysmon, PS, ...), `*` globs allowed. Repeatable or comma-separated.
     #[arg(long, short = 'c', value_name = "NAME")]
     pub channel: Vec<String>,
     /// Only events at or after this time (ISO 8601; no offset = UTC).
@@ -135,7 +135,7 @@ pub struct FilterArgs {
     /// Case-insensitive regex on any value, or on one field with `Name=REGEX`. Repeatable, ANDed.
     #[arg(long, short = 'r', value_name = "[NAME=]REGEX")]
     pub regex: Vec<String>,
-    /// Computer name (exact, or the short name of an FQDN). Repeatable.
+    /// Computer name (exact, or the short name of an FQDN). Repeatable or comma-separated.
     #[arg(long, value_name = "HOST")]
     pub computer: Vec<String>,
 }
@@ -147,7 +147,7 @@ pub struct ParseArgs {
     pub paths: Vec<String>,
     #[arg(long, short = 'F', value_enum, default_value_t = OutFormat::Jsonl)]
     pub format: OutFormat,
-    /// Only events from this computer (exact, or the short name of an FQDN). Repeatable.
+    /// Only events from this computer (exact, or the short name of an FQDN). Repeatable or comma-separated.
     /// Other filters live in `search`.
     #[arg(long, value_name = "HOST")]
     pub computer: Vec<String>,

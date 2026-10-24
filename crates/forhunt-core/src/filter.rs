@@ -324,13 +324,18 @@ impl Filter {
         self
     }
 
+    /// Channel names, aliases or globs; each value may be a comma list.
     pub fn channels(mut self, c: Vec<String>) -> Self {
-        self.channels = c;
+        self.channels = split_list(c);
         self
     }
 
+    /// Host names; each value may be a comma list.
     pub fn computers(mut self, c: Vec<String>) -> Self {
-        self.computers = c.into_iter().map(|s| s.to_lowercase()).collect();
+        self.computers = split_list(c)
+            .into_iter()
+            .map(|s| s.to_lowercase())
+            .collect();
         self
     }
 
@@ -498,6 +503,17 @@ impl Filter {
         }
         out
     }
+}
+
+/// `a,b` and `c` -> `[a, b, c]`, trimmed, empty items dropped (channel and
+/// host names never hold a comma).
+fn split_list(v: Vec<String>) -> Vec<String> {
+    v.iter()
+        .flat_map(|s| s.split(','))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 /// Parses `4624,4625,4600-4700`.
@@ -709,6 +725,30 @@ mod tests {
         assert!(!f("PrivilegeList~SeSecurityPrivilege SeDebugPrivilege").matches(&e));
         // Single-line values keep exact spacing.
         assert!(!f("CommandLine~powershell  -enc").matches(&e));
+    }
+
+    #[test]
+    fn channel_and_computer_lists() {
+        // `-e 4624,4625` takes a list: `-c` and `--computer` do too, and
+        // stray spaces are not part of a name.
+        let e = ev();
+        assert!(
+            Filter::new()
+                .channels(vec!["Sysmon, Security".into()])
+                .matches(&e)
+        );
+        assert!(Filter::new().channels(vec![" Sec ".into()]).matches(&e));
+        assert!(
+            Filter::new()
+                .computers(vec!["WS01,DC01".into()])
+                .matches(&e)
+        );
+        assert!(Filter::new().computers(vec!["dc01 ".into()]).matches(&e));
+        assert!(
+            !Filter::new()
+                .channels(vec!["Sysmon,System".into()])
+                .matches(&e)
+        );
     }
 
     #[test]
