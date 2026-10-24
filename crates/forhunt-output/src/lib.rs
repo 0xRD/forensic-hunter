@@ -38,6 +38,8 @@ pub struct WriteOptions {
     pub max_value_len: usize,
     /// `llm`: keep every non-blank field instead of the mapped selection.
     pub all_fields: bool,
+    /// `llm`: only these fields in `d` (short or full names; empty: all).
+    pub only: Vec<String>,
 }
 
 impl Default for WriteOptions {
@@ -46,6 +48,7 @@ impl Default for WriteOptions {
             tz: None,
             max_value_len: 256,
             all_fields: false,
+            only: Vec::new(),
         }
     }
 }

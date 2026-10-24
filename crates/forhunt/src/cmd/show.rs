@@ -101,6 +101,7 @@ pub fn run(a: ShowArgs) -> anyhow::Result<()> {
             tz: ctx.tz.clone(),
             max_value_len: 0,
             all_fields: true,
+            only: Vec::new(),
         },
         &ctx.map,
     );

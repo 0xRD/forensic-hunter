@@ -3,7 +3,9 @@
 # [channels]  short channel aliases, used in compact output and accepted by --channel.
 # [fields]    short names for payload fields in the `llm` format.
 # [[event]]   per (channel, id): a title and the ordered list of fields kept in
-#             the `llm` format. Events without an entry keep all non-blank fields.
+#             the `llm` format, plus optional per-event short names
+#             (`rename = { Field = "short" }`). Events without an entry keep
+#             all non-blank fields.
 #
 # A custom map (same format) can be passed with --map; its entries extend and
 # override these.
@@ -294,6 +296,8 @@ channel = "Security"
 id = 4688
 title = "Process created"
 keep = ["SubjectUserName", "SubjectDomainName", "TargetUserName", "NewProcessName", "CommandLine", "ParentProcessName", "NewProcessId", "ProcessId", "TokenElevationType", "MandatoryLabel", "SubjectLogonId"]
+# In 4688, ProcessId is the creator: the parent of NewProcessId.
+rename = { ProcessId = "ppid" }
 
 [[event]]
 channel = "Security"

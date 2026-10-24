@@ -560,6 +560,68 @@ fn checklist_sweep() {
         "impact",
     ]);
     assert!(md.contains("## impact") && !md.contains("## execution"));
+    // --actionable lists only HIT? / REVIEW rows, but the summary counts all.
+    let act = ok(&[
+        "checklist",
+        "-q",
+        "-k",
+        &checks,
+        &fx("Security.evtx"),
+        "--actionable",
+    ]);
+    let rows_md: Vec<&str> = act.lines().filter(|l| l.starts_with("| FH-")).collect();
+    assert!(!rows_md.is_empty() && act.contains("## Summary"));
+    assert!(
+        rows_md
+            .iter()
+            .all(|l| l.contains("| HIT? |") || l.contains("| REVIEW |"))
+    );
+    // Queries report their own coverage.
+    let q = &rows.iter().find(|r| r["id"] == "FH-DEF-001").unwrap()["queries"][0];
+    assert!(q["source_events"].as_u64().unwrap() > 0);
+}
+
+#[test]
+fn llm_fields_projection_and_unique_keys() {
+    let out = ok(&[
+        "search",
+        "-q",
+        &fx("Security.evtx"),
+        "-e",
+        "4688",
+        "--limit",
+        "3",
+    ]);
+    for line in out.lines().filter(|l| l.starts_with("{\"id\"")) {
+        let v: Value = serde_json::from_str(line).unwrap();
+        let d = v["d"].as_object().unwrap();
+        // 4688: the creator ProcessId is the parent (no repeated "pid").
+        assert_eq!(
+            line.matches("\"pid\":").count(),
+            d.contains_key("pid") as usize
+        );
+    }
+    let out = ok(&[
+        "search",
+        "-q",
+        &fx("Security.evtx"),
+        "-e",
+        "4688",
+        "--limit",
+        "3",
+        "--fields",
+        "img,cmd",
+    ]);
+    for line in out.lines().filter(|l| l.starts_with("{\"id\"")) {
+        let v: Value = serde_json::from_str(line).unwrap();
+        assert!(
+            v["d"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .all(|k| k == "img" || k == "cmd")
+        );
+    }
 }
 
 #[test]

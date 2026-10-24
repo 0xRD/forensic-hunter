@@ -51,6 +51,9 @@ cp -a <collection>/. "$CASE/evidence/" && chmod -R a-w "$CASE/evidence"
 (cd "$CASE/evidence" && find . -type f -exec sha256sum {} + | sort -k2) > "$CASE/work/hashes-before.txt"
 ```
 On macOS use `shasum -a 256`; on Windows `Get-FileHash -Algorithm SHA256`.
+The evidence copy is read-only: to delete the case later, `chmod -R u+w "$CASE"` first.
+Group and account names may be localised (French `Administrateurs`, `AUTORITE NT\Système`):
+match groups and well-known accounts by SID (`S-1-5-32-544`, `-512`), not by name.
 Record collection source, hostnames and the time of acquisition.
 Collections from several endpoints go under one `evidence/` tree (e.g. one
 folder per host); every forhunt command takes the whole tree, merges all hosts
@@ -98,11 +101,20 @@ Pre-fill the status file with one pass over the evidence:
 ```bash
 forhunt checklist "$CASE/evidence" -k references/checklists/checklists.json -o "$CASE/work/checklist-status.md"
 ```
-It marks `LOG_SOURCE_MISSING` where no event of the check's channel and ids
-exists, runs every `forhunt search` query of every check, and writes `HIT?`
-(with match counts and sample event ids) or `NO_HIT`. It does not decide:
-you review every row. (Without the sweep, copy
-`references/checklist-status-template.md` and fill it by hand.)
+It runs every `forhunt search` query of every check, each with its own
+channel and event ids, and writes `HIT?` (with match counts and sample event
+ids) or `NO_HIT`. A query whose source events are absent, or lack the field
+it tests (4688 without `CommandLine`), is marked *not covered*; a check with
+nothing covered is `LOG_SOURCE_MISSING`. It does not decide: you review every
+row. (Without the sweep, copy `references/checklist-status-template.md` and
+fill it by hand.)
+
+The status file is large (about 80 KB for 270 checks). Work from the rows
+that need you, then read the full file only to fill the coverage table:
+```bash
+forhunt checklist "$CASE/evidence" -k references/checklists/checklists.json --actionable -q   # HIT? / REVIEW rows + summary
+```
+`NO_HIT` rows that say *not covered* are blind spots: name them in the report.
 
 Then, tactic by tactic (order in `references/checklists/INDEX.md`), for every
 check in `references/checklists/<tactic>.yaml`:
@@ -130,7 +142,14 @@ forhunt search E -f TargetLogonId=0x8a3f21 -n 50                            # on
 forhunt search E -r 'IpAddress=^203\.0\.113\.'                              # one subnet
 forhunt search E -c sysmon -e 1 -f ParentImage~\\powershell.exe             # children of a process
 forhunt timeline E --since 2024-03-11T10:05:00Z --until 2024-03-11T10:35:00Z --computer WS-07
+# What each user ran, per host (rebuilds most intrusions; drop noise with !~):
+forhunt search E -c sysmon -e 1 --computer WS-07 -f User~bob --fields t,user,img,cmd,pimg -f Image!~\\MsMpEng.exe
+forhunt search E -e 4688 --computer WS-07 -f SubjectUserName=bob --fields img,cmd,pimg,ppid
+# PowerShell as typed: first block of each script only (MessageNumber>1 are continuations of long modules)
+forhunt search E -c ps -e 4104 --computer WS-07 -f MessageNumber=1 --since <start> --until <end>
 ```
+`--fields` keeps only the named fields of `d` (short or full names) and
+`-f Name!~text` drops matches: use both to keep outputs small.
 
 ## 5. Timeline of suspicious windows (step e)
 
@@ -152,9 +171,10 @@ coverage table (counts per status per tactic, from checklist-status.md), gaps
 and blind spots, recommendations.
 
 On request, add an attack path diagram: Mermaid graph of hosts, accounts and
-processes with edges labelled technique, time and event id, dashed edges for
-inferred steps; optionally a self-contained HTML file
-(`references/attack-path.md`).
+processes with edges labelled `(timeline row)`, technique, time and event id,
+dashed edges for inferred steps; never start a label with `1.` or `-`
+(Mermaid renders it as an unsupported Markdown list). Optionally a
+self-contained HTML file (`references/attack-path.md`).
 
 ## References
 

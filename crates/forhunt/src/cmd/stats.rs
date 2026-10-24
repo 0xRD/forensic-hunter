@@ -271,6 +271,7 @@ pub fn run(a: StatsArgs) -> anyhow::Result<()> {
         },
     );
     progress.clear();
+    common::merge_host_aliases(&mut agg.hosts);
 
     // Per-file derived values.
     let gap_min = a.gap_minutes.max(1);
@@ -523,11 +524,17 @@ fn write_llm(
         out.extend_from_slice(b"}}\n");
     }
 
+    // Log clears and service stops one by one; audit policy changes (4719,
+    // routine in bursts at every policy refresh) one line per account.
     out.extend_from_slice(b"{\"log_tampering\":[");
-    for (i, e) in agg.log_events.iter().take(50).enumerate() {
-        if i > 0 {
+    let (policy, singles): (Vec<&LogEvent>, Vec<&LogEvent>) =
+        agg.log_events.iter().partition(|e| e.eid == 4719);
+    let mut first = true;
+    for e in singles.iter().take(50) {
+        if !first {
             out.push(b',');
         }
+        first = false;
         out.extend_from_slice(b"{\"id\":");
         json::str(out, &e.id);
         out.extend_from_slice(b",\"t\":");
@@ -542,10 +549,39 @@ fn write_llm(
         }
         out.push(b'}');
     }
+    let mut by_user: Vec<(&str, Vec<&LogEvent>)> = Vec::new();
+    for e in &policy {
+        match by_user.iter_mut().find(|(u, _)| *u == e.user) {
+            Some((_, v)) => v.push(e),
+            None => by_user.push((&e.user, vec![e])),
+        }
+    }
+    for (user, evs) in &by_user {
+        if !first {
+            out.push(b',');
+        }
+        first = false;
+        let (f, l) = (evs[0], evs[evs.len() - 1]);
+        out.extend_from_slice(b"{\"id\":");
+        json::str(out, &f.id);
+        out.extend_from_slice(b",\"t\":");
+        json::str(out, &f.t);
+        out.extend_from_slice(b",\"last\":");
+        json::str(out, &l.t);
+        out.extend_from_slice(b",\"ch\":");
+        json::str(out, ctx.map.channel_alias(&f.ch));
+        out.extend_from_slice(b",\"eid\":4719,\"n\":");
+        json::u64(out, evs.len() as u64);
+        if !user.is_empty() {
+            out.extend_from_slice(b",\"user\":");
+            json::str(out, user);
+        }
+        out.push(b'}');
+    }
     out.extend_from_slice(b"]");
-    if agg.log_events.len() > 50 {
+    if singles.len() > 50 {
         out.extend_from_slice(b",\"more\":");
-        json::u64(out, agg.log_events.len() as u64 - 50);
+        json::u64(out, singles.len() as u64 - 50);
     }
     out.extend_from_slice(b"}\n");
 

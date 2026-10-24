@@ -166,6 +166,7 @@ impl Ctx {
                 tz: self.tz.clone(),
                 max_value_len: out.max_value_len,
                 all_fields: out.all_fields,
+                only: out.fields.clone(),
             },
             &self.map,
         )
@@ -355,4 +356,65 @@ impl Progress {
 pub fn unit_bytes(src: &dyn Source) -> u64 {
     let u = src.units().max(1) as u64;
     src.byte_len() / u
+}
+
+/// Folds host-name variants into one entry: a short name (`AD01`) goes into
+/// the single FQDN that extends it (`AD01.corp.local`), and names differing
+/// only in case are merged. Windows writes both forms (Application events
+/// often carry the NetBIOS name), and they are one machine.
+pub fn merge_host_aliases(hosts: &mut std::collections::HashMap<String, u64>) {
+    let mut names: Vec<String> = hosts.keys().cloned().collect();
+    names.sort_by_key(|n| std::cmp::Reverse(n.len()));
+    for short in names.clone() {
+        let lower = short.to_lowercase();
+        let target = names.iter().filter(|n| **n != short).find(|n| {
+            let l = n.to_lowercase();
+            l == lower && **n > short
+                || (!lower.contains('.')
+                    && l.strip_prefix(&lower).is_some_and(|r| r.starts_with('.'))
+                    && names
+                        .iter()
+                        .filter(|m| {
+                            m.to_lowercase()
+                                .strip_prefix(&lower)
+                                .is_some_and(|r| r.starts_with('.'))
+                        })
+                        .count()
+                        == 1)
+        });
+        if let Some(t) = target.cloned()
+            && let Some(n) = hosts.remove(&short)
+        {
+            *hosts.entry(t).or_default() += n;
+        }
+    }
+}
+
+#[cfg(test)]
+mod host_tests {
+    use super::merge_host_aliases;
+
+    #[test]
+    fn folds_short_names_into_fqdn() {
+        let mut h: std::collections::HashMap<String, u64> = [
+            ("AD01.corp.local".to_string(), 10),
+            ("AD01".to_string(), 1),
+            ("PC01.corp.local".to_string(), 5),
+            ("WS9".to_string(), 2),
+        ]
+        .into();
+        merge_host_aliases(&mut h);
+        assert_eq!(h.len(), 3);
+        assert_eq!(h["AD01.corp.local"], 11);
+        assert_eq!(h["WS9"], 2);
+        // Ambiguous short name (two domains): left alone.
+        let mut h: std::collections::HashMap<String, u64> = [
+            ("DC.a.local".to_string(), 1),
+            ("DC.b.local".to_string(), 1),
+            ("DC".to_string(), 1),
+        ]
+        .into();
+        merge_host_aliases(&mut h);
+        assert_eq!(h.len(), 3);
+    }
 }

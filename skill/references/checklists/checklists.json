@@ -405,7 +405,8 @@
    ],
    "forhunt": [
     "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~DownloadString --format llm",
-    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~Net.WebClient --format llm"
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~Net.WebClient --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --regex 'ScriptBlockText=(Invoke-WebRequest|iwr|Invoke-RestMethod|irm|Start-BitsTransfer|curl(\\.exe)?|wget)\\s[^\\n]*https?://' --field MessageNumber=1 --format llm"
    ],
    "severity": "medium",
    "verified": false
@@ -608,6 +609,26 @@
    ],
    "severity": "medium",
    "verified": true
+  },
+  {
+   "id": "FH-EXE-020",
+   "title": "Interactive reverse shell (TCP client stream read as a command loop) in PowerShell or a command line",
+   "tactic": "execution",
+   "channels": [
+    "Microsoft-Windows-PowerShell/Operational"
+   ],
+   "event_ids": [
+    4104,
+    4688,
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --regex 'ScriptBlockText=Sockets\\.TCPClient[\\s\\S]*GetStream' --format llm",
+    "forhunt search <paths> --channel Security --event-id 4688 --regex 'CommandLine=Sockets\\.TCPClient|\\bnc(at)?(\\.exe)?\\s.*\\s-e\\s' --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --regex 'CommandLine=Sockets\\.TCPClient|\\bnc(at)?(\\.exe)?\\s.*\\s-e\\s' --format llm"
+   ],
+   "severity": "critical",
+   "verified": false
   },
   {
    "id": "FH-PER-001",
@@ -1081,7 +1102,7 @@
    ],
    "forhunt": [
     "forhunt search <paths> --channel Security --event-id 4732 --field TargetSid=S-1-5-32-544 --format llm",
-    "forhunt search <paths> --channel Security --event-id 4732 --field TargetUserName=Administrators --format llm"
+    "forhunt search <paths> --channel Security --event-id 4732 --regex 'TargetSid=^S-1-5-32-(544|548|549|551)$' --format llm"
    ],
    "severity": "high",
    "verified": true
@@ -1100,8 +1121,7 @@
    ],
    "forhunt": [
     "forhunt search <paths> --channel Security --event-id 4728,4756 --format llm",
-    "forhunt search <paths> --channel Security --event-id 4728 --field TargetUserName=\"Domain Admins\" --format llm",
-    "forhunt search <paths> --channel Security --event-id 4756 --field TargetUserName=\"Enterprise Admins\" --format llm"
+    "forhunt search <paths> --channel Security --event-id 4728,4756 --regex 'TargetSid=-(512|518|519)$' --format llm"
    ],
    "severity": "high",
    "verified": false
@@ -1775,19 +1795,21 @@
   },
   {
    "id": "FH-CRED-004",
-   "title": "LSASS dumping tool command lines: procdump, comsvcs MiniDump, rundll32 (4688 / Sysmon 1)",
+   "title": "LSASS dumping tool command lines: procdump, comsvcs MiniDump, rundll32 (4688 / Sysmon 1) and LSASS dump files (Sysmon 11)",
    "tactic": "credential-access",
    "channels": [
     "Security"
    ],
    "event_ids": [
     4688,
-    1
+    1,
+    11
    ],
    "forhunt": [
     "forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~lsass --format llm",
     "forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~comsvcs --format llm",
-    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~MiniDump --format llm"
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field CommandLine~MiniDump --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 11 --regex 'TargetFilename=lsass[^\\\\]*\\.dmp$' --format llm"
    ],
    "severity": "high",
    "verified": false
@@ -2044,7 +2066,8 @@
     4104
    ],
    "forhunt": [
-    "forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~sekurlsa --format llm",
+    "forhunt search <paths> --channel Security --event-id 4688 --regex 'CommandLine=mimikatz|sekurlsa::|lsadump::|privilege::debug|dpapi::' --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --regex 'CommandLine=mimikatz|sekurlsa::|lsadump::|privilege::debug|dpapi::' --format llm",
     "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field ScriptBlockText~Invoke-Mimikatz --format llm",
     "forhunt search <paths> --channel System --event-id 7045 --field ImagePath~mimidrv --format llm"
    ],
@@ -3497,7 +3520,7 @@
     4757
    ],
    "forhunt": [
-    "forhunt search <paths> --channel Security --event-id 4728,4732,4756 --field TargetUserName=\"Domain Admins\" --format llm",
+    "forhunt search <paths> --channel Security --event-id 4728,4732,4756 --regex 'TargetSid=-512$' --format llm",
     "forhunt search <paths> --channel Security --event-id 4728,4732,4756 --field TargetUserName=DnsAdmins --format llm",
     "forhunt search <paths> --channel Security --event-id 4729,4733,4757 --format llm"
    ],
@@ -3968,6 +3991,23 @@
     "forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --field Image~robocopy --format llm"
    ],
    "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-COLL-018",
+   "title": "Exfiltration with PowerShell web cmdlets (HTTP POST / PUT or file upload) (4104)",
+   "tactic": "collection-exfiltration",
+   "channels": [
+    "Microsoft-Windows-PowerShell/Operational"
+   ],
+   "event_ids": [
+    4104
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --regex 'ScriptBlockText=-Method\\s+(Post|Put)\\b' --field MessageNumber=1 --format llm",
+    "forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --regex 'ScriptBlockText=\\.Upload(File|Data)\\(|\\s-InFile\\s' --field MessageNumber=1 --format llm"
+   ],
+   "severity": "high",
    "verified": false
   },
   {

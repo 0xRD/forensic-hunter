@@ -338,6 +338,7 @@ pub fn run(a: TimelineArgs) -> anyhow::Result<()> {
     let _ = common::write_out(&mut *out, writer.header())?;
     let shown = collector.finish(&mut *out)?;
     if llm {
+        common::merge_host_aliases(&mut facets.host);
         let mut line = Vec::new();
         write_summary(
             &SummaryInput {

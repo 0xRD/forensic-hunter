@@ -1167,8 +1167,8 @@ checks:
       SubjectUserName|endswith: $
     condition: selection and not filter_machine_actor
   forhunt:
-  - forhunt search <paths> --channel Security --event-id 4728,4732,4756 --field TargetUserName="Domain
-    Admins" --format llm
+  - forhunt search <paths> --channel Security --event-id 4728,4732,4756 --regex 'TargetSid=-512$'
+    --format llm
   - forhunt search <paths> --channel Security --event-id 4728,4732,4756 --field TargetUserName=DnsAdmins
     --format llm
   - forhunt search <paths> --channel Security --event-id 4729,4733,4757 --format llm

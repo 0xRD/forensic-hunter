@@ -50,6 +50,7 @@ Case: <name>  Evidence: <path>  Analyst: <name>  Started: <UTC time>
 | FH-EXE-017 | Wscript/cscript running scripts with non-script extensions or spawning shells | Microsoft-Windows-Sysmon/Operational 1 |  |  |
 | FH-EXE-018 | Msbuild, InstallUtil or csc launched by unusual parent or with remote content | Microsoft-Windows-Sysmon/Operational 1 |  |  |
 | FH-EXE-019 | AMSI DLL loaded into a LOLBin that does not normally scan content | Microsoft-Windows-Sysmon/Operational 7 |  |  |
+| FH-EXE-020 | Interactive reverse shell (TCP client stream read as a command loop) in PowerShell or a command line | Microsoft-Windows-PowerShell/Operational 4104,4688,1 |  |  |
 
 ## Persistence
 
@@ -134,7 +135,7 @@ Case: <name>  Evidence: <path>  Analyst: <name>  Started: <UTC time>
 | FH-CRED-001 | LSASS memory access with dump-capable access mask and debug-library call trace (Sysmon 10) | Microsoft-Windows-Sysmon/Operational 10 |  |  |
 | FH-CRED-002 | LSASS read-access masks 0x1010 / 0x1410 / 0x1400 from non-system, non-security processes (Sysmon 10) | Microsoft-Windows-Sysmon/Operational 10 |  |  |
 | FH-CRED-003 | comsvcs.dll MiniDump via rundll32 against LSASS (Sysmon 10 call trace) | Microsoft-Windows-Sysmon/Operational 10 |  |  |
-| FH-CRED-004 | LSASS dumping tool command lines: procdump, comsvcs MiniDump, rundll32 (4688 / Sysmon 1) | Security 4688,1 |  |  |
+| FH-CRED-004 | LSASS dumping tool command lines: procdump, comsvcs MiniDump, rundll32 (4688 / Sysmon 1) and LSASS dump files (Sysmon 11) | Security 4688,1,11 |  |  |
 | FH-CRED-005 | Handle request to lsass.exe with suspicious access mask (Security 4656 / 4663) | Security 4656,4663 |  |  |
 | FH-CRED-006 | Defender ASR blocked credential stealing from LSASS (1121) | Microsoft-Windows-Windows Defender/Operational 1121 |  |  |
 | FH-CRED-007 | Registry hive dumping: reg save/export of SAM, SECURITY, SYSTEM (4688 / Sysmon 1) | Security 4688,1 |  |  |
@@ -283,6 +284,7 @@ Case: <name>  Evidence: <path>  Analyst: <name>  Started: <UTC time>
 | FH-COLL-015 | File copy to removable media (Security 4663 with Removable Storage auditing) | Security 4663 |  |  |
 | FH-COLL-016 | Printing as exfil (PrintService/Operational 307) | Microsoft-Windows-PrintService/Operational 307 |  |  |
 | FH-COLL-017 | Bulk copy of files by robocopy / xcopy to staging or network location | Microsoft-Windows-Sysmon/Operational 1 |  |  |
+| FH-COLL-018 | Exfiltration with PowerShell web cmdlets (HTTP POST / PUT or file upload) (4104) | Microsoft-Windows-PowerShell/Operational 4104 |  |  |
 
 ## Impact
 

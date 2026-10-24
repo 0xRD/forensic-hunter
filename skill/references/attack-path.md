@@ -12,7 +12,7 @@ self-contained HTML file embedding it.
 - Edges: `-->` observed, `-.->` inferred. Label: technique id, UTC time
   (HH:MM:SS, add date if multi-day), event id (`<key>:<rid>`).
 - Order edges chronologically. Start each label with the matching timeline
-  row number in brackets, `(6)` or `(19-20)`; inferred edges with no row have
+  row number in parentheses, `(6)` or `(19-20)`; inferred edges with no row have
   none. Never start a label with `1.`, `1)`, `-`, `*`, `+` or `#`: Mermaid 11
   reads labels as Markdown and draws a list as "Unsupported markdown: list".
 - Keep under ~25 nodes; group noise.

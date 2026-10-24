@@ -13,7 +13,7 @@ read-only, positional reads).
 | `show <id>... -p <paths>` | one event in full (`-F json|xml|llm`; `xml`/`raw` is the native record: EVTX XML, hex dump for NTFS) | `json` |
 | `parse` | every event (machine use only) | `jsonl` |
 | `hayabusa <file>` | normalise Hayabusa JSON/JSONL output, attach forhunt ids (`-p <evtx dir>`); `-g` groups per rule and host | `llm`, cap 200 |
-| `checklist <paths> -k checklists.json` | one-pass sweep of every detection check: log source coverage, query hits, pre-filled status file (`-F md|json`, `--tactic`) | markdown |
+| `checklist <paths> -k checklists.json` | one-pass sweep of every detection check: log source coverage, query hits, pre-filled status file (`-F md|json`, `--tactic`, `--actionable` for HIT?/REVIEW rows only); per query: source events, covered events (tested fields present), matches | markdown |
 
 ## Filters (search, timeline, stats)
 
@@ -25,6 +25,7 @@ read-only, positional reads).
 | `-f, --field Name=value` | case-insensitive equality; numeric when hex (`0x17` = `0x00000017`) |
 | `-f Name!=value` | not equal (also true when the field is absent) |
 | `-f Name~text` | case-insensitive substring |
+| `-f Name!~text` | does not contain (also true when the field is absent); repeat to drop noise, e.g. `-f Image!~\\MsMpEng.exe` |
 | `-r, --regex [Name=]REGEX` | case-insensitive regex on one field, or on every value |
 | `--computer HOST` | exact host, or short name of an FQDN |
 
@@ -35,7 +36,8 @@ names are those Windows writes in EventData/UserData (`TargetUserName`,
 `Data[1]`, `Data[2]`...
 
 Other options: `-n, --limit N` (0 = no cap), `-F, --format llm|jsonl|csv`,
-`--max-value-len N` (default 256), `--all-fields`, `--tz Europe/Paris`
+`--max-value-len N` (default 256), `--all-fields`, `--fields a,b,c` (`llm`:
+keep only these keys of `d`, short or full names), `--tz Europe/Paris`
 (display only), `-t, --threads N`, `--strict`, `--checksums`, `-q`.
 `parse` takes `--computer HOST` too (no other filters).
 
@@ -144,3 +146,7 @@ matches each would keep.
 0 ok (including zero matches), 1 error, 2 usage, 3 no readable input,
 4 corrupt input with `--strict`. Corrupt chunks and records are otherwise
 counted (`bad_chunks`, `bad_records`) and parsing continues.
+
+PowerShell 4104: long scripts are split into numbered blocks
+(`MessageNumber` of `MessageTotal`); `-f MessageNumber=1` keeps the first
+block of each, which is enough to see what ran and keeps module code out.

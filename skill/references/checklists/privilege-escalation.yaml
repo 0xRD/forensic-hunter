@@ -201,8 +201,8 @@ checks:
   forhunt:
   - forhunt search <paths> --channel Security --event-id 4732 --field TargetSid=S-1-5-32-544 --format
     llm
-  - forhunt search <paths> --channel Security --event-id 4732 --field TargetUserName=Administrators --format
-    llm
+  - forhunt search <paths> --channel Security --event-id 4732 --regex 'TargetSid=^S-1-5-32-(544|548|549|551)$'
+    --format llm
   pivots:
   - MemberSid (the added principal; the name is often not rendered, resolve the SID) -> 4720 account creation
     or 4624 first logon
@@ -261,9 +261,7 @@ checks:
     condition: selection and not filter_machine_accounts
   forhunt:
   - forhunt search <paths> --channel Security --event-id 4728,4756 --format llm
-  - forhunt search <paths> --channel Security --event-id 4728 --field TargetUserName="Domain Admins" --format
-    llm
-  - forhunt search <paths> --channel Security --event-id 4756 --field TargetUserName="Enterprise Admins"
+  - forhunt search <paths> --channel Security --event-id 4728,4756 --regex 'TargetSid=-(512|518|519)$'
     --format llm
   pivots:
   - MemberName / MemberSid -> 4720 (new account) or 4738 (account change) shortly before

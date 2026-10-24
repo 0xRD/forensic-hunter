@@ -36,9 +36,31 @@ pub fn trunc_str(out: &mut Vec<u8>, s: &str, max: usize) {
     out.push(b'"');
 }
 
+/// Runs of whitespace that hold a line break or a tab become one space:
+/// multi-line values (4672 privileges, script blocks) stay on one short line.
+fn collapse(s: &str) -> std::borrow::Cow<'_, str> {
+    if !s.contains(['\r', '\n', '\t']) {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut ws = false;
+    for c in s.chars() {
+        if c.is_whitespace() {
+            ws = true;
+        } else {
+            if ws && !out.is_empty() {
+                out.push(' ');
+            }
+            ws = false;
+            out.push(c);
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 fn value(out: &mut Vec<u8>, v: &Val<'_>, max: usize) {
     match v {
-        Val::Str(s) => trunc_str(out, s, max),
+        Val::Str(s) => trunc_str(out, &collapse(s), max),
         other => crate::jsonl::value(out, other),
     }
 }
@@ -62,12 +84,34 @@ pub fn write(w: &Writer<'_>, ev: &EventView<'_>, out: &mut Vec<u8>) {
     }
     out.extend_from_slice(b",\"d\":{");
     let mut first = true;
+    let mut used: Vec<String> = Vec::new();
     let mut emit = |out: &mut Vec<u8>, name: &str, v: &Val<'_>| {
+        let short = spec
+            .and_then(|s| s.rename.get(name))
+            .map(String::as_str)
+            .unwrap_or_else(|| w.map.short_field(name));
+        // Two fields with one short name: the second keeps its full name
+        // (a JSON object must not repeat a key).
+        let key = if used.iter().any(|u| u == short) {
+            name
+        } else {
+            short
+        };
+        if !w.opts.only.is_empty()
+            && !w
+                .opts
+                .only
+                .iter()
+                .any(|o| o.eq_ignore_ascii_case(key) || o.eq_ignore_ascii_case(name))
+        {
+            return;
+        }
         if !first {
             out.push(b',');
         }
         first = false;
-        json::str(out, w.map.short_field(name));
+        used.push(key.to_string());
+        json::str(out, key);
         out.push(b':');
         value(out, v, max);
     };
@@ -102,5 +146,14 @@ mod tests {
         let mut o = Vec::new();
         trunc_str(&mut o, "short", 5);
         assert_eq!(o, b"\"short\"");
+    }
+
+    #[test]
+    fn collapses_multiline_values() {
+        assert_eq!(
+            collapse("SeSecurityPrivilege\r\n\t\t\tSeBackupPrivilege"),
+            "SeSecurityPrivilege SeBackupPrivilege"
+        );
+        assert_eq!(collapse("a  b"), "a  b");
     }
 }

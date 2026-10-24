@@ -15,6 +15,9 @@ pub enum FieldOp {
     Ne(String),
     /// Case-insensitive substring (needle stored lowercased).
     Contains(String),
+    /// `Name!~text`: no case-insensitive substring (also true when the
+    /// field is absent).
+    NotContains(String),
 }
 
 #[derive(Debug, Clone)]
@@ -27,21 +30,27 @@ impl FieldCond {
     /// Parses `Name=value`, `Name!=value` or `Name~substring`.
     pub fn parse(s: &str) -> anyhow::Result<FieldCond> {
         let idx = s.find(['=', '~', '!']).ok_or_else(|| {
-            anyhow::anyhow!("--field `{s}`: expected Name=value, Name!=value or Name~substring")
+            anyhow::anyhow!(
+                "--field `{s}`: expected Name=value, Name!=value, Name~substring or Name!~substring"
+            )
         })?;
         let (name, rest) = s.split_at(idx);
         let name = name.trim();
         if name.is_empty() {
             anyhow::bail!("--field `{s}`: empty field name");
         }
-        let op = if let Some(v) = rest.strip_prefix("!=") {
+        let op = if let Some(v) = rest.strip_prefix("!~") {
+            FieldOp::NotContains(v.to_lowercase())
+        } else if let Some(v) = rest.strip_prefix("!=") {
             FieldOp::Ne(v.to_string())
         } else if let Some(v) = rest.strip_prefix('=') {
             FieldOp::Eq(v.to_string())
         } else if let Some(v) = rest.strip_prefix('~') {
             FieldOp::Contains(v.to_lowercase())
         } else {
-            anyhow::bail!("--field `{s}`: expected Name=value, Name!=value or Name~substring");
+            anyhow::bail!(
+                "--field `{s}`: expected Name=value, Name!=value, Name~substring or Name!~substring"
+            );
         };
         Ok(FieldCond {
             name: name.to_string(),
@@ -58,6 +67,8 @@ impl FieldCond {
             (FieldOp::Ne(_), None) => true,
             (FieldOp::Contains(n), Some(v)) => contains_ci(&v, n),
             (FieldOp::Contains(_), None) => false,
+            (FieldOp::NotContains(n), Some(v)) => !contains_ci(&v, n),
+            (FieldOp::NotContains(_), None) => true,
         }
     }
 }
@@ -275,6 +286,38 @@ impl Filter {
 
     #[inline]
     pub fn matches(&self, ev: &EventView<'_>) -> bool {
+        self.matches_source(ev)
+            && self.fields.iter().all(|f| f.matches(ev))
+            && self.regexes.iter().all(|r| r.matches(ev))
+    }
+
+    /// The channels this filter keeps (empty: any).
+    pub fn channel_list(&self) -> &[String] {
+        &self.channels
+    }
+
+    /// The event ids this filter keeps (`None`: any).
+    pub fn event_id_list(&self) -> Option<&[u32]> {
+        self.event_ids.as_deref()
+    }
+
+    /// True if every field a positive condition reads (`Name=value`,
+    /// `Name~text`, `Name=regex`) exists in `ev`. Otherwise the event cannot
+    /// tell a match from a miss (e.g. 4688 without command-line auditing).
+    pub fn fields_present(&self, ev: &EventView<'_>) -> bool {
+        self.fields.iter().all(|f| match &f.op {
+            FieldOp::Eq(v) if v.is_empty() => true,
+            FieldOp::Eq(_) | FieldOp::Contains(_) => ev.get_ci(&f.name).is_some(),
+            FieldOp::Ne(_) | FieldOp::NotContains(_) => true,
+        }) && self
+            .regexes
+            .iter()
+            .all(|r| r.field.as_ref().is_none_or(|n| ev.get_ci(n).is_some()))
+    }
+
+    /// True if `ev` is in this filter's log source: its event ids, channels,
+    /// computers and time window; field and regex conditions are ignored.
+    pub fn matches_source(&self, ev: &EventView<'_>) -> bool {
         if let Some(ids) = &self.event_ids
             && ids.binary_search(&ev.event_id).is_err()
         {
@@ -310,7 +353,7 @@ impl Filter {
                 return false;
             }
         }
-        self.fields.iter().all(|f| f.matches(ev)) && self.regexes.iter().all(|r| r.matches(ev))
+        true
     }
 
     /// Renders the active filter as CLI flags (for summaries and suggestions).
@@ -342,6 +385,7 @@ impl Filter {
                 FieldOp::Eq(v) => format!("{}={v}", f.name),
                 FieldOp::Ne(v) => format!("{}!={v}", f.name),
                 FieldOp::Contains(v) => format!("{}~{v}", f.name),
+                FieldOp::NotContains(v) => format!("{}!~{v}", f.name),
             };
             out.push(format!("--field {s}"));
         }
@@ -428,6 +472,14 @@ mod tests {
         assert!(f("logontype=3").matches(&e));
         assert!(!f("LogonType!=3").matches(&e));
         assert!(f("CommandLine~-ENC").matches(&e));
+        assert!(!f("CommandLine!~-ENC").matches(&e));
+        assert!(f("CommandLine!~mimikatz").matches(&e));
+        assert!(f("Missing!~x").matches(&e));
+        // Coverage: the source matches, but a tested field may be absent.
+        assert!(f("Missing~x").matches_source(&e));
+        assert!(!f("Missing~x").fields_present(&e));
+        assert!(f("CommandLine~x").fields_present(&e));
+        assert!(f("Missing!~x").fields_present(&e));
         assert!(f("Computer~corp").matches(&e));
         assert!(f("LogonType=0x3").matches(&e));
         assert!(!f("LogonType=03").matches(&e));

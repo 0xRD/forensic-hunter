@@ -29,6 +29,8 @@ struct EventEntry {
     title: String,
     #[serde(default)]
     keep: Vec<String>,
+    #[serde(default)]
+    rename: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -36,6 +38,9 @@ pub struct EventSpec {
     pub title: String,
     /// Ordered field names to keep (empty: header only).
     pub keep: Vec<String>,
+    /// Short names for this event only, over `[fields]` (4688: the
+    /// creator's `ProcessId` is the parent, `ppid`).
+    pub rename: HashMap<String, String>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -76,6 +81,7 @@ impl FieldMap {
                 EventSpec {
                     title: e.title,
                     keep: e.keep,
+                    rename: e.rename,
                 },
             );
         }

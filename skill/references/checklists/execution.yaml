@@ -360,6 +360,8 @@ checks:
     ScriptBlockText~DownloadString --format llm
   - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --field
     ScriptBlockText~Net.WebClient --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --regex 'ScriptBlockText=(Invoke-WebRequest|iwr|Invoke-RestMethod|irm|Start-BitsTransfer|curl(\.exe)?|wget)\s[^\n]*https?://'
+    --field MessageNumber=1 --format llm
   pivots:
   - 'MessageNumber/MessageTotal: long scripts are split across several 4104 events - reassemble by ScriptBlockId'
   - URL in the script block -> proxy/DNS logs, Sysmon 3/22
@@ -959,3 +961,50 @@ checks:
     Sigma rule for amsi.dll loaded by rundll32/odbcconf/ExtExport (Sysmon 7); Sysmon 7 fields confirmed
     in real logs. || Original notes: Event 7 behaviour (disabled by default, noisy) from Microsoft Sysmon
     page. Process list is the small set in the Sigma rule; extend with care.'
+
+- id: FH-EXE-020
+  title: Interactive reverse shell (TCP client stream read as a command loop) in PowerShell or a command line
+  tactic: execution
+  attack:
+  - T1059.001
+  - T1095
+  channel: Microsoft-Windows-PowerShell/Operational
+  event_ids:
+  - 4104
+  - 4688
+  - 1
+  prerequisites:
+  - '4104 branch: PowerShell Script Block Logging'
+  - '4688 branch: Audit Process Creation plus "Include command line in process creation events"'
+  - '1 branch: Sysmon installed with a config that logs event 1 (process creation)'
+  logic:
+    selection_4104:
+      EventID: 4104
+      ScriptBlockText|contains|all:
+      - Net.Sockets.TCPClient
+      - GetStream
+    selection_cmdline:
+      CommandLine|contains:
+      - Net.Sockets.TCPClient
+    condition: 1 of selection_*
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --regex 'ScriptBlockText=Sockets\.TCPClient[\s\S]*GetStream'
+    --format llm
+  - forhunt search <paths> --channel Security --event-id 4688 --regex 'CommandLine=Sockets\.TCPClient|\bnc(at)?(\.exe)?\s.*\s-e\s'
+    --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-Sysmon/Operational --event-id 1 --regex 'CommandLine=Sockets\.TCPClient|\bnc(at)?(\.exe)?\s.*\s-e\s'
+    --format llm
+  pivots:
+  - Sysmon 3 from the same process to the remote IP and port in the script; 5156 on hosts with WFP auditing
+  - Parent process (Office application, script host) for the delivery vector
+  - Every 4104 block after the shell starts on that host holds the attacker's typed commands
+  false_positives:
+  - Administration or monitoring scripts that open raw TCP sockets (rare; they do not run a command loop
+    over the stream)
+  severity: critical
+  sources:
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-24. Added after a lab case where a macro started a hidden PowerShell TCP
+    reverse shell and no check covered it. The 4104 regex needs both TCPClient and GetStream in one
+    script block. Confirm field semantics and false positives against independent sources.'

@@ -108,6 +108,10 @@ pub struct OutputArgs {
     /// `llm` format: keep every field, not only the mapped key fields.
     #[arg(long)]
     pub all_fields: bool,
+    /// `llm` format: keep only these fields in `d` (short or full names,
+    /// comma-separated), e.g. `--fields user,img,cmd,pimg`.
+    #[arg(long, value_delimiter = ',', value_name = "NAMES")]
+    pub fields: Vec<String>,
 }
 
 #[derive(Args, Debug, Clone, Default)]
@@ -125,7 +129,7 @@ pub struct FilterArgs {
     #[arg(long, value_name = "TIME")]
     pub until: Option<String>,
     /// Field condition: `Name=value` (case-insensitive, hex-aware), `Name!=value`,
-    /// `Name~substring`. System fields (Computer, Channel, Provider) work too. Repeatable, ANDed.
+    /// `Name~substring`, `Name!~substring` (does not contain). System fields (Computer, Channel, Provider) work too. Repeatable, ANDed.
     #[arg(long, short = 'f', value_name = "COND")]
     pub field: Vec<String>,
     /// Case-insensitive regex on any value, or on one field with `Name=REGEX`. Repeatable, ANDed.
@@ -288,6 +292,10 @@ pub struct ChecklistArgs {
     pub tactic: Vec<String>,
     #[arg(long, short = 'F', value_enum, default_value_t = ChecklistFormat::Md)]
     pub format: ChecklistFormat,
+    /// Markdown: list only the rows to work on (HIT?, REVIEW) and the
+    /// summary; the full table is still in the JSON format.
+    #[arg(long)]
+    pub actionable: bool,
     #[arg(long, short = 'o', default_value = "-")]
     pub output: String,
     #[command(flatten)]

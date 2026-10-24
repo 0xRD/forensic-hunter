@@ -375,6 +375,7 @@ fn run(
         }
     }
     if summary && pipe_open {
+        common::merge_host_aliases(&mut facets.host);
         let mut line = Vec::new();
         write_summary(
             &SummaryInput {

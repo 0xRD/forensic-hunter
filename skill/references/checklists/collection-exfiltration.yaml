@@ -812,3 +812,44 @@ checks:
     confirmed (see above) but the detection logic goes beyond what any opened rule/source states: Analyst
     design; no opened source documents this pattern. || Original notes: Analyst design; no opened source
     documents this pattern.'
+
+- id: FH-COLL-018
+  title: Exfiltration with PowerShell web cmdlets (HTTP POST / PUT or file upload) (4104)
+  tactic: collection-exfiltration
+  attack:
+  - T1048.003
+  - T1567
+  channel: Microsoft-Windows-PowerShell/Operational
+  event_ids:
+  - 4104
+  prerequisites:
+  - PowerShell Script Block Logging
+  logic:
+    selection_post:
+      EventID: 4104
+      ScriptBlockText|re: '-Method\s+(Post|Put)\b'
+    selection_upload:
+      EventID: 4104
+      ScriptBlockText|contains:
+      - .UploadFile(
+      - .UploadData(
+      - ' -InFile '
+    condition: 1 of selection_*
+  forhunt:
+  - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --regex 'ScriptBlockText=-Method\s+(Post|Put)\b'
+    --field MessageNumber=1 --format llm
+  - forhunt search <paths> --channel Microsoft-Windows-PowerShell/Operational --event-id 4104 --regex 'ScriptBlockText=\.Upload(File|Data)\(|\s-InFile\s'
+    --field MessageNumber=1 --format llm
+  pivots:
+  - The archive the script sends (Compress-Archive, 7z, rar in 4104 / 4688 / Sysmon 1 just before)
+  - Sysmon 3 or 5156 to the destination; Sysmon 11 for the staged file
+  false_positives:
+  - Management scripts posting telemetry or inventory to internal web services
+  - PowerShell module code defining these cmdlets (MessageNumber=1 keeps first blocks only)
+  severity: high
+  sources:
+  - https://github.com/mitre/cti/blob/master/enterprise-attack/enterprise-attack.json
+  verified: false
+  notes: 'NOT VERIFIED 2026-10-24. Added after a lab case where collected credentials were zipped and POSTed
+    over HTTP by PowerShell; neither the sweep nor Hayabusa (medium and above) surfaced it. Confirm against
+    independent sources.'
