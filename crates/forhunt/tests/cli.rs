@@ -1166,3 +1166,22 @@ fn show_warns_when_header_id_and_event_record_id_differ() {
         assert!(err.contains("warning") && err.contains(&id), "{fmt}: {err}");
     }
 }
+
+#[test]
+fn overlapping_copies_of_one_log_are_reported() {
+    // A truncated copy of Security.evtx is another collection of the same
+    // log: its events would be counted twice.
+    let o = forhunt(&["stats", &fx("Security.evtx"), &fx("truncated.evtx")]);
+    assert!(o.status.success());
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        err.lines().any(|l| l.contains("warning")
+            && l.contains("overlapping")
+            && l.contains("Security.evtx")
+            && l.contains("truncated.evtx")),
+        "{err}"
+    );
+    // Different logs: nothing to report.
+    let o = forhunt(&["stats", &fx("Security.evtx"), &fx("Sysmon.evtx")]);
+    assert!(!String::from_utf8_lossy(&o.stderr).contains("overlapping"));
+}

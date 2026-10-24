@@ -238,7 +238,106 @@ pub fn open_all(
         }
     }
     o.bytes = o.sources.iter().map(|s| s.byte_len()).sum();
+    let spans: Vec<Option<LogSpan>> =
+        pool.install(|| o.sources.par_iter().map(|s| log_span(s.as_ref())).collect());
+    o.warnings.extend(overlap_warnings(&o.sources, &spans));
     Ok(o)
+}
+
+/// A log's channel, computer and EventRecordID span, from its first and
+/// last events.
+#[derive(Debug, Clone, PartialEq)]
+struct LogSpan {
+    channel: String,
+    computer: String,
+    first: u64,
+    last: u64,
+}
+
+/// `None` for non-logs, empty files, and files mixing hosts or channels
+/// (forwarded events), where record ids of different logs interleave.
+fn log_span(s: &dyn Source) -> Option<LogSpan> {
+    if !s.is_log() {
+        return None;
+    }
+    let mut first: Option<(String, String, u64)> = None;
+    let mut last: Option<(String, String, u64)> = None;
+    let grab = |ev: &crate::EventView<'_>| {
+        (
+            ev.channel.to_lowercase(),
+            ev.computer.to_lowercase(),
+            ev.event_record_id,
+        )
+    };
+    for u in 0..s.units() {
+        s.parse_unit(u, &mut |ev: &crate::EventView<'_>| {
+            if first.is_none() {
+                first = Some(grab(ev));
+            }
+        });
+        if first.is_some() {
+            break;
+        }
+    }
+    for u in (0..s.units()).rev() {
+        s.parse_unit(u, &mut |ev: &crate::EventView<'_>| last = Some(grab(ev)));
+        if last.is_some() {
+            break;
+        }
+    }
+    let ((c1, h1, a), (c2, h2, b)) = (first?, last?);
+    (c1 == c2 && h1 == h2 && a != 0 && b != 0).then(|| LogSpan {
+        channel: c1,
+        computer: h1,
+        first: a.min(b),
+        last: a.max(b),
+    })
+}
+
+/// Two different files holding the same log (channel and computer) with
+/// overlapping EventRecordIDs are likely two collections of it: their
+/// common events would be counted twice.
+fn overlap_warnings(sources: &[Arc<dyn Source>], spans: &[Option<LogSpan>]) -> Vec<String> {
+    // (channel, computer) -> (first, last, source index)
+    type Spans = Vec<(u64, u64, usize)>;
+    let mut groups: HashMap<(&str, &str), Spans> = HashMap::new();
+    for (i, sp) in spans.iter().enumerate() {
+        if let Some(sp) = sp {
+            groups
+                .entry((&sp.channel, &sp.computer))
+                .or_default()
+                .push((sp.first, sp.last, i));
+        }
+    }
+    let mut out = Vec::new();
+    let mut keys: Vec<_> = groups.keys().copied().collect();
+    keys.sort();
+    for k in keys {
+        let mut v = groups[&k].clone();
+        v.sort();
+        // The span reaching furthest so far: any later start below its end
+        // overlaps it.
+        let mut reach: Option<(u64, u64, usize)> = None;
+        for (a, b, i) in v {
+            if let Some((ra, rb, ri)) = reach
+                && a <= rb
+            {
+                out.push(format!(
+                    "{} and {}: the same log ({} on {}) with overlapping EventRecordIDs \
+                     ({ra}-{rb} and {a}-{b}): likely two collections of it, events they share \
+                     are counted twice",
+                    sources[ri].path().display(),
+                    sources[i].path().display(),
+                    spans[i].as_ref().map_or("", |s| s.channel.as_str()),
+                    spans[i].as_ref().map_or("", |s| s.computer.as_str()),
+                ));
+            }
+            if reach.is_none_or(|(_, rb, _)| b > rb) {
+                reach = Some((a, b, i));
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
