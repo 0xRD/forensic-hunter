@@ -124,7 +124,7 @@ fn fast_parse(b: &[u8]) -> Option<Ts> {
     let h = digits(&b[11..13])?;
     let mi = digits(&b[14..16])?;
     let s = digits(&b[17..19])?;
-    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || s > 60 {
+    if !(1..=12).contains(&mo) || d < 1 || d > days_in_month(y, mo) || h > 23 || mi > 59 || s > 60 {
         return None;
     }
     let mut rest = &b[19..];
@@ -168,6 +168,15 @@ fn slow_parse(s: &str) -> Option<Ts> {
             .map(|z| Ts::from_jiff(z.timestamp()));
     }
     None
+}
+
+fn days_in_month(y: i64, m: i64) -> i64 {
+    match m {
+        2 if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
 }
 
 // Howard Hinnant's civil date algorithms.
@@ -228,5 +237,16 @@ mod tests {
             "2024-03-01T00:00:00.000000Z"
         );
         assert!(Ts::parse("garbage").is_none());
+    }
+
+    #[test]
+    fn impossible_dates_are_rejected() {
+        // A typo must not silently move a --since/--until window.
+        assert!(Ts::parse("2025-02-30T10:00:00Z").is_none());
+        assert!(Ts::parse("2025-09-31T10:00:00Z").is_none());
+        assert!(Ts::parse("2023-02-29T10:00:00Z").is_none());
+        assert!(Ts::parse("2024-02-29T10:00:00Z").is_some());
+        assert!(Ts::parse("2000-02-29 10:00:00").is_some());
+        assert!(Ts::parse("1900-02-29T10:00:00Z").is_none());
     }
 }
