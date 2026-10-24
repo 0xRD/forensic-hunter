@@ -19,25 +19,35 @@ read-only, positional reads).
 
 | Option | Meaning |
 |---|---|
-| `-e, --event-id 4624,4625,4720-4738` | event ids (repeatable) |
-| `-c, --channel Security` | channel name, alias (`Sec`, `Sys`, `Sysmon`, `PS`, `PSClassic`, `WMI`, `Task`, `TS-LSM`, `TS-RCM`, `RdpCoreTS`, `WinRM`, `Defender`, `BITS`, `Firewall`, `NTLM`, `DS`) or `*` glob |
-| `--since T`, `--until T` | ISO 8601; no offset means UTC; `2024-03-11` means midnight UTC |
-| `-f, --field Name=value` | case-insensitive equality; numeric when hex (`0x17` = `0x00000017`) |
+| `-e, --event-id 4624,4625,4720-4738` | event ids (comma list, ranges; repeatable) |
+| `-c, --channel Security` | channel name (comma list; repeatable), alias (`Sec`, `Sys`, `Sysmon`, `PS`, `PSClassic`, `WMI`, `Task`, `TS-LSM`, `TS-RCM`, `RdpCoreTS`, `WinRM`, `Defender`, `BITS`, `Firewall`, `NTLM`, `DS`) or `*` glob |
+| `--since T`, `--until T` | ISO 8601, both inclusive, on the event's `TimeCreated` (never the record write time); no offset means UTC; `2024-03-11` means midnight UTC; impossible dates are rejected |
+| `-f, --field Name=value` | case-insensitive equality; numeric when hex (`0x17` = `0x00000017` = `23`); GUIDs with or without braces (`{42e0bcd9-...}` = `42E0BCD9-...`); timestamps at microsecond precision (Windows' 7 digits match) |
 | `-f Name!=value` | not equal (also true when the field is absent) |
-| `-f Name~text` | case-insensitive substring |
+| `-f Name~text` | case-insensitive substring (a GUID value also contains its braces) |
 | `-f Name!~text` | does not contain (also true when the field is absent); repeat to drop noise, e.g. `-f Image!~\\MsMpEng.exe` |
 | `-r, --regex [Name=]REGEX` | case-insensitive regex on one field, or on every value |
-| `--computer HOST` | exact host, or short name of an FQDN |
+| `--computer HOST` | exact host, or short name of an FQDN; an FQDN also keeps events logged under its short name; comma list, repeatable |
 
-Repeated options are ANDed; values of one `--event-id` list are ORed. Field
-names are those Windows writes in EventData/UserData (`TargetUserName`,
-`LogonType`, `IpAddress`, `CommandLine`, `ServiceName`...); `Computer`,
-`Channel`, `Provider`, `EventID` work too. Unnamed `<Data>` elements are
-`Data[1]`, `Data[2]`...
+`-e`, `-c` and `--computer` values are ORed, whether given as a comma list or
+by repeating the option (`-c Sec -c Sysmon` = either channel); different
+options, and repeated `-f` / `-r`, are ANDed. Field names are those Windows
+writes in EventData/UserData (`TargetUserName`, `LogonType`, `IpAddress`,
+`CommandLine`, `ServiceName`...); `Computer`, `Channel`, `Provider`,
+`EventID`, `EventRecordID` (the System value, not the record header id) work
+too. Several unnamed `<Data>` elements are `Data[1]`, `Data[2]`...; a lone one
+is printed as `Data`, and `Data[1]` finds it too. Quote arguments holding
+`[ ] * ?` (`-f 'Data[3]~x'`): zsh stops on an unmatched glob.
+
+Multi-line values (script blocks, privilege lists) are printed by `llm` with
+line breaks and tabs collapsed to one space; `=`, `~`, `!=` and `!~` also
+match them that way, so a snippet copied from `llm` output finds its event.
+`-r` stays literal (use `\s+`).
 
 Other options: `-n, --limit N` (0 = no cap), `-F, --format llm|jsonl|csv`,
-`--max-value-len N` (default 256), `--all-fields`, `--fields a,b,c` (`llm`:
-keep only these keys of `d`, short or full names), `--tz Europe/Paris`
+`--max-value-len N` (characters, default 256), `--all-fields`, `--fields a,b,c`
+(`llm`: show only these fields in `d`, short or full names, chosen among all
+the event's fields, not only the mapped ones), `--tz Europe/Paris`
 (display only), `-t, --threads N`, `--strict`, `--checksums`, `-q`.
 `parse` takes `--computer HOST` too (no other filters).
 
@@ -53,7 +63,10 @@ forhunt parse ./collection -F csv -O out/ --split host   # out/ws-07.contoso.loc
 ```
 
 Per-file names are the input path relative to the common input directory,
-with separators replaced by `__`. The summary line still goes to stdout.
+with separators replaced by `__`. With `--split host`, events logged under a
+short host name go into the file of the single FQDN extending it (appended at
+its end, with a warning). Files already in the directory that the run did not
+write are listed in a warning. The summary line still goes to stdout.
 
 ## CSV (Timeline Explorer)
 
@@ -62,7 +75,7 @@ with separators replaced by `__`. The summary line still goes to stdout.
 ProcessId, ThreadId, Computer, UserId, MapDescription, UserName, RemoteHost,
 PayloadData1..6, ExecutableInfo, HiddenRecord, SourceFile, Keywords, Payload`,
 then `ForhuntId`. `TimeCreated` is `yyyy-MM-dd HH:mm:ss.fffffff` (UTC unless
-`--tz`); `PayloadData*` hold the event's key fields as `Name: value`;
+`--tz`; microsecond precision, the 7th digit is always 0); `PayloadData*` hold the event's key fields as `Name: value`;
 `Payload` holds every field as JSON. CSV values are never truncated (`--max-value-len` applies to `llm` only).
 
 ## NTFS: `$MFT` and `$UsnJrnl:$J`
@@ -140,6 +153,16 @@ The last line is the summary:
 ```
 `narrow` lists filters to add when the output was capped, with how many
 matches each would keep.
+
+## Warnings (stderr)
+
+forhunt never drops input silently; it warns (unless `-q`) about: unreadable
+or non-artifact files, folders it cannot search (permissions, link loops),
+byte-identical duplicates (opened once), two different files holding the same
+log with overlapping EventRecordIDs (likely two collections: shared events
+counted twice), truncated or corrupt chunks, and `show` ids whose record
+header id and System/EventRecordID differ (exported logs; the warning gives
+the forhunt id of the other reading).
 
 ## Exit codes
 

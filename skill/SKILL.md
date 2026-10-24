@@ -77,8 +77,11 @@ Read it fully (it is short). Note:
 - `present`: which channels and event ids exist. **This decides checklist
   applicability**: a check whose channel/event ids are absent is
   `LOG_SOURCE_MISSING` (see blind spots in `references/checklists/INDEX.md`);
-- `log_tampering` (1102, 104, 1100, 4719), `rid_gaps` (record-id
-  discontinuities) and `quiet_periods`: possible deletion or logging outages;
+- `log_tampering` (1102, 104, 1100, 4719), `rid_gaps` (missing record ids,
+  between chunks and between consecutive records, e.g. a record cut out by
+  eventlogedit-style tools) and `quiet_periods`: possible deletion or logging
+  outages. Both are only computed without filters (run `stats` on the whole
+  evidence for them);
 - `logon_types`: counts per type for 4624/4625 (types in `references/logontypes.md`);
 - `bad_chunks`/`bad_records`: corruption; mention it in the report.
 
@@ -148,8 +151,13 @@ forhunt search E -e 4688 --computer WS-07 -f SubjectUserName=bob --fields img,cm
 # PowerShell as typed: first block of each script only (MessageNumber>1 are continuations of long modules)
 forhunt search E -c ps -e 4104 --computer WS-07 -f MessageNumber=1 --since <start> --until <end>
 ```
-`--fields` keeps only the named fields of `d` (short or full names) and
-`-f Name!~text` drops matches: use both to keep outputs small.
+`--fields` keeps only the named fields of `d` (short or full names, any field
+of the event) and `-f Name!~text` drops matches: use both to keep outputs
+small. `-e`, `-c`, `--computer` take comma lists (values ORed); GUIDs match
+with or without braces; snippets copied from `llm` output match multi-line
+values. Quote arguments with `[ ] * ?` (`-f 'Data[3]~x'`). Read forhunt's
+stderr warnings (unsearchable folders, overlapping copies of a log, `show` id
+ambiguity) and report them.
 
 ## 5. Timeline of suspicious windows (step e)
 
