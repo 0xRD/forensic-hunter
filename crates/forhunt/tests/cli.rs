@@ -1031,3 +1031,40 @@ fn llm_fields_names_any_field_of_the_event() {
     let d = v["d"].as_object().unwrap();
     assert_eq!(d.len(), asked.len(), "{asked:?} -> {d:?}");
 }
+
+#[test]
+fn stats_record_gaps_inside_a_chunk_and_never_from_filters() {
+    // Record removal as done by eventlogedit-style tools: the previous
+    // record's size swallows the next one, inside the same chunk.
+    let mut b = std::fs::read(fx("Security.evtx")).unwrap();
+    let mut off = 4096 + 512;
+    let mut recs = Vec::new();
+    for _ in 0..6 {
+        assert_eq!(&b[off..off + 4], b"**\0\0");
+        let size = u32::from_le_bytes(b[off + 4..off + 8].try_into().unwrap()) as usize;
+        let rid = u64::from_le_bytes(b[off + 8..off + 16].try_into().unwrap());
+        recs.push((off, size, rid));
+        off += size;
+    }
+    let ((a_off, a_size, a_rid), (_, b_size, b_rid)) = (recs[4], recs[5]);
+    let new = (a_size + b_size) as u32;
+    b[a_off + 4..a_off + 8].copy_from_slice(&new.to_le_bytes());
+    let end = a_off + new as usize;
+    b[end - 4..end].copy_from_slice(&new.to_le_bytes());
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("Security.evtx");
+    std::fs::write(&p, &b).unwrap();
+    let out = ok(&["stats", "-q", "-F", "json", &p.display().to_string()]);
+    let v: Value = serde_json::from_str(&out).unwrap();
+    let gaps = v["files"][0]["record_id_gaps"].as_array().unwrap();
+    assert!(
+        gaps.iter()
+            .any(|g| g[0].as_u64() == Some(a_rid) && g[1].as_u64() == Some(b_rid + 1)),
+        "removed record {b_rid} not reported: {gaps:?}"
+    );
+    // A filter keeps a subset of the records: the ids it skips are not gaps,
+    // and its time spread says nothing about logging outages.
+    let out = ok(&["stats", "-q", "-e", "4624", &fx("Security.evtx")]);
+    assert!(!out.contains("rid_gaps"), "{out}");
+    assert!(out.contains("\"quiet_periods\":[]"), "{out}");
+}

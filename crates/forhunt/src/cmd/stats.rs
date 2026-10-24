@@ -47,6 +47,8 @@ struct Part {
     rid_min: u64,
     rid_max: u64,
     rid_n: u64,
+    /// Record ids missing between two records of this chunk: [after, before).
+    rid_gaps: Vec<(u64, u64)>,
 }
 
 #[derive(Clone, Serialize)]
@@ -81,10 +83,25 @@ impl Sink for PartSink<'_> {
         self.filter.want_event_id(id)
     }
     fn event(&mut self, ev: &EventView<'_>) {
+        let p = &mut *self.part;
+        // Record ids over every decoded record (gaps are only reported
+        // without a filter, when every record is decoded): records are in
+        // id order within a chunk, so a jump is a missing record.
+        let rid = ev.id.record;
+        if p.rid_n == 0 {
+            p.rid_min = rid;
+            p.rid_max = rid;
+        } else {
+            if rid > p.rid_max + 1 {
+                p.rid_gaps.push((p.rid_max, rid));
+            }
+            p.rid_min = p.rid_min.min(rid);
+            p.rid_max = p.rid_max.max(rid);
+        }
+        p.rid_n += 1;
         if !self.filter.matches(ev) {
             return;
         }
-        let p = &mut *self.part;
         p.events += 1;
         *p.chan_eid
             .entry((ev.channel.to_string(), ev.event_id))
@@ -130,15 +147,6 @@ impl Sink for PartSink<'_> {
         }
         p.first = Some(p.first.map_or(ev.ts, |f| f.min(ev.ts)));
         p.last = Some(p.last.map_or(ev.ts, |l| l.max(ev.ts)));
-        let rid = ev.id.record;
-        if p.rid_n == 0 {
-            p.rid_min = rid;
-            p.rid_max = rid;
-        } else {
-            p.rid_min = p.rid_min.min(rid);
-            p.rid_max = p.rid_max.max(rid);
-        }
-        p.rid_n += 1;
     }
 }
 
@@ -154,7 +162,8 @@ struct FileStats {
     channels: Vec<String>,
     bad_chunks: u64,
     bad_records: u64,
-    /// Ranges of record ids missing between chunks: [after, before).
+    /// Ranges of missing record ids, between and within chunks:
+    /// [after, before). Only without a filter.
     record_id_gaps: Vec<(u64, u64)>,
     #[serde(skip)]
     is_log: bool,
@@ -237,6 +246,7 @@ pub fn run(a: StatsArgs) -> anyhow::Result<()> {
             if part.rid_n > 0 {
                 f.ranges.push((part.rid_min, part.rid_max, part.rid_n));
             }
+            f.record_id_gaps.extend_from_slice(&part.rid_gaps);
             f.minutes.extend_from_slice(&part.minutes);
             f.first_ts = match (f.first_ts, part.first) {
                 (Some(a), Some(b)) => Some(a.min(b)),
@@ -280,7 +290,10 @@ pub fn run(a: StatsArgs) -> anyhow::Result<()> {
         f.first = f.first_ts.map(|t| t.iso());
         f.last = f.last_ts.map(|t| t.iso());
         f.channels.sort();
-        if !f.is_log {
+        // A filter skips records and time: its gaps and silences would
+        // read as deletions and logging outages.
+        if !f.is_log || !filter.is_empty() {
+            f.record_id_gaps.clear();
             continue;
         }
         f.ranges.sort();
@@ -290,6 +303,7 @@ pub fn run(a: StatsArgs) -> anyhow::Result<()> {
                 f.record_id_gaps.push((prev_max, next_min));
             }
         }
+        f.record_id_gaps.sort_unstable();
         f.minutes.sort_unstable();
         f.minutes.dedup();
         for w in f.minutes.windows(2) {
