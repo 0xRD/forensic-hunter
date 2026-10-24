@@ -61,13 +61,13 @@ impl FieldCond {
     fn matches(&self, ev: &EventView<'_>) -> bool {
         let v = ev.get_ci(&self.name);
         match (&self.op, v) {
-            (FieldOp::Eq(want), Some(v)) => eq_ci(&v, want) || num_eq(&v, want),
+            (FieldOp::Eq(want), Some(v)) => value_eq(&v, want),
             (FieldOp::Eq(want), None) => want.is_empty(),
-            (FieldOp::Ne(want), Some(v)) => !(eq_ci(&v, want) || num_eq(&v, want)),
+            (FieldOp::Ne(want), Some(v)) => !value_eq(&v, want),
             (FieldOp::Ne(_), None) => true,
-            (FieldOp::Contains(n), Some(v)) => contains_ci(&v, n),
+            (FieldOp::Contains(n), Some(v)) => value_contains(&v, n),
             (FieldOp::Contains(_), None) => false,
-            (FieldOp::NotContains(n), Some(v)) => !contains_ci(&v, n),
+            (FieldOp::NotContains(n), Some(v)) => !value_contains(&v, n),
             (FieldOp::NotContains(_), None) => true,
         }
     }
@@ -93,6 +93,66 @@ fn num_eq(have: &str, want: &str) -> bool {
         return false;
     }
     matches!((parse_num(have), parse_num(want)), (Some(a), Some(b)) if a == b)
+}
+
+/// Equality as an analyst means it: text ignoring case, numbers across hex
+/// and decimal, GUIDs with or without braces (`{42e0bcd9-...}`, as Windows
+/// shows them), timestamps at microsecond precision (Windows shows 7 digits).
+fn value_eq(have: &str, want: &str) -> bool {
+    eq_ci(have, want) || num_eq(have, want) || guid_eq(have, want) || time_eq(have, want)
+}
+
+/// Case-insensitive substring; a GUID value also contains its braces.
+fn value_contains(have: &str, needle: &str) -> bool {
+    contains_ci(have, needle)
+        || (needle.contains(['{', '}'])
+            && braced_guid(have).is_some_and(|b| contains_ci(&b, needle)))
+}
+
+/// `8-4-4-4-12` hexadecimal digits, as evtx renders GUID values.
+fn is_guid(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 36
+        && b.iter().enumerate().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => *c == b'-',
+            _ => c.is_ascii_hexdigit(),
+        })
+}
+
+/// `{GUID}` for a bare GUID value (the Windows form), else `None`.
+fn braced_guid(s: &str) -> Option<String> {
+    is_guid(s).then(|| format!("{{{s}}}"))
+}
+
+fn strip_braces(s: &str) -> &str {
+    let s = s.trim();
+    s.strip_prefix('{')
+        .and_then(|x| x.strip_suffix('}'))
+        .unwrap_or(s)
+}
+
+fn guid_eq(have: &str, want: &str) -> bool {
+    let (a, b) = (strip_braces(have), strip_braces(want));
+    is_guid(a) && is_guid(b) && a.eq_ignore_ascii_case(b)
+}
+
+fn time_eq(have: &str, want: &str) -> bool {
+    let looks = |s: &str| {
+        let b = s.as_bytes();
+        b.len() >= 19
+            && b[4] == b'-'
+            && b[7] == b'-'
+            && matches!(b[10], b'T' | b' ')
+            && b[13] == b':'
+    };
+    let want = want.trim();
+    if !looks(have) || !looks(want) {
+        return false;
+    }
+    match (Ts::parse(have), Ts::parse(want)) {
+        (Some(a), Some(b)) => a.0.div_euclid(10) == b.0.div_euclid(10),
+        _ => false,
+    }
 }
 
 pub fn eq_ci(a: &str, b: &str) -> bool {
@@ -170,7 +230,7 @@ impl RegexCond {
     fn matches(&self, ev: &EventView<'_>) -> bool {
         match &self.field {
             Some(f) => match ev.get_ci(f) {
-                Some(v) => self.re.is_match(&v),
+                Some(v) => re_match(&self.re, &v),
                 None => self.whole.as_ref().is_some_and(|w| any_value(w, ev)),
             },
             None => any_value(&self.re, ev),
@@ -178,8 +238,13 @@ impl RegexCond {
     }
 }
 
+/// A GUID value also matches in its Windows form, `{guid}`.
+fn re_match(re: &Regex, v: &str) -> bool {
+    re.is_match(v) || braced_guid(v).is_some_and(|b| re.is_match(&b))
+}
+
 fn any_value(re: &Regex, ev: &EventView<'_>) -> bool {
-    ev.fields.iter().any(|f| re.is_match(f.value.as_str()))
+    ev.fields.iter().any(|f| re_match(re, f.value.as_str()))
         || re.is_match(&ev.computer)
         || re.is_match(&ev.provider)
 }
@@ -530,6 +595,46 @@ mod tests {
         assert!(!f("Data[2]=TriggerStarted:6").matches(&e));
         let r = |s: &str| Filter::new().regexes(vec![RegexCond::parse(s).unwrap()]);
         assert!(r("Data[1]=^Trigger").matches(&e));
+    }
+
+    #[test]
+    fn guids_match_in_windows_form() {
+        // forhunt renders GUIDs as evtx does (`42E0BCD9-...`); Windows,
+        // Sysmon XML, EvtxECmd and SIEMs show `{42e0bcd9-...}`.
+        let mut e = ev();
+        e.fields.push(Field {
+            name: "ProcessGuid".into(),
+            value: Val::Str(Cow::Borrowed("42E0BCD9-851F-68F7-F800-000000002E00")),
+        });
+        let f = |s: &str| Filter::new().fields(vec![FieldCond::parse(s).unwrap()]);
+        assert!(f("ProcessGuid={42e0bcd9-851f-68f7-f800-000000002e00}").matches(&e));
+        assert!(f("ProcessGuid=42e0bcd9-851f-68f7-f800-000000002e00").matches(&e));
+        assert!(!f("ProcessGuid!={42e0bcd9-851f-68f7-f800-000000002e00}").matches(&e));
+        assert!(f("ProcessGuid~{42e0bcd9-851f").matches(&e));
+        assert!(f("ProcessGuid~2e00}").matches(&e));
+        assert!(!f("ProcessGuid!~{42e0bcd9").matches(&e));
+        assert!(!f("ProcessGuid={42e0bcd9-851f-68f7-f800-000000002e01}").matches(&e));
+        let r = |s: &str| Filter::new().regexes(vec![RegexCond::parse(s).unwrap()]);
+        assert!(r("ProcessGuid=^\\{42e0bcd9-").matches(&e));
+        assert!(r("\\{42e0bcd9-851f").matches(&e));
+        assert!(!r("ProcessGuid=^\\{0000").matches(&e));
+    }
+
+    #[test]
+    fn timestamps_match_in_windows_form() {
+        // forhunt renders FILETIME values with microseconds; Windows shows
+        // 7 digits (`2025-10-21T14:19:55.9050049Z`).
+        let mut e = ev();
+        e.fields.push(Field {
+            name: "ProcessCreationTime".into(),
+            value: Val::Str(Cow::Borrowed("2025-10-21T14:19:55.905004Z")),
+        });
+        let f = |s: &str| Filter::new().fields(vec![FieldCond::parse(s).unwrap()]);
+        assert!(f("ProcessCreationTime=2025-10-21T14:19:55.9050049Z").matches(&e));
+        assert!(f("ProcessCreationTime=2025-10-21 14:19:55.905004").matches(&e));
+        assert!(!f("ProcessCreationTime!=2025-10-21T14:19:55.9050049Z").matches(&e));
+        assert!(!f("ProcessCreationTime=2025-10-21T14:19:55.9050059Z").matches(&e));
+        assert!(!f("ProcessCreationTime=2025-10-21").matches(&e));
     }
 
     #[test]

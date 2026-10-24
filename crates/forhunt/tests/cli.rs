@@ -834,3 +834,30 @@ fn ntfs_damaged_inputs_and_determinism() {
         "{row}"
     );
 }
+
+#[test]
+fn guid_filters_accept_the_windows_form() {
+    // forhunt prints `A6B12C41-...`; Windows, Sysmon XML and SIEMs show
+    // `{a6b12c41-...}`: a pivot pasted from them must find the same events.
+    let first = lines(&ok(&[
+        "search",
+        &fx("Sysmon.evtx"),
+        "-e",
+        "1",
+        "-n",
+        "1",
+        "-F",
+        "jsonl",
+        "-q",
+    ]));
+    let guid = first[0]["data"]["ProcessGuid"].as_str().unwrap().to_string();
+    let count = |f: &str| {
+        let v = lines(&ok(&["search", &fx("Sysmon.evtx"), "-f", f, "-n", "0", "-q"]));
+        summary(&v)["matches"].as_u64().unwrap()
+    };
+    let bare = count(&format!("ProcessGuid={guid}"));
+    assert!(bare > 0);
+    let windows = format!("{{{}}}", guid.to_lowercase());
+    assert_eq!(count(&format!("ProcessGuid={windows}")), bare);
+    assert_eq!(count(&format!("ProcessGuid~{windows}")), bare);
+}
