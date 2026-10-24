@@ -156,6 +156,18 @@ struct SplitOut {
     names: HashMap<String, PathBuf>,
     used: HashSet<String>,
     open: Vec<(String, BufWriter<File>)>,
+    /// Files already in `dir` before this run (lowercase name -> name).
+    before: HashMap<String, String>,
+}
+
+/// What a split run left in its directory.
+#[derive(Debug, Default)]
+struct SplitReport {
+    files: usize,
+    /// (short host name, FQDN file it was appended to).
+    folded: Vec<(String, String)>,
+    /// Files in the directory that this run did not write.
+    stale: Vec<String>,
 }
 
 const MAX_OPEN: usize = 128;
@@ -163,6 +175,16 @@ const MAX_OPEN: usize = 128;
 impl SplitOut {
     fn new(dir: &Path, ext: &'static str, header: &'static [u8]) -> anyhow::Result<SplitOut> {
         std::fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
+        let mut before = HashMap::new();
+        for e in std::fs::read_dir(dir)
+            .with_context(|| format!("cannot list {}", dir.display()))?
+            .flatten()
+        {
+            if e.file_type().is_ok_and(|t| t.is_file()) {
+                let n = e.file_name().to_string_lossy().into_owned();
+                before.insert(n.to_lowercase(), n);
+            }
+        }
         Ok(SplitOut {
             dir: dir.to_path_buf(),
             ext,
@@ -170,6 +192,7 @@ impl SplitOut {
             names: HashMap::new(),
             used: HashSet::new(),
             open: Vec::new(),
+            before,
         })
     }
 
@@ -218,11 +241,58 @@ impl SplitOut {
         Ok(())
     }
 
-    fn finish(mut self) -> anyhow::Result<usize> {
+    /// Flushes everything. With `fold_hosts` (keys are lowercase host
+    /// names), a short name's file is appended to the file of the single
+    /// FQDN extending it (as `stats` folds them) and removed.
+    fn finish(mut self, fold_hosts: bool) -> anyhow::Result<SplitReport> {
         for (_, w) in &mut self.open {
             w.flush()?;
         }
-        Ok(self.names.len())
+        self.open.clear();
+        let mut rep = SplitReport::default();
+        if fold_hosts {
+            let keys: Vec<String> = self.names.keys().cloned().collect();
+            let lower: Vec<&str> = keys.iter().map(String::as_str).collect();
+            for (short, fqdn) in common::short_name_targets(&lower) {
+                let (from, to) = (self.names[short].clone(), self.names[fqdn].clone());
+                let data = std::fs::read(&from)
+                    .with_context(|| format!("cannot read {}", from.display()))?;
+                let body = data.strip_prefix(self.header).unwrap_or(&data);
+                let mut f = std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&to)
+                    .with_context(|| format!("cannot write {}", to.display()))?;
+                f.write_all(body)?;
+                std::fs::remove_file(&from)
+                    .with_context(|| format!("cannot remove {}", from.display()))?;
+                let short_name = from
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let to_name = to
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                rep.folded.push((short_name, to_name));
+                self.names.remove(short);
+            }
+            rep.folded.sort();
+        }
+        let written: HashSet<String> = self
+            .names
+            .values()
+            .filter_map(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .collect();
+        rep.stale = self
+            .before
+            .iter()
+            .filter(|(l, _)| !written.contains(*l))
+            .map(|(_, n)| n.clone())
+            .collect();
+        rep.stale.sort();
+        rep.files = self.names.len();
+        Ok(rep)
     }
 }
 
@@ -368,10 +438,26 @@ fn run(
     }
     if let Some(sp) = split {
         let dir = sp.dir.clone();
-        let n = sp.finish()?;
+        let rep = sp.finish(by_host)?;
         shown = totals.matched;
         if !ctx.common.quiet {
-            eprintln!("forhunt: wrote {n} files to {}", dir.display());
+            eprintln!("forhunt: wrote {} files to {}", rep.files, dir.display());
+        }
+        for (short, file) in &rep.folded {
+            ctx.warn(&format!(
+                "events logged under the short host name {short} were appended at the end of \
+                 {file} (same machine as its FQDN; out of time order there)"
+            ));
+        }
+        if !rep.stale.is_empty() {
+            let first: Vec<&str> = rep.stale.iter().take(5).map(String::as_str).collect();
+            ctx.warn(&format!(
+                "{} file(s) in {} were not written by this run (older output?): {}{}",
+                rep.stale.len(),
+                dir.display(),
+                first.join(", "),
+                if rep.stale.len() > 5 { ", ..." } else { "" }
+            ));
         }
     }
     if summary && pipe_open {
@@ -409,7 +495,38 @@ fn run(
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize;
+    use super::{SplitOut, sanitize};
+
+    #[test]
+    fn split_host_folds_a_short_name_into_its_fqdn() {
+        let d = tempfile::tempdir().unwrap();
+        let mut sp = SplitOut::new(d.path(), "csv", b"H\n").unwrap();
+        sp.write("ad01.corp.local", "AD01.corp.local", b"a\n")
+            .unwrap();
+        sp.write("ad01", "AD01", b"b\n").unwrap();
+        sp.write("pc01", "PC01", b"c\n").unwrap();
+        let rep = sp.finish(true).unwrap();
+        let read = |n: &str| std::fs::read_to_string(d.path().join(n)).unwrap();
+        assert_eq!(read("AD01.corp.local.csv"), "H\na\nb\n");
+        assert!(!d.path().join("AD01.csv").exists());
+        assert_eq!(read("PC01.csv"), "H\nc\n");
+        assert_eq!(
+            rep.folded,
+            [("AD01".to_string(), "AD01.corp.local.csv".to_string())]
+        );
+        assert_eq!(rep.files, 2);
+    }
+
+    #[test]
+    fn split_reports_files_it_did_not_write() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("old-host.csv"), b"stale").unwrap();
+        std::fs::write(d.path().join("PC01.csv"), b"replaced").unwrap();
+        let mut sp = SplitOut::new(d.path(), "csv", b"H\n").unwrap();
+        sp.write("pc01", "PC01", b"c\n").unwrap();
+        let rep = sp.finish(false).unwrap();
+        assert_eq!(rep.stale, ["old-host.csv"]);
+    }
 
     #[test]
     fn file_names() {

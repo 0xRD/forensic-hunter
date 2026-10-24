@@ -383,27 +383,35 @@ pub fn merge_host_aliases(hosts: &mut std::collections::HashMap<String, u64>) {
         }
         names.push(keep);
     }
-    // Short names: the FQDNs by first label, merged only when unambiguous.
-    let mut fqdn_by_label: HashMap<&str, Vec<&str>> = HashMap::new();
-    for (lower, names) in &by_lower {
-        if let Some((label, _)) = lower.split_once('.') {
-            fqdn_by_label.entry(label).or_default().push(&names[0]);
-        }
-    }
-    let mut moves = Vec::new();
-    for (lower, names) in &by_lower {
-        if lower.contains('.') {
-            continue;
-        }
-        if let Some([fqdn]) = fqdn_by_label.get(lower.as_str()).map(Vec::as_slice) {
-            moves.push((names[0].clone(), fqdn.to_string()));
-        }
-    }
-    for (short, fqdn) in moves {
+    // Short names: into the FQDN that extends them, when unambiguous.
+    let lower: Vec<&str> = by_lower.keys().map(String::as_str).collect();
+    for (short, fqdn) in short_name_targets(&lower) {
+        let (short, fqdn) = (by_lower[short][0].clone(), by_lower[fqdn][0].clone());
         if let Some(c) = hosts.remove(&short) {
             *hosts.entry(fqdn).or_default() += c;
         }
     }
+}
+
+/// For lowercase host names: each short name (no dot) paired with the
+/// single FQDN whose first label it is (`ad01` -> `ad01.corp.local`); a
+/// short name matching several FQDNs is left alone. Linear.
+pub fn short_name_targets<'a>(lower: &[&'a str]) -> Vec<(&'a str, &'a str)> {
+    use std::collections::HashMap;
+    let mut fqdn_by_label: HashMap<&str, Vec<&str>> = HashMap::new();
+    for n in lower {
+        if let Some((label, _)) = n.split_once('.') {
+            fqdn_by_label.entry(label).or_default().push(n);
+        }
+    }
+    lower
+        .iter()
+        .filter(|n| !n.is_empty() && !n.contains('.'))
+        .filter_map(|n| match fqdn_by_label.get(n).map(Vec::as_slice) {
+            Some([fqdn]) => Some((*n, *fqdn)),
+            _ => None,
+        })
+        .collect()
 }
 
 #[cfg(test)]
