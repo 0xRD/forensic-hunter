@@ -302,16 +302,11 @@ pub struct Filter {
     pub until: Option<Ts>,
     fields: Vec<FieldCond>,
     regexes: Vec<RegexCond>,
-    /// Slack (in [`Ts`] ticks) applied to the record-header pre-check (see [`Filter::want_header_time`]).
-    pub header_slack: i64,
 }
 
 impl Filter {
     pub fn new() -> Self {
-        Filter {
-            header_slack: 24 * 3600 * 10_000_000,
-            ..Default::default()
-        }
+        Filter::default()
     }
 
     pub fn event_ids(mut self, ids: Vec<u32>) -> Self {
@@ -373,22 +368,11 @@ impl Filter {
             .is_none_or(|ids| ids.binary_search(&id).is_ok())
     }
 
-    /// Pre-check on the record header timestamp, before the record is
-    /// rendered. The header holds the time the record was *written*, which
-    /// can lag `TimeCreated` (forwarded events), hence the slack.
+    /// Pre-check on the event's own time (see [`crate::artifact::Sink::want_time`]),
+    /// before the record is decoded: the same test as [`Filter::matches`].
     #[inline]
-    pub fn want_header_time(&self, t: Ts) -> bool {
-        if let Some(s) = self.since
-            && t.0 < s.0.saturating_sub(self.header_slack)
-        {
-            return false;
-        }
-        if let Some(u) = self.until
-            && t.0 > u.0.saturating_add(self.header_slack)
-        {
-            return false;
-        }
-        true
+    pub fn want_time(&self, t: Ts) -> bool {
+        self.since.is_none_or(|s| t >= s) && self.until.is_none_or(|u| t <= u)
     }
 
     #[inline]

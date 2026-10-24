@@ -1068,3 +1068,39 @@ fn stats_record_gaps_inside_a_chunk_and_never_from_filters() {
     assert!(!out.contains("rid_gaps"), "{out}");
     assert!(out.contains("\"quiet_periods\":[]"), "{out}");
 }
+
+#[test]
+fn time_window_ignores_the_record_header_time() {
+    // Forwarded or late-written events: the record header (write) time can
+    // be days after TimeCreated. A --since/--until window on TimeCreated
+    // must still find them, on both decoding paths.
+    let mut b = std::fs::read(fx("Security.evtx")).unwrap();
+    let off = 4096 + 512 + 1790; // second record of the first chunk
+    assert_eq!(&b[off..off + 4], b"**\0\0");
+    let rid = u64::from_le_bytes(b[off + 8..off + 16].try_into().unwrap());
+    let ft = u64::from_le_bytes(b[off + 16..off + 24].try_into().unwrap());
+    let late = ft + 3 * 86_400 * 10_000_000;
+    b[off + 16..off + 24].copy_from_slice(&late.to_le_bytes());
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("Security.evtx");
+    std::fs::write(&p, &b).unwrap();
+    let p = p.display().to_string();
+    let first = lines(&ok(&["parse", "-q", &p]));
+    let ev = first
+        .iter()
+        .find(|e| e["record_id"].as_u64() == Some(rid))
+        .unwrap();
+    let t = ev["timestamp"].as_str().unwrap().to_string();
+    for extra in [&[][..], &["--slow-decoder"][..]] {
+        for cmd in ["search", "timeline"] {
+            let mut args = vec![cmd, "-q", "-n", "0", &p, "--since", &t, "--until", &t];
+            args.extend_from_slice(extra);
+            let v = lines(&ok(&args));
+            assert_eq!(
+                summary(&v)["matches"].as_u64(),
+                Some(1),
+                "{cmd} {extra:?} missed record {rid} at {t}"
+            );
+        }
+    }
+}

@@ -47,8 +47,12 @@ impl UnitReport {
 /// What a unit consumer wants to hear about. Returning `false` from
 /// [`Sink::want_time`] lets the parser skip rendering a record entirely.
 pub trait Sink {
-    /// Called with the record header time before the record is decoded.
-    fn want_time(&mut self, _header_ts: crate::Ts) -> bool {
+    /// Called with the event's own time (EVTX `TimeCreated`, microsecond
+    /// precision, exactly what [`EventView::ts`] will hold) when the parser
+    /// can read it before decoding the record. Never called with the EVTX
+    /// record header time, which is the write time and can be days later
+    /// (forwarded events, D-008).
+    fn want_time(&mut self, _event_ts: crate::Ts) -> bool {
         true
     }
     /// Called with the event id before the record's values are decoded,

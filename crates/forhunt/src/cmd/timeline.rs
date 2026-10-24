@@ -75,7 +75,7 @@ struct UnitSink<'a> {
 
 impl Sink for UnitSink<'_> {
     fn want_time(&mut self, t: Ts) -> bool {
-        self.filter.want_header_time(t)
+        self.filter.want_time(t)
     }
     fn want_event_id(&mut self, id: u32) -> bool {
         self.filter.want_event_id(id)

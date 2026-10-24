@@ -886,6 +886,21 @@ fn decode_value(chunk: &[u8], ty: u8, a: usize, b: usize, text: &mut Vec<u8>) ->
     V::Str(start, text.len())
 }
 
+/// `TimeCreated` at microsecond precision when it is a FILETIME
+/// substitution (as [`decode_chunk`] sets `EventView::ts`).
+fn filetime_sub(time: &Option<Src>, values: &[(u8, usize, usize)], chunk: &[u8]) -> Option<Ts> {
+    match time {
+        Some(Src::Sub(i)) => match values.get(*i as usize) {
+            Some(&(0x11, a, b)) if b - a == 8 => {
+                let ft = u64::from_le_bytes(chunk[a..b].try_into().ok()?) as i64;
+                Some(Ts((ft - EPOCH_TICKS) / 10 * 10))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// Decodes a chunk on the fast path and delivers events in record order.
 /// Returns `false` (having delivered nothing) when the chunk needs the JSON
 /// path. `want_time` gets the record header time before decoding.
@@ -908,7 +923,11 @@ pub(crate) fn decode_chunk(
     for r in &recs {
         *records += 1;
         let header_ts = Ts(r.filetime as i64 - EPOCH_TICKS);
-        if !sink.want_time(header_ts) {
+        // Time pre-check on TimeCreated itself when it is a FILETIME
+        // substitution (cheap to read), never on the header (write) time.
+        if let Some(t) = filetime_sub(&r.plan.sys.time, &r.values, chunk)
+            && !sink.want_time(t)
+        {
             continue;
         }
         if let Some(eid) = raw_event_id(&r.plan.sys.event_id, &r.values, chunk)

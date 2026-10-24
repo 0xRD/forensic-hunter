@@ -245,10 +245,8 @@ impl EvtxSource {
                 rep.note(|| format!("chunk {unit}: record {record_id} cut by truncation"));
                 break;
             }
-            if !sink.want_time(Ts::from_jiff(rec.timestamp)) {
-                rep.records += 1;
-                continue;
-            }
+            // No time pre-check here: the header time is the write time,
+            // TimeCreated is only known once rendered (D-008).
             let header_ts = Ts::from_jiff(rec.timestamp);
             let json = match rec.into_json_bytes() {
                 Ok(j) => j.data,
