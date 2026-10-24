@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fallback when the release workflow cannot push to the tap (no
-# HOMEBREW_TAP_TOKEN): renders the formula from a published release and pushes
+# TAP_DEPLOY_KEY): renders the formula from a published release and pushes
 # it with your local `gh` login.
 # usage: scripts/update-tap.sh v0.1.0 [owner/homebrew-tap]
 set -euo pipefail

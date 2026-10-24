@@ -2,7 +2,6 @@
 class Forhunt < Formula
   desc "Very fast Windows event log (EVTX) parsing, search and timelines for DFIR"
   homepage "https://github.com/0xRD/forensic-hunter"
-  version "@VERSION@"
   license any_of: ["MIT", "Apache-2.0"]
 
   on_macos do

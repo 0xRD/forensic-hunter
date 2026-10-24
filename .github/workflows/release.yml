@@ -148,31 +148,39 @@ jobs:
     if: ${{ !contains(github.event.inputs.tag || github.ref_name, '-') }}
     runs-on: ubuntu-latest
     env:
-      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      # Deploy key with write access to 0xRD/homebrew-tap only (D-043).
+      TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.REF }}
-      - name: Skip without tap token
-        if: env.HOMEBREW_TAP_TOKEN == ''
-        run: echo "::warning::HOMEBREW_TAP_TOKEN is not set; skipping the tap update (see BLOCKERS.md B-002 or run scripts/update-tap.sh)"
+      - name: Skip without tap key
+        if: env.TAP_DEPLOY_KEY == ''
+        run: echo "::warning::TAP_DEPLOY_KEY is not set; skipping the tap update (run scripts/update-tap.sh)"
       - uses: actions/download-artifact@v4
-        if: env.HOMEBREW_TAP_TOKEN != ''
+        if: env.TAP_DEPLOY_KEY != ''
         with:
           pattern: dist-*
           path: dist
           merge-multiple: true
       - name: Render formula and push to the tap
-        if: env.HOMEBREW_TAP_TOKEN != ''
+        if: env.TAP_DEPLOY_KEY != ''
         run: |
           set -euo pipefail
           scripts/render-formula.sh "$TAG" dist > forhunt.rb
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${TAP_REPO:-0xRD/homebrew-tap}.git" tap
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          printf '%s\n' "$TAP_DEPLOY_KEY" > "$work/key"
+          chmod 600 "$work/key"
+          # GitHub's published host key (gh api meta): no trust on first use.
+          echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" > "$work/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $work/key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$work/known_hosts"
+          git clone --depth 1 git@github.com:0xRD/homebrew-tap.git tap
           mkdir -p tap/Formula
           cp forhunt.rb tap/Formula/forhunt.rb
           cd tap
-          git config user.name "forhunt release bot"
-          git config user.email "actions@users.noreply.github.com"
           git add Formula/forhunt.rb
-          git commit -m "forhunt ${TAG#v}" || { echo "formula unchanged"; exit 0; }
-          git push
+          git diff --cached --quiet && { echo "formula unchanged"; exit 0; }
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "forhunt ${TAG#v}"
+          git push origin HEAD:main

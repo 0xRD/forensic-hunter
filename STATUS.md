@@ -1,8 +1,15 @@
 # Status
 
-Last update: 2026-10-22 (session 1)
+Last update: 2026-10-24 (session 2)
 
 ## Done
+- Session 2 (2026-10-24, on a Mac): repository public; authors rewritten to
+  the owner; v0.1.0 recreated on the rewritten tag (same tree, same
+  archives, Intel macOS dropped, D-042); Homebrew formula in the tap
+  (`brew install 0xrd/tap/forhunt`, audit and `brew test` pass), tap job
+  switched to a deploy key (D-043); `install.sh` "latest" resolution tested
+  against the public release (forhunt + Hayabusa, checksums ok); full local
+  gate green on macOS arm64; 800 mutated EVTX files: no crash, no hang.
 - Spec review, PLAN.md, DECISIONS.md (D-001..D-041), BLOCKERS.md (B-001..B-004)
 - forhunt-core: event model, Artifact/Source traits, EVTX source (positional
   reads, per-chunk panic isolation, truncated-tail recovery, damaged string
