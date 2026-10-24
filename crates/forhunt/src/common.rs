@@ -363,29 +363,45 @@ pub fn unit_bytes(src: &dyn Source) -> u64 {
 /// only in case are merged. Windows writes both forms (Application events
 /// often carry the NetBIOS name), and they are one machine.
 pub fn merge_host_aliases(hosts: &mut std::collections::HashMap<String, u64>) {
-    let mut names: Vec<String> = hosts.keys().cloned().collect();
-    names.sort_by_key(|n| std::cmp::Reverse(n.len()));
-    for short in names.clone() {
-        let lower = short.to_lowercase();
-        let target = names.iter().filter(|n| **n != short).find(|n| {
-            let l = n.to_lowercase();
-            l == lower && **n > short
-                || (!lower.contains('.')
-                    && l.strip_prefix(&lower).is_some_and(|r| r.starts_with('.'))
-                    && names
-                        .iter()
-                        .filter(|m| {
-                            m.to_lowercase()
-                                .strip_prefix(&lower)
-                                .is_some_and(|r| r.starts_with('.'))
-                        })
-                        .count()
-                        == 1)
-        });
-        if let Some(t) = target.cloned()
-            && let Some(n) = hosts.remove(&short)
-        {
-            *hosts.entry(t).or_default() += n;
+    use std::collections::HashMap;
+    // Linear: one lowercase key per name, then one lookup per short name.
+    let mut by_lower: HashMap<String, Vec<String>> = HashMap::new();
+    for n in hosts.keys() {
+        by_lower
+            .entry(n.to_lowercase())
+            .or_default()
+            .push(n.clone());
+    }
+    // Case variants: keep the greatest spelling.
+    for names in by_lower.values_mut() {
+        names.sort();
+        let keep = names.pop().expect("non-empty");
+        for n in names.drain(..) {
+            if let Some(c) = hosts.remove(&n) {
+                *hosts.entry(keep.clone()).or_default() += c;
+            }
+        }
+        names.push(keep);
+    }
+    // Short names: the FQDNs by first label, merged only when unambiguous.
+    let mut fqdn_by_label: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (lower, names) in &by_lower {
+        if let Some((label, _)) = lower.split_once('.') {
+            fqdn_by_label.entry(label).or_default().push(&names[0]);
+        }
+    }
+    let mut moves = Vec::new();
+    for (lower, names) in &by_lower {
+        if lower.contains('.') {
+            continue;
+        }
+        if let Some([fqdn]) = fqdn_by_label.get(lower.as_str()).map(Vec::as_slice) {
+            moves.push((names[0].clone(), fqdn.to_string()));
+        }
+    }
+    for (short, fqdn) in moves {
+        if let Some(c) = hosts.remove(&short) {
+            *hosts.entry(fqdn).or_default() += c;
         }
     }
 }
@@ -416,5 +432,19 @@ mod host_tests {
         .into();
         merge_host_aliases(&mut h);
         assert_eq!(h.len(), 3);
+        // Case variants become one entry.
+        let mut h: std::collections::HashMap<String, u64> =
+            [("ws1.corp".to_string(), 1), ("WS1.corp".to_string(), 2)].into();
+        merge_host_aliases(&mut h);
+        assert_eq!(h.values().copied().collect::<Vec<_>>(), vec![3]);
+        // Many hosts stay fast (linear).
+        let mut h: std::collections::HashMap<String, u64> = (0..50_000)
+            .map(|i| (format!("H{i}.corp.local"), 1))
+            .collect();
+        h.extend((0..50_000).map(|i| (format!("H{i}"), 1)));
+        let t = std::time::Instant::now();
+        merge_host_aliases(&mut h);
+        assert_eq!(h.len(), 50_000);
+        assert!(t.elapsed().as_secs() < 5);
     }
 }
