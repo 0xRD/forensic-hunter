@@ -514,6 +514,25 @@ mod tests {
     }
 
     #[test]
+    fn single_unnamed_data_is_data_1() {
+        // One unnamed <Data> decodes as `Data`; several as `Data[1]`...
+        // The documented name `Data[1]` must find both.
+        let mut e = ev();
+        e.fields = vec![Field {
+            name: "Data".into(),
+            value: Val::Str(Cow::Borrowed("TriggerStarted:6")),
+        }];
+        let f = |s: &str| Filter::new().fields(vec![FieldCond::parse(s).unwrap()]);
+        assert!(f("Data[1]=TriggerStarted:6").matches(&e));
+        assert!(f("data[1]~started").matches(&e));
+        assert!(!f("Data[1]!=TriggerStarted:6").matches(&e));
+        assert!(f("Data=TriggerStarted:6").matches(&e));
+        assert!(!f("Data[2]=TriggerStarted:6").matches(&e));
+        let r = |s: &str| Filter::new().regexes(vec![RegexCond::parse(s).unwrap()]);
+        assert!(r("Data[1]=^Trigger").matches(&e));
+    }
+
+    #[test]
     fn ids() {
         assert_eq!(
             parse_event_ids(&["4624, 4625".into(), "1-3".into()]).unwrap(),

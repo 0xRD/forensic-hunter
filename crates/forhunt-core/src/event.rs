@@ -98,6 +98,13 @@ impl<'a> EventView<'a> {
         {
             return Some(Cow::Borrowed(f.value.as_str()));
         }
+        // A lone unnamed <Data> decodes as `Data`, several as `Data[1]`,
+        // `Data[2]`...: `Data[1]` (the documented name) finds both.
+        if name.eq_ignore_ascii_case("Data[1]")
+            && let Some(f) = self.fields.iter().find(|f| f.name == "Data")
+        {
+            return Some(Cow::Borrowed(f.value.as_str()));
+        }
         let sys = match name.to_ascii_lowercase().as_str() {
             "computer" => &self.computer,
             "channel" => &self.channel,
