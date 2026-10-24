@@ -16,6 +16,9 @@ pub struct Expanded {
     pub files: Vec<PathBuf>,
     /// Arguments that matched nothing.
     pub missing: Vec<String>,
+    /// Folders or links that could not be walked (permissions, loops):
+    /// files under them may be missing.
+    pub errors: Vec<String>,
 }
 
 fn has_glob(s: &str) -> bool {
@@ -28,6 +31,7 @@ fn has_glob(s: &str) -> bool {
 pub fn expand(args: &[String], artifacts: &[Box<dyn Artifact>]) -> anyhow::Result<Expanded> {
     let mut out = BTreeSet::new();
     let mut missing = Vec::new();
+    let mut errors = Vec::new();
     let claimed = |p: &Path| artifacts.iter().any(|a| a.matches_name(p));
     for arg in args {
         let p = Path::new(arg);
@@ -35,11 +39,15 @@ pub fn expand(args: &[String], artifacts: &[Box<dyn Artifact>]) -> anyhow::Resul
             out.insert(p.to_path_buf());
         } else if p.is_dir() {
             let before = out.len();
-            walk(p, &mut |f| {
-                if claimed(f) {
-                    out.insert(f.to_path_buf());
-                }
-            });
+            walk(
+                p,
+                &mut |f| {
+                    if claimed(f) {
+                        out.insert(f.to_path_buf());
+                    }
+                },
+                &mut errors,
+            );
             if out.len() == before {
                 missing.push(arg.clone());
             }
@@ -51,11 +59,15 @@ pub fn expand(args: &[String], artifacts: &[Box<dyn Artifact>]) -> anyhow::Resul
                 .compile_matcher();
             let base = literal_prefix(arg);
             let before = out.len();
-            walk(&base, &mut |f| {
-                if glob.is_match(f) || f.strip_prefix("./").is_ok_and(|s| glob.is_match(s)) {
-                    out.insert(f.to_path_buf());
-                }
-            });
+            walk(
+                &base,
+                &mut |f| {
+                    if glob.is_match(f) || f.strip_prefix("./").is_ok_and(|s| glob.is_match(s)) {
+                        out.insert(f.to_path_buf());
+                    }
+                },
+                &mut errors,
+            );
             if out.len() == before {
                 missing.push(arg.clone());
             }
@@ -66,6 +78,7 @@ pub fn expand(args: &[String], artifacts: &[Box<dyn Artifact>]) -> anyhow::Resul
     Ok(Expanded {
         files: out.into_iter().collect(),
         missing,
+        errors,
     })
 }
 
@@ -85,14 +98,26 @@ fn literal_prefix(pat: &str) -> PathBuf {
     }
 }
 
-fn walk(dir: &Path, f: &mut dyn FnMut(&Path)) {
+/// Walks `dir`, following links (collections are sometimes trees of links;
+/// loops are detected), and records what could not be read instead of
+/// silently skipping it.
+fn walk(dir: &Path, f: &mut dyn FnMut(&Path), errors: &mut Vec<String>) {
     for entry in walkdir::WalkDir::new(dir)
-        .follow_links(false)
+        .follow_links(true)
         .sort_by_file_name()
     {
-        let Ok(entry) = entry else { continue };
-        if entry.file_type().is_file() {
-            f(entry.path());
+        match entry {
+            Ok(entry) if entry.file_type().is_file() => f(entry.path()),
+            Ok(_) => {}
+            Err(e) => {
+                let at = e
+                    .path()
+                    .map_or_else(|| dir.display().to_string(), |p| p.display().to_string());
+                let why = e
+                    .io_error()
+                    .map_or_else(|| e.to_string(), |io| io.to_string());
+                errors.push(format!("{at}: not searched ({why})"));
+            }
         }
     }
 }
@@ -156,6 +181,9 @@ pub fn open_all(
         found: exp.files.len(),
         ..Opened::default()
     };
+    for e in &exp.errors {
+        o.warnings.push(e.clone());
+    }
     for m in &exp.missing {
         o.warnings.push(format!("no input matched `{m}`"));
     }
@@ -240,5 +268,34 @@ mod tests {
         std::fs::write(c.join("$J"), b"x").unwrap();
         let e = expand(&[d.path().display().to_string()], &arts).unwrap();
         assert_eq!(e.files.len(), 4);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walk_follows_links_and_reports_unreadable_dirs() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let real = d.path().join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("System.evtx"), b"x").unwrap();
+        let col = d.path().join("collection");
+        std::fs::create_dir_all(&col).unwrap();
+        // A collection made of links (to files and to a folder).
+        std::os::unix::fs::symlink(real.join("System.evtx"), col.join("Security.evtx")).unwrap();
+        std::os::unix::fs::symlink(&real, col.join("linked")).unwrap();
+        let locked = col.join("locked");
+        std::fs::create_dir_all(&locked).unwrap();
+        std::fs::write(locked.join("Sysmon.evtx"), b"x").unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let arts = crate::artifact::registry();
+        let e = expand(&[col.display().to_string()], &arts).unwrap();
+        // Root reads anything: then nothing is unreadable.
+        let readable = std::fs::read_dir(&locked).is_ok();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(e.files.len(), 2, "{:?}", e.files);
+        if !readable {
+            assert_eq!(e.errors.len(), 1, "{:?}", e.errors);
+            assert!(e.errors[0].contains("locked"), "{:?}", e.errors);
+        }
     }
 }
