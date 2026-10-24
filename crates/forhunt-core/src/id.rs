@@ -3,7 +3,7 @@
 //! The file key is the first 32 bits of a BLAKE3 fingerprint of the file's
 //! size, header, first and last chunk. It survives copies and renames, it is
 //! different for two hosts' `Security.evtx`, and it is computed without
-//! reading the whole file (see DECISIONS.md, D-005).
+//! reading the whole file (see docs/DECISIONS.md, D-005).
 
 use std::fmt;
 use std::str::FromStr;

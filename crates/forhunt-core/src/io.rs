@@ -5,7 +5,7 @@ use std::borrow::Cow;
 /// Where the bytes come from. Files are read with positional reads, one
 /// chunk at a time, straight into the buffer the parser owns: resident
 /// memory stays bounded whatever the file size (an mmap would count every
-/// touched page; see DECISIONS.md D-021).
+/// touched page; see docs/DECISIONS.md D-021).
 pub(crate) enum Data {
     File { file: std::fs::File, len: u64 },
     Owned(Vec<u8>),

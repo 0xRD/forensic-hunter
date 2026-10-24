@@ -70,11 +70,23 @@ forhunt search  ./evidence -c MFT -e 16 -f SiLtFn=true   # timestomped files ($M
 forhunt search  ./evidence -c UsnJrnl -e 2               # file deletions ($J)
 ```
 
-Filters: `--event-id 4624,4720-4738`, `--channel Security|Sysmon|PS|...`,
-`--since/--until` (ISO 8601, UTC), `--field Name=value` (case-insensitive,
-hex-aware), `Name!=value`, `Name~substring`, `--regex [Name=]REGEX`,
-`--computer HOST`, `--limit N`. Common options: `--threads`, `--no-progress`,
-`--tz Europe/Paris` (display only), `--strict`, `--checksums`, `-q`.
+Filters:
+- `-e/--event-id 4624,4720-4738`, `-c/--channel Security,Sysmon` (names,
+  aliases such as `Sec`/`PS`, `*` globs) and `--computer WS-07` (short name or
+  FQDN, which also matches events logged under the short name) take comma
+  lists; repeating them ORs the values.
+- `--since/--until`: ISO 8601 (any offset; UTC without one), inclusive, on
+  the event's `TimeCreated`.
+- `-f Name=value` (case-insensitive; `0x3e7` equals `999`; GUIDs with or
+  without braces; Windows' 7-digit times), `Name!=value`, `Name~substring`,
+  `Name!~substring`, and `-r [Name=]REGEX`. Different `-f`/`-r` conditions
+  are ANDed. Values match the way they are displayed: multi-line text as
+  one line.
+- `--limit N` (the `llm` format stops at 200 by default; `0` = all).
+
+Common options: `--fields a,b` (`llm`: keep only these fields), `--threads`,
+`--no-progress`, `--tz Europe/Paris` (display only), `--strict`,
+`--checksums`, `-q`.
 Paths may be files, directories (recursive) or globs; any number of them, from
 any number of endpoints. Results are concatenated into one output by default
 (each row/line carries its source file and computer); `-O DIR --split file|host`
@@ -90,6 +102,11 @@ Example `llm` output:
 {"id":"4a2aa2ed:53413","t":"2024-03-11T10:10:02.000000Z","h":"WS-07.contoso.local","ch":"Sec","eid":4624,"ti":"Logon success","d":{"user":"administrator","dom":"CONTOSO","lt":10,"ip":"203.0.113.50","port":"49732","auth":"NTLM","lproc":"NtLmSsp ","lid":"0x8a3f21","elev":"%%1842","lm":"NTLM V2","keylen":128}}
 {"summary":{"cmd":"search","matches":1,"shown":1,"truncated":false,"scanned":2548,"files":1,...}}
 ```
+
+Anything forhunt cannot handle cleanly is reported on stderr, never skipped
+in silence: unreadable files or folders, damaged chunks and records, two
+copies of one log with overlapping record ids, ambiguous `show` ids, short and
+fully qualified names of one host, leftover files in an `-O` folder.
 
 Exit codes: 0 ok, 1 error, 2 usage, 3 no readable input, 4 corrupt input with `--strict`.
 Full reference: [skill/references/forhunt.md](skill/references/forhunt.md).
@@ -111,9 +128,20 @@ HIT, NO_HIT, NOT_APPLICABLE or LOG_SOURCE_MISSING), `timeline` on suspicious
 windows, then a report with a full chronological timeline, ATT&CK mapping,
 IOCs, coverage and gaps.
 
+## Testing
+
+Results are checked against an independent parser, not against forhunt
+itself: on a real two-host lab collection (56,930 events, French-locale
+Windows), every event was decoded and compared field by field with
+python-evtx, and about 6,800 random filter queries plus all 513 checklist
+queries returned exactly the same events. The test suite covers each filter,
+format and command end to end on synthetic, corrupt and truncated fixtures,
+fast and slow decoders are byte-identical, and CI runs on Linux, macOS and
+Windows.
+
 ## Benchmarks
 
-Corpus: synthetic `evtx-gen corpus --size 2G` = 2,048 MiB, 3,016,365 events. Machine: x86_64, 4 cores, Linux (cloud VM); 3 runs each with [hyperfine](https://github.com/sharkdp/hyperfine), 2026-10-22, forhunt 0.1.0.
+Corpus: synthetic `evtx-gen corpus --size 2G` = 2,048 MiB, 3,016,365 events. Machine: x86_64, 4 cores, Linux (cloud VM); 3 runs each with [hyperfine](https://github.com/sharkdp/hyperfine), 2026-10-22, forhunt 0.1.0. Since 0.3.0 time windows read every record's `TimeCreated` (no pre-check on the record write time, D-008): up to about +12 % on time-filtered searches of real logs.
 
 | Task | Wall time (mean ± σ) | MiB/s | Events/s | Peak RSS |
 |---|---|---|---|---|
@@ -155,11 +183,20 @@ cargo deny check                           # licences and advisories
 python3 scripts/gen-checklist-index.py     # regenerate checklist index
 ```
 
-Layout: `crates/forhunt-core` (event model, EVTX source, decoder, filters,
-field maps, engine), `crates/forhunt-output` (writers), `crates/forhunt`
-(CLI), `tools/evtx-gen` (synthetic EVTX), `skill/` (Claude skill).
-Design decisions: [DECISIONS.md](DECISIONS.md). Test data is synthetic or
-downloaded by script; no real logs are committed.
+Layout: `crates/forhunt-core` (event model, EVTX and NTFS sources, decoder,
+filters, field maps, engine; also used as a library by
+[forhunt-viewer](https://github.com/0xRD/forhunt-viewer)),
+`crates/forhunt-output` (writers), `crates/forhunt` (CLI), `tools/evtx-gen`
+(synthetic EVTX), `skill/` (Claude skill). More in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md),
+[docs/DECISIONS.md](docs/DECISIONS.md) (every design decision and why),
+[docs/ROADMAP.md](docs/ROADMAP.md) and [CHANGELOG.md](CHANGELOG.md). Test
+data is synthetic or downloaded by script; no real logs are committed.
+
+**Graphical viewer**: [forhunt-viewer](https://github.com/0xRD/forhunt-viewer)
+opens `.evtx` files, `$MFT`/`$J` or whole evidence folders directly (using
+these crates) and browses multi-GB timelines with Excel-style filters
+(`brew install --cask 0xrd/tap/forhunt-viewer`).
 
 ## Licence
 

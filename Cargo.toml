@@ -4,7 +4,7 @@ members = ["crates/forhunt-core", "crates/forhunt-output", "crates/forhunt", "to
 default-members = ["crates/forhunt"]
 
 [workspace.package]
-version = "0.2.2"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -15,8 +15,8 @@ keywords = ["dfir", "forensics", "evtx", "windows", "incident-response"]
 categories = ["command-line-utilities"]
 
 [workspace.dependencies]
-forhunt-core = { path = "crates/forhunt-core", version = "0.2.2" }
-forhunt-output = { path = "crates/forhunt-output", version = "0.2.2" }
+forhunt-core = { path = "crates/forhunt-core", version = "0.3.0" }
+forhunt-output = { path = "crates/forhunt-output", version = "0.3.0" }
 evtx = { version = "=0.12.3", default-features = false }
 anyhow = "1"
 thiserror = "2"
@@ -47,7 +47,7 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 # Not "abort": a panic inside the EVTX decoder on a malformed chunk is caught
-# per chunk and counted as a bad chunk instead of killing the run (see DECISIONS.md).
+# per chunk and counted as a bad chunk instead of killing the run (see docs/DECISIONS.md).
 panic = "unwind"
 strip = true
 debug = false

@@ -10,7 +10,7 @@ yanked = "deny"
 ignore = [
     # `encoding` (legacy code pages for ANSI strings in EVTX) is unmaintained but
     # has no known vulnerability; it is a dependency of the `evtx` crate. Revisit
-    # when evtx moves to encoding_rs (see DECISIONS.md D-016).
+    # when evtx moves to encoding_rs (see docs/DECISIONS.md D-016).
     { id = "RUSTSEC-2021-0153", reason = "transitive via evtx; unmaintained, no vulnerability" },
 ]
 
