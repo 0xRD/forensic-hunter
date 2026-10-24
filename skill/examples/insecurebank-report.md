@@ -227,16 +227,16 @@ flowchart LR
   P_dump{{"Outflank-Dumpert -> lsass.exe"}}
   F_ntds[/"ntds.dit copy"/]
   P_osk{{"Utilman -> osk.exe (SYSTEM)"}}
-  A_bob -->|"1. T1070.001 log clear 2019-03-25 09:09 792dbe0a:1"| H_DC1
-  A_bob -->|"2. T1484.001 10:33-12:33 792dbe0a:4"| F_gpo
-  A_bob -->|"3. T1098 DCSync rights 21:28:45 ab178b42:11"| F_acl
-  F_acl -.->|"4. enables (inferred)"| A_admin
-  A_admin -->|"5. T1003.006 DCSync 2019-05-08 02:10 85641d06:3"| H_DC1
-  A_admin -.->|"6. T1207 DCShadow 03:00:37 4662e471:3"| H_alice
-  A_admin -->|"7. T1021.006 WinRM 2019-05-16 01:31 158c870c:2"| H_DC1
-  H_DC1 -->|"8. T1546.008 16:08 90275a25:2"| P_osk
-  A_admin -->|"9. T1003.001 2019-06-21 07:35 0bc6e267:2"| P_dump
-  P_dump --- H_alice
-  A_bob -.->|"10. T1003.003 2019-11-26 23:55 ad76cd23:2 (path only)"| F_ntds
-  F_ntds --- H_DC1
+  A_bob -->|"(1) T1070.001 log clear 2019-03-25 09:09 792dbe0a:1"| H_DC1
+  A_bob -->|"(2) T1484.001 10:33-12:33 792dbe0a:4"| F_gpo
+  A_bob -->|"(6) T1098 DCSync rights 21:28:45 ab178b42:11"| F_acl
+  F_acl -.->|"enables (inferred)"| A_admin
+  A_admin -->|"(7) T1003.006 DCSync 2019-05-08 02:10 85641d06:3"| H_DC1
+  A_admin -.->|"(9) T1207 DCShadow 03:00:37 4662e471:3"| H_alice
+  A_admin -->|"(13) T1021.006 WinRM 2019-05-16 01:31 158c870c:2"| H_DC1
+  H_DC1 -->|"(17) T1546.008 16:08 90275a25:2"| P_osk
+  A_admin -->|"(19-20) T1003.001 2019-06-21 07:35 0bc6e267:2"| P_dump
+  P_dump ---|"on"| H_alice
+  A_bob -.->|"(23) T1003.003 2019-11-26 23:55 ad76cd23:2 (path only)"| F_ntds
+  F_ntds ---|"on"| H_DC1
 ```

@@ -10,7 +10,7 @@
  th,td{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top} .wrap{overflow-x:auto}
 </style></head><body>
 <h1>insecurebank.local attack path</h1>
-<p class="note">Solid edges: observed in logs. Dashed edges: inferred. Times UTC. Labels: technique, time, forhunt event id.</p>
+<p class="note">Solid edges: observed in logs. Dashed edges: inferred. Times UTC. Labels: (timeline row), technique, time, forhunt event id. Scroll sideways for the whole graph.</p>
 <div class="wrap"><pre class="mermaid">
 flowchart LR
   A_bob([&quot;insecurebank\\bob&quot;])
@@ -22,18 +22,18 @@ flowchart LR
   P_dump{{&quot;Outflank-Dumpert -&gt; lsass.exe&quot;}}
   F_ntds[/&quot;ntds.dit copy&quot;/]
   P_osk{{&quot;Utilman -&gt; osk.exe (SYSTEM)&quot;}}
-  A_bob --&gt;|&quot;1. T1070.001 log clear 2019-03-25 09:09 792dbe0a:1&quot;| H_DC1
-  A_bob --&gt;|&quot;2. T1484.001 10:33-12:33 792dbe0a:4&quot;| F_gpo
-  A_bob --&gt;|&quot;3. T1098 DCSync rights 21:28:45 ab178b42:11&quot;| F_acl
-  F_acl -.-&gt;|&quot;4. enables (inferred)&quot;| A_admin
-  A_admin --&gt;|&quot;5. T1003.006 DCSync 2019-05-08 02:10 85641d06:3&quot;| H_DC1
-  A_admin -.-&gt;|&quot;6. T1207 DCShadow 03:00:37 4662e471:3&quot;| H_alice
-  A_admin --&gt;|&quot;7. T1021.006 WinRM 2019-05-16 01:31 158c870c:2&quot;| H_DC1
-  H_DC1 --&gt;|&quot;8. T1546.008 16:08 90275a25:2&quot;| P_osk
-  A_admin --&gt;|&quot;9. T1003.001 2019-06-21 07:35 0bc6e267:2&quot;| P_dump
-  P_dump --- H_alice
-  A_bob -.-&gt;|&quot;10. T1003.003 2019-11-26 23:55 ad76cd23:2 (path only)&quot;| F_ntds
-  F_ntds --- H_DC1
+  A_bob --&gt;|&quot;(1) T1070.001 log clear 2019-03-25 09:09 792dbe0a:1&quot;| H_DC1
+  A_bob --&gt;|&quot;(2) T1484.001 10:33-12:33 792dbe0a:4&quot;| F_gpo
+  A_bob --&gt;|&quot;(6) T1098 DCSync rights 21:28:45 ab178b42:11&quot;| F_acl
+  F_acl -.-&gt;|&quot;enables (inferred)&quot;| A_admin
+  A_admin --&gt;|&quot;(7) T1003.006 DCSync 2019-05-08 02:10 85641d06:3&quot;| H_DC1
+  A_admin -.-&gt;|&quot;(9) T1207 DCShadow 03:00:37 4662e471:3&quot;| H_alice
+  A_admin --&gt;|&quot;(13) T1021.006 WinRM 2019-05-16 01:31 158c870c:2&quot;| H_DC1
+  H_DC1 --&gt;|&quot;(17) T1546.008 16:08 90275a25:2&quot;| P_osk
+  A_admin --&gt;|&quot;(19-20) T1003.001 2019-06-21 07:35 0bc6e267:2&quot;| P_dump
+  P_dump ---|&quot;on&quot;| H_alice
+  A_bob -.-&gt;|&quot;(23) T1003.003 2019-11-26 23:55 ad76cd23:2 (path only)&quot;| F_ntds
+  F_ntds ---|&quot;on&quot;| H_DC1
 
 </pre></div>
 <h2>Timeline</h2>
@@ -66,6 +66,8 @@ flowchart LR
 <script type="module">
 import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
 mermaid.initialize({startOnLoad:true, securityLevel:"strict",
+  // Natural size, scrolled by .wrap: fitted to the page, a wide LR graph has unreadable labels.
+  flowchart:{useMaxWidth:false},
   theme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default"});
 </script>
 </body></html>
