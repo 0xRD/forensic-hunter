@@ -115,8 +115,10 @@ pub fn write(w: &Writer<'_>, ev: &EventView<'_>, out: &mut Vec<u8>) {
         out.push(b':');
         value(out, v, max);
     };
+    // `--fields` picks among every field, not only the map's key fields:
+    // a requested field must not vanish because the map leaves it out.
     match spec {
-        Some(spec) if !w.opts.all_fields => {
+        Some(spec) if !w.opts.all_fields && w.opts.only.is_empty() => {
             for name in &spec.keep {
                 if let Some(v) = ev.field(name)
                     && !v.is_blank()

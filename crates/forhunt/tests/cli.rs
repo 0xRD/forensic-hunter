@@ -989,3 +989,45 @@ fn summary_counts_are_what_the_filters_return() {
         }
     }
 }
+
+#[test]
+fn llm_fields_names_any_field_of_the_event() {
+    // --fields must show a requested field even when the map does not
+    // keep it by default: an empty `d` reads as "no such value".
+    let jsonl = lines(&ok(&[
+        "search",
+        "-q",
+        &fx("Security.evtx"),
+        "-e",
+        "4624",
+        "-n",
+        "1",
+        "-F",
+        "jsonl",
+    ]));
+    let data = jsonl[0]["data"].as_object().unwrap();
+    let mut asked = Vec::new();
+    for name in ["LogonGuid", "ProcessName", "KeyLength", "TargetUserName"] {
+        if let Some(v) = data.get(name)
+            && v.as_str() != Some("-")
+            && v.as_str() != Some("")
+        {
+            asked.push(name);
+        }
+    }
+    assert!(asked.len() >= 2, "{data:?}");
+    let out = ok(&[
+        "search",
+        "-q",
+        &fx("Security.evtx"),
+        "-e",
+        "4624",
+        "-n",
+        "1",
+        "--fields",
+        &asked.join(","),
+    ]);
+    let v: Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
+    let d = v["d"].as_object().unwrap();
+    assert_eq!(d.len(), asked.len(), "{asked:?} -> {d:?}");
+}
