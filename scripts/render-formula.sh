@@ -12,7 +12,7 @@ else
 fi
 out="$(cat "$root/packaging/homebrew/forhunt.rb.in")"
 out="${out//@VERSION@/$ver}"
-for t in aarch64-apple-darwin x86_64-apple-darwin aarch64-unknown-linux-musl x86_64-unknown-linux-musl; do
+for t in aarch64-apple-darwin aarch64-unknown-linux-musl x86_64-unknown-linux-musl; do
   sha="$(printf '%s\n' "$sums" | awk -v f="forhunt-${ver}-${t}.tar.gz" '$2 == f || $2 == "*"f {print $1}')"
   [ -n "$sha" ] || { echo "missing checksum for $t" >&2; exit 1; }
   out="${out//@SHA_${t}@/$sha}"

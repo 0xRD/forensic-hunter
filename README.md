@@ -26,6 +26,9 @@ forensic analyst.
 ## Install
 
 ```bash
+# Homebrew (macOS Apple Silicon, Linux)
+brew install 0xRD/tap/forhunt
+
 # skill installer (forhunt + Hayabusa, SHA-256 verified)
 bash skill/scripts/install.sh            # Windows: skill/scripts/install.ps1
 
@@ -34,8 +37,22 @@ cargo install --git https://github.com/0xRD/forensic-hunter forhunt
 ```
 
 Release archives with SHA-256 checksums: [Releases](https://github.com/0xRD/forensic-hunter/releases)
-(x86_64/aarch64 Linux musl, x86_64/aarch64 macOS, x86_64 Windows).
-Homebrew (`brew install 0xRD/tap/forhunt`) is coming.
+(x86_64/aarch64 Linux musl, Apple Silicon macOS, x86_64 Windows). Intel Macs:
+build from source with `cargo install`.
+
+**macOS: archive downloaded with a browser.** The binary is not notarized, so
+Gatekeeper blocks the first run ("cannot be opened because Apple cannot check it
+for malicious software"). Homebrew and the installer script are not affected.
+Either remove the quarantine flag after checking the SHA-256:
+
+```bash
+shasum -a 256 -c forhunt-*-aarch64-apple-darwin.tar.gz.sha256
+tar xzf forhunt-*-aarch64-apple-darwin.tar.gz
+xattr -d com.apple.quarantine forhunt-*/forhunt
+```
+
+or run it once, then open **System Settings > Privacy & Security**, click
+**Open Anyway** next to the forhunt message and confirm.
 
 ## Usage
 

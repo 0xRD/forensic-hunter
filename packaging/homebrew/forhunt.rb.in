@@ -6,13 +6,10 @@ class Forhunt < Formula
   license any_of: ["MIT", "Apache-2.0"]
 
   on_macos do
+    depends_on arch: :arm64
     on_arm do
       url "https://github.com/0xRD/forensic-hunter/releases/download/v@VERSION@/forhunt-@VERSION@-aarch64-apple-darwin.tar.gz"
       sha256 "@SHA_aarch64-apple-darwin@"
-    end
-    on_intel do
-      url "https://github.com/0xRD/forensic-hunter/releases/download/v@VERSION@/forhunt-@VERSION@-x86_64-apple-darwin.tar.gz"
-      sha256 "@SHA_x86_64-apple-darwin@"
     end
   end
 

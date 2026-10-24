@@ -63,6 +63,8 @@ case "$arch" in
   *) die "unsupported architecture $arch" ;;
 esac
 target="${ft_arch}-${ft_os}"
+# Intel Macs are not released (D-042); build from source there.
+[ "$target" = "x86_64-apple-darwin" ] && die "no Intel macOS build; use: cargo install --git https://github.com/0xRD/forensic-hunter forhunt"
 case "$hb_os" in
   lin) hb_plat="lin-${hb_arch}-musl" ;;
   mac) hb_plat="mac-${hb_arch}" ;;
