@@ -408,11 +408,16 @@ impl Filter {
         }
         if !self.computers.is_empty() {
             let host = ev.computer.to_lowercase();
+            // Exact, short name of an FQDN, or (event logged under its
+            // short name) the first label of the wanted FQDN.
             let ok = self.computers.iter().any(|c| {
                 host == *c
                     || host
                         .strip_prefix(c.as_str())
                         .is_some_and(|r| r.starts_with('.'))
+                    || (!host.is_empty()
+                        && !host.contains('.')
+                        && c.split_once('.').is_some_and(|(short, _)| short == host))
             });
             if !ok {
                 return false;
@@ -635,6 +640,21 @@ mod tests {
         assert!(!f("ProcessCreationTime!=2025-10-21T14:19:55.9050049Z").matches(&e));
         assert!(!f("ProcessCreationTime=2025-10-21T14:19:55.9050059Z").matches(&e));
         assert!(!f("ProcessCreationTime=2025-10-21").matches(&e));
+    }
+
+    #[test]
+    fn computer_fqdn_also_matches_its_short_name() {
+        // Some events (early boot, some providers) carry the short name;
+        // `stats` folds it into the FQDN, so the FQDN filter must keep them.
+        let mut e = ev();
+        e.computer = "DC01".into();
+        let c = |s: &str| Filter::new().computers(vec![s.into()]);
+        assert!(c("DC01.corp.local").matches(&e));
+        assert!(c("dc01").matches(&e));
+        assert!(!c("DC02.corp.local").matches(&e));
+        assert!(!c("DC0.corp.local").matches(&e));
+        e.computer = "DC01.other.local".into();
+        assert!(!c("DC01.corp.local").matches(&e));
     }
 
     #[test]

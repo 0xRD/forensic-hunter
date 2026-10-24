@@ -850,9 +850,20 @@ fn guid_filters_accept_the_windows_form() {
         "jsonl",
         "-q",
     ]));
-    let guid = first[0]["data"]["ProcessGuid"].as_str().unwrap().to_string();
+    let guid = first[0]["data"]["ProcessGuid"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let count = |f: &str| {
-        let v = lines(&ok(&["search", &fx("Sysmon.evtx"), "-f", f, "-n", "0", "-q"]));
+        let v = lines(&ok(&[
+            "search",
+            &fx("Sysmon.evtx"),
+            "-f",
+            f,
+            "-n",
+            "0",
+            "-q",
+        ]));
         summary(&v)["matches"].as_u64().unwrap()
     };
     let bare = count(&format!("ProcessGuid={guid}"));
