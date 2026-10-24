@@ -1370,7 +1370,7 @@
     1100
    ],
    "forhunt": [
-    "forhunt search <paths> --channel System --event-id 7040 --field param1=\"Windows Event Log\" --format llm",
+    "forhunt search <paths> --channel System --event-id 7040 --field param4=EventLog --format llm",
     "forhunt search <paths> --channel System --event-id 6005,6006,6008 --format llm",
     "forhunt search <paths> --channel Security --event-id 1100 --format llm"
    ],
@@ -1484,7 +1484,8 @@
    ],
    "forhunt": [
     "forhunt search <paths> --channel System --event-id 7036 --field param1~Defender --field param2=stopped --format llm",
-    "forhunt search <paths> --channel System --event-id 7040 --field param3=disabled --format llm",
+    "forhunt search <paths> --channel System --event-id 7036 --field param1~Defender --regex 'Binary=2F0031000000$' --format llm",
+    "forhunt search <paths> --channel System --event-id 7040 --regex 'param3=^(disabled|désactivé|deaktiviert|deshabilitado|disabilitato|desativado|uitgeschakeld)$' --format llm",
     "forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~\"stop windefend\" --format llm"
    ],
    "severity": "high",
@@ -4169,7 +4170,8 @@
     7036
    ],
    "forhunt": [
-    "forhunt search <paths> --channel System --event-id 7036 --field param2=stopped --format llm"
+    "forhunt search <paths> --channel System --event-id 7036 --field param2=stopped --format llm",
+    "forhunt search <paths> --channel System --event-id 7036 --regex 'Binary=2F0031000000$' --format llm"
    ],
    "severity": "medium",
    "verified": false

@@ -406,11 +406,14 @@ checks:
     condition: selection
   forhunt:
   - forhunt search <paths> --channel System --event-id 7036 --field param2=stopped --format llm
+  - forhunt search <paths> --channel System --event-id 7036 --regex 'Binary=2F0031000000$' --format llm
   pivots:
   - 'Burst: many distinct services stopping within a minute is typical pre-encryption behaviour (count(distinct
     param1) > 8 within 2m)'
   - Sysmon 1 for net stop, sc stop/config, taskkill, Stop-Service to identify the initiator (7036 has
     no user)
+  - 'param2 (the state) is translated (French: arrêté): the second query tests the binary data, which ends
+    with the service short name and its state code (/1 = stopped, hex 2F0031000000) in every language'
   false_positives:
   - Patch windows, reboots (shutdown stops everything), backup jobs that stop SQL writers
   severity: medium

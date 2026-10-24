@@ -872,3 +872,45 @@ fn guid_filters_accept_the_windows_form() {
     assert_eq!(count(&format!("ProcessGuid={windows}")), bare);
     assert_eq!(count(&format!("ProcessGuid~{windows}")), bare);
 }
+
+#[test]
+fn checklist_service_queries_do_not_rely_on_translated_text() {
+    // 7036 / 7040 state and start-type strings and service display names
+    // are translated (French logs: "arrêté", "Désactivé", "Journal
+    // d’événements Windows"): an English-only query is a silent NO_HIT.
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../skill/references/checklists/checklists.json");
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    for c in v["checks"].as_array().unwrap() {
+        let qs: Vec<&str> = c["forhunt"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|q| q.as_str().unwrap())
+            .collect();
+        for q in &qs {
+            let scm = q.contains("--event-id 7036") || q.contains("--event-id 7040");
+            if !scm {
+                continue;
+            }
+            assert!(
+                !q.contains("param1="),
+                "{}: display name match: {q}",
+                c["id"]
+            );
+            if q.contains("--event-id 7036") && q.contains("param2=") {
+                assert!(
+                    qs.iter()
+                        .any(|o| o.contains("--event-id 7036") && o.contains("Binary=")),
+                    "{}: no language-independent 7036 state query besides {q}",
+                    c["id"]
+                );
+            }
+            assert!(
+                !q.contains("param3=disabled") && !q.contains("param2=disabled"),
+                "{}: English start type: {q}",
+                c["id"]
+            );
+        }
+    }
+}

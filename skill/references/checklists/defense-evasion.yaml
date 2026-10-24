@@ -241,8 +241,7 @@ checks:
     condition: selection_startup_disabled or ((selection_stopped or selection_scm_stopped or selection_security_1100)
       and no matching shutdown / reboot sequence)
   forhunt:
-  - forhunt search <paths> --channel System --event-id 7040 --field param1="Windows Event Log" --format
-    llm
+  - forhunt search <paths> --channel System --event-id 7040 --field param4=EventLog --format llm
   - forhunt search <paths> --channel System --event-id 6005,6006,6008 --format llm
   - forhunt search <paths> --channel Security --event-id 1100 --format llm
   pivots:
@@ -625,7 +624,10 @@ checks:
   forhunt:
   - forhunt search <paths> --channel System --event-id 7036 --field param1~Defender --field param2=stopped
     --format llm
-  - forhunt search <paths> --channel System --event-id 7040 --field param3=disabled --format llm
+  - forhunt search <paths> --channel System --event-id 7036 --field param1~Defender --regex 'Binary=2F0031000000$'
+    --format llm
+  - forhunt search <paths> --channel System --event-id 7040 --regex 'param3=^(disabled|désactivé|deaktiviert|deshabilitado|disabilitato|desativado|uitgeschakeld)$'
+    --format llm
   - forhunt search <paths> --channel Security --event-id 4688 --field CommandLine~"stop windefend" --format
     llm
   pivots:
@@ -633,6 +635,9 @@ checks:
   - Events after the stop from the affected product are missing (Defender 1116, Sysmon records)
   - 'Localised service display names: param1 text is translated (SigmaHQ includes a French variant), match
     by language or use the service short name where available'
+  - 'param2 / param3 (state, start type) are translated too (French: arrêté, Désactivé): 7036 queries
+    also test the binary data, which ends with the service name and its state code (/1 = stopped,
+    hex 2F0031000000), the same in every language'
   false_positives:
   - Patch windows, AV product replacement (Defender stops when a third-party AV registers), reboots
   severity: high
