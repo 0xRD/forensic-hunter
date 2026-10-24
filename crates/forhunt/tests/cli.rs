@@ -1104,3 +1104,65 @@ fn time_window_ignores_the_record_header_time() {
         }
     }
 }
+
+/// A copy of a fixture with every record header id lowered by `by`, as in
+/// exported logs (headers renumbered, System/EventRecordID kept).
+fn renumbered(name: &str, by: u64) -> (tempfile::TempDir, String) {
+    let mut b = std::fs::read(fx(name)).unwrap();
+    let rd = |b: &[u8], o: usize| u64::from_le_bytes(b[o..o + 8].try_into().unwrap());
+    let mut c = 4096;
+    while c + 65536 <= b.len() {
+        if &b[c..c + 8] == b"ElfChnk\0" {
+            for f in [24, 32] {
+                let v = rd(&b, c + f) - by;
+                b[c + f..c + f + 8].copy_from_slice(&v.to_le_bytes());
+            }
+            let free = u32::from_le_bytes(b[c + 48..c + 52].try_into().unwrap()) as usize;
+            let mut o = c + 512;
+            while o + 24 <= c + free && &b[o..o + 4] == b"**\0\0" {
+                let size = u32::from_le_bytes(b[o + 4..o + 8].try_into().unwrap()) as usize;
+                let v = rd(&b, o + 8) - by;
+                b[o + 8..o + 16].copy_from_slice(&v.to_le_bytes());
+                o += size;
+            }
+        }
+        c += 65536;
+    }
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join(name);
+    std::fs::write(&p, &b).unwrap();
+    let p = p.display().to_string();
+    (d, p)
+}
+
+#[test]
+fn show_warns_when_header_id_and_event_record_id_differ() {
+    let (_d, p) = renumbered("System.evtx", 8000);
+    let v = lines(&ok(&["parse", "-q", &p]));
+    let e = &v[3];
+    let (id, header, erid) = (
+        e["id"].as_str().unwrap().to_string(),
+        e["record_id"].as_u64().unwrap(),
+        e["event_record_id"].as_u64().unwrap(),
+    );
+    assert_ne!(header, erid);
+    let key = id.split(':').next().unwrap();
+    for fmt in ["json", "llm", "xml"] {
+        // By header id: shown, with a warning naming the EventRecordID.
+        let o = forhunt(&["show", &id, "-p", &p, "-F", fmt]);
+        assert!(o.status.success(), "{fmt}");
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert!(
+            err.contains("warning") && err.contains(&erid.to_string()),
+            "{fmt}: {err}"
+        );
+    }
+    // By EventRecordID (Hayabusa's RecordID): shown, with a warning naming
+    // the forhunt id of that record.
+    for fmt in ["json", "xml"] {
+        let o = forhunt(&["show", &format!("{key}:{erid}"), "-p", &p, "-F", fmt]);
+        assert!(o.status.success(), "{fmt}");
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert!(err.contains("warning") && err.contains(&id), "{fmt}: {err}");
+    }
+}

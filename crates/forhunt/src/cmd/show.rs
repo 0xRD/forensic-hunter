@@ -73,6 +73,29 @@ fn candidate_units(src: &dyn Source, rid: u64) -> Vec<usize> {
     hit
 }
 
+/// Header id of the record whose System/EventRecordID is `erid`.
+fn header_of_erid(src: &dyn Source, erid: u64) -> Option<u64> {
+    let mut hit = None;
+    for u in 0..src.units() {
+        src.parse_unit(u, &mut |ev: &EventView<'_>| {
+            if hit.is_none() && ev.event_record_id == erid {
+                hit = Some(ev.id.record);
+            }
+        });
+        if hit.is_some() {
+            break;
+        }
+    }
+    hit
+}
+
+/// `<EventRecordID>N</EventRecordID>` of a rendered record.
+fn xml_erid(xml: &str) -> Option<u64> {
+    let start = xml.find("<EventRecordID>")? + "<EventRecordID>".len();
+    let end = xml[start..].find('<')? + start;
+    xml[start..end].trim().parse().ok()
+}
+
 pub fn run(a: ShowArgs) -> anyhow::Result<()> {
     let ctx = Ctx::new(&a.common)?;
     let ids: Vec<EventRef> = a.ids.iter().map(|s| s.parse()).collect::<Result<_, _>>()?;
@@ -116,10 +139,13 @@ pub fn run(a: ShowArgs) -> anyhow::Result<()> {
             continue;
         };
         let mut found = false;
+        // System/EventRecordID of the record found by header id.
+        let mut shown_erid: Option<u64> = None;
         for u in candidate_units(src.as_ref(), id.record) {
             if a.format == ShowFormat::Xml {
                 if let Some(r) = src.raw_record(u, id.record) {
                     let xml = r?;
+                    shown_erid = xml_erid(&xml);
                     common::write_out(&mut *out, xml.as_bytes())?;
                     common::write_out(&mut *out, b"\n")?;
                     found = true;
@@ -132,6 +158,7 @@ pub fn run(a: ShowArgs) -> anyhow::Result<()> {
             let rep = src.parse_unit(u, &mut |ev: &EventView<'_>| {
                 if ev.id.record == id.record && !found {
                     found = true;
+                    shown_erid = Some(ev.event_record_id);
                     match a.format {
                         ShowFormat::Json => {
                             let v = to_json(ev, &path, ctx.tz.as_ref());
@@ -153,6 +180,41 @@ pub fn run(a: ShowArgs) -> anyhow::Result<()> {
                 break;
             }
         }
+        // Exported or filtered logs renumber record headers: say which
+        // record the other reading of the id designates.
+        if let Some(erid) = shown_erid
+            && erid != 0
+            && erid != id.record
+        {
+            let other = match header_of_erid(src.as_ref(), id.record) {
+                Some(h) => format!(
+                    "the record whose EventRecordID is {} (as Hayabusa reports it) is {}:{h}",
+                    id.record, id.file
+                ),
+                None => format!("no record has EventRecordID {}", id.record),
+            };
+            ctx.warn(&format!(
+                "{id}: shown by record header id {}; its System/EventRecordID is {erid} \
+                 (exported or filtered log); {other}",
+                id.record
+            ));
+        }
+        let mut via_erid: Option<u64> = None;
+        if !found
+            && a.format == ShowFormat::Xml
+            && let Some(h) = header_of_erid(src.as_ref(), id.record)
+        {
+            for u in candidate_units(src.as_ref(), h) {
+                if let Some(r) = src.raw_record(u, h) {
+                    let xml = r?;
+                    common::write_out(&mut *out, xml.as_bytes())?;
+                    common::write_out(&mut *out, b"\n")?;
+                    found = true;
+                    via_erid = Some(h);
+                    break;
+                }
+            }
+        }
         if !found && a.format != ShowFormat::Xml {
             // Exported logs: the id may be the System EventRecordID (as in
             // Hayabusa output) rather than the record header id.
@@ -162,6 +224,7 @@ pub fn run(a: ShowArgs) -> anyhow::Result<()> {
                 src.parse_unit(u, &mut |ev: &EventView<'_>| {
                     if ev.event_record_id == id.record && !found {
                         found = true;
+                        via_erid = Some(ev.id.record);
                         match a.format {
                             ShowFormat::Json => {
                                 let v = to_json(ev, &path, ctx.tz.as_ref());
@@ -182,6 +245,13 @@ pub fn run(a: ShowArgs) -> anyhow::Result<()> {
                     break;
                 }
             }
+        }
+        if let Some(h) = via_erid {
+            ctx.warn(&format!(
+                "{id}: no record header id {}; shown the record whose System/EventRecordID is {} \
+                 (exported or filtered log): its forhunt id is {}:{h}",
+                id.record, id.record, id.file
+            ));
         }
         if !found {
             missing.push(format!(
