@@ -98,15 +98,41 @@ fn num_eq(have: &str, want: &str) -> bool {
 /// Equality as an analyst means it: text ignoring case, numbers across hex
 /// and decimal, GUIDs with or without braces (`{42e0bcd9-...}`, as Windows
 /// shows them), timestamps at microsecond precision (Windows shows 7 digits).
+/// A multi-line value also equals its `llm` rendering (whitespace runs as
+/// one space).
 fn value_eq(have: &str, want: &str) -> bool {
-    eq_ci(have, want) || num_eq(have, want) || guid_eq(have, want) || time_eq(have, want)
+    eq_ci(have, want)
+        || num_eq(have, want)
+        || guid_eq(have, want)
+        || time_eq(have, want)
+        || (is_multiline(have) && eq_ci(&squash(have), &squash(want)))
 }
 
-/// Case-insensitive substring; a GUID value also contains its braces.
+/// Case-insensitive substring; a GUID value also contains its braces, a
+/// multi-line value also contains snippets of its `llm` rendering
+/// (whitespace runs as one space: `a\r\n\tb` contains `a b`).
 fn value_contains(have: &str, needle: &str) -> bool {
     contains_ci(have, needle)
         || (needle.contains(['{', '}'])
             && braced_guid(have).is_some_and(|b| contains_ci(&b, needle)))
+        || (is_multiline(have) && contains_ci(&squash(have), &squash(needle)))
+}
+
+/// Values the `llm` format collapses (see `forhunt_output::llm`).
+fn is_multiline(s: &str) -> bool {
+    s.contains(['\r', '\n', '\t'])
+}
+
+/// Whitespace runs become one space, ends trimmed.
+fn squash(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for w in s.split_whitespace() {
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(w);
+    }
+    out
 }
 
 /// `8-4-4-4-12` hexadecimal digits, as evtx renders GUID values.
@@ -660,6 +686,29 @@ mod tests {
         assert!(!c("DC0.corp.local").matches(&e));
         e.computer = "DC01.other.local".into();
         assert!(!c("DC01.corp.local").matches(&e));
+    }
+
+    #[test]
+    fn multiline_values_match_as_the_llm_format_shows_them() {
+        // `llm` shows "a\r\n\tb" as "a b": a snippet copied from it must
+        // still find the event.
+        let mut e = ev();
+        e.fields.push(Field {
+            name: "PrivilegeList".into(),
+            value: Val::Str(Cow::Borrowed(
+                "SeSecurityPrivilege\r\n\t\t\tSeBackupPrivilege\r\n\t\t\tSeDebugPrivilege",
+            )),
+        });
+        let f = |s: &str| Filter::new().fields(vec![FieldCond::parse(s).unwrap()]);
+        assert!(f("PrivilegeList~SeBackupPrivilege SeDebugPrivilege").matches(&e));
+        assert!(f("PrivilegeList~sebackupprivilege  sedebugprivilege").matches(&e));
+        assert!(!f("PrivilegeList!~SeBackupPrivilege SeDebugPrivilege").matches(&e));
+        assert!(
+            f("PrivilegeList=SeSecurityPrivilege SeBackupPrivilege SeDebugPrivilege").matches(&e)
+        );
+        assert!(!f("PrivilegeList~SeSecurityPrivilege SeDebugPrivilege").matches(&e));
+        // Single-line values keep exact spacing.
+        assert!(!f("CommandLine~powershell  -enc").matches(&e));
     }
 
     #[test]
