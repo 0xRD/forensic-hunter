@@ -66,8 +66,6 @@ Last update: 2026-10-24 (session 2)
 - ATT&CK: some checks keep revoked ids next to their replacements
   (T1070.001/T1685.005, T1562.x/T1685/T1686, T1574.002/T1574.001), as noted
   in each check; drop the legacy ids at the next checklist revision
-- Pre-public steps for the owner (history author, release, visibility, tap, installer test): TODO.md
-- Homebrew tap (deferred, B-002)
 - Review lower-priority items: Command and Control checklist, symlinked
   inputs, option-value errors exit 1 (docs say 2), refuse `-o` inside the
   evidence tree, `--max-value-len` counts bytes, Mermaid from CDN in the HTML
