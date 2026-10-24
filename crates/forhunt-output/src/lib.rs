@@ -2,6 +2,7 @@
 //! caller owns buffering and ordering, so writers can run on worker threads.
 
 pub mod csv;
+pub mod export;
 pub mod json;
 pub mod jsonl;
 pub mod llm;

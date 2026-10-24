@@ -13,7 +13,6 @@ use forhunt_core::filter::{FieldCond, Filter, RegexCond, parse_event_ids};
 use forhunt_core::id::FileKey;
 use forhunt_core::normalize::FieldMap;
 use forhunt_core::{Ts, input};
-use rayon::prelude::*;
 
 use crate::cli::{Common, FilterArgs};
 
@@ -98,80 +97,24 @@ impl Ctx {
             key: Some(key),
             ..self.parse_options()
         };
-        open_one(&artifact::registry(), path, &o)
+        input::open_one(&artifact::registry(), path, &o)
     }
 
     pub fn open(&self, paths: &[String]) -> anyhow::Result<Inputs> {
-        let arts = artifact::registry();
-        let exp = input::expand(paths, &arts)?;
-        for m in &exp.missing {
-            self.warn(&format!("no input matched `{m}`"));
+        let o = input::open_all(paths, &self.parse_options(), &self.pool)?;
+        for w in &o.warnings {
+            self.warn(w);
         }
-        if exp.files.is_empty() {
+        if o.found == 0 {
             return Err(fail(exit::NO_INPUT, "no input files found"));
         }
-        let opts = self.parse_options();
-        let opened: Vec<_> = self.pool.install(|| {
-            exp.files
-                .par_iter()
-                .map(|p| open_one(&arts, p, &opts))
-                .collect()
-        });
-        let mut sources: Vec<Arc<dyn Source>> = Vec::new();
-        let mut failed = 0usize;
-        let mut seen: std::collections::HashMap<FileKey, std::path::PathBuf> =
-            std::collections::HashMap::new();
-        for (path, r) in exp.files.iter().zip(opened) {
-            match r {
-                Ok(s) => {
-                    for w in s.open_warnings() {
-                        self.warn(&format!("{}: {w}", path.display()));
-                    }
-                    let s = match seen.get(&s.key()) {
-                        None => s,
-                        Some(prev) if FileKey::same_content(prev, path).unwrap_or(false) => {
-                            self.warn(&format!(
-                                "{}: same content as {} (key {}), skipped",
-                                path.display(),
-                                prev.display(),
-                                s.key()
-                            ));
-                            continue;
-                        }
-                        Some(prev) => {
-                            // Different content, same sampled key: key this
-                            // file by its whole content so ids stay unique.
-                            let key = FileKey::of_file(path)?;
-                            self.warn(&format!(
-                                "{}: sampled key {} also used by {}; using full-content key {key}",
-                                path.display(),
-                                s.key(),
-                                prev.display()
-                            ));
-                            let o = ParseOptions {
-                                key: Some(key),
-                                ..opts.clone()
-                            };
-                            open_one(&arts, path, &o)?
-                        }
-                    };
-                    seen.entry(s.key()).or_insert_with(|| path.to_path_buf());
-                    sources.push(s);
-                }
-                Err(e) => {
-                    failed += 1;
-                    self.warn(&format!("{e:#}"));
-                }
-            }
-        }
-        if sources.is_empty() {
+        if o.sources.is_empty() {
             return Err(fail(exit::NO_INPUT, "no readable input files"));
         }
-        let bytes = sources.iter().map(|s| s.byte_len()).sum();
         Ok(Inputs {
-            sources,
-            failed,
-            bytes,
+            sources: o.sources,
+            failed: o.failed,
+            bytes: o.bytes,
         })
     }
 
@@ -227,34 +170,6 @@ impl Ctx {
             &self.map,
         )
     }
-}
-
-fn open_one(
-    arts: &[Box<dyn artifact::Artifact>],
-    p: &Path,
-    opts: &ParseOptions,
-) -> anyhow::Result<Arc<dyn Source>> {
-    let mut head = [0u8; 8192];
-    let n = {
-        use std::io::Read;
-        let mut f =
-            std::fs::File::open(p).with_context(|| format!("{}: cannot open", p.display()))?;
-        let mut n = 0;
-        while n < head.len() {
-            let r = f.read(&mut head[n..])?;
-            if r == 0 {
-                break;
-            }
-            n += r;
-        }
-        n
-    };
-    let art = arts
-        .iter()
-        .find(|a| a.sniff(&head[..n]))
-        .or_else(|| arts.iter().find(|a| a.matches_name(p)))
-        .ok_or_else(|| anyhow::anyhow!("{}: unrecognised artifact type", p.display()))?;
-    art.open(p, opts)
 }
 
 pub struct Inputs {

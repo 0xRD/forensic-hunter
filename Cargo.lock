@@ -541,7 +541,7 @@ dependencies = [
 
 [[package]]
 name = "evtx-gen"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -581,7 +581,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "forhunt"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -599,7 +599,7 @@ dependencies = [
 
 [[package]]
 name = "forhunt-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "blake3",
@@ -621,10 +621,12 @@ dependencies = [
 
 [[package]]
 name = "forhunt-output"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
+ "anyhow",
  "forhunt-core",
  "jiff",
+ "rayon",
  "serde",
  "serde_json",
 ]

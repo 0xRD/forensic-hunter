@@ -1,10 +1,15 @@
 //! Expands command-line paths (files, directories, globs) into a sorted,
 //! de-duplicated list of artifact files.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use crate::artifact::Artifact;
+use anyhow::Context;
+use rayon::prelude::*;
+
+use crate::artifact::{Artifact, ParseOptions, Source};
+use crate::id::FileKey;
 
 #[derive(Debug, Default)]
 pub struct Expanded {
@@ -90,6 +95,122 @@ fn walk(dir: &Path, f: &mut dyn FnMut(&Path)) {
             f(entry.path());
         }
     }
+}
+
+/// Opens one artifact file: sniffs its first bytes, falls back to its name.
+pub fn open_one(
+    arts: &[Box<dyn Artifact>],
+    p: &Path,
+    opts: &ParseOptions,
+) -> anyhow::Result<Arc<dyn Source>> {
+    let mut head = [0u8; 8192];
+    let n = {
+        use std::io::Read;
+        let mut f =
+            std::fs::File::open(p).with_context(|| format!("{}: cannot open", p.display()))?;
+        let mut n = 0;
+        while n < head.len() {
+            let r = f.read(&mut head[n..])?;
+            if r == 0 {
+                break;
+            }
+            n += r;
+        }
+        n
+    };
+    let art = arts
+        .iter()
+        .find(|a| a.sniff(&head[..n]))
+        .or_else(|| arts.iter().find(|a| a.matches_name(p)))
+        .ok_or_else(|| anyhow::anyhow!("{}: unrecognised artifact type", p.display()))?;
+    art.open(p, opts)
+}
+
+/// Inputs ready for the engine.
+#[derive(Default)]
+pub struct Opened {
+    pub sources: Vec<Arc<dyn Source>>,
+    /// Files found by [`expand`] (before opening).
+    pub found: usize,
+    /// Files that could not be opened.
+    pub failed: usize,
+    /// Total size of the opened sources.
+    pub bytes: u64,
+    /// Human-readable problems, in order: unmatched arguments, open
+    /// warnings, skipped duplicates, unreadable files.
+    pub warnings: Vec<String>,
+}
+
+/// Expands `paths` and opens every input in parallel on `pool`. Unreadable
+/// or non-artifact files are reported in `warnings` and skipped;
+/// byte-identical inputs (same file key) are opened once. Never fails just
+/// because nothing could be opened: check `sources`.
+pub fn open_all(
+    paths: &[String],
+    opts: &ParseOptions,
+    pool: &rayon::ThreadPool,
+) -> anyhow::Result<Opened> {
+    let arts = crate::artifact::registry();
+    let exp = expand(paths, &arts)?;
+    let mut o = Opened {
+        found: exp.files.len(),
+        ..Opened::default()
+    };
+    for m in &exp.missing {
+        o.warnings.push(format!("no input matched `{m}`"));
+    }
+    let opened: Vec<_> = pool.install(|| {
+        exp.files
+            .par_iter()
+            .map(|p| open_one(&arts, p, opts))
+            .collect()
+    });
+    let mut seen: HashMap<FileKey, PathBuf> = HashMap::new();
+    for (path, r) in exp.files.iter().zip(opened) {
+        match r {
+            Ok(s) => {
+                for w in s.open_warnings() {
+                    o.warnings.push(format!("{}: {w}", path.display()));
+                }
+                let s = match seen.get(&s.key()) {
+                    None => s,
+                    Some(prev) if FileKey::same_content(prev, path).unwrap_or(false) => {
+                        o.warnings.push(format!(
+                            "{}: same content as {} (key {}), skipped",
+                            path.display(),
+                            prev.display(),
+                            s.key()
+                        ));
+                        continue;
+                    }
+                    Some(prev) => {
+                        // Different content, same sampled key: key this
+                        // file by its whole content so ids stay unique.
+                        let key = FileKey::of_file(path)?;
+                        o.warnings.push(format!(
+                            "{}: sampled key {} also used by {}; using full-content key {key}",
+                            path.display(),
+                            s.key(),
+                            prev.display()
+                        ));
+                        let ko = ParseOptions {
+                            key: Some(key),
+                            ..opts.clone()
+                        };
+                        open_one(&arts, path, &ko)?
+                    }
+                };
+                seen.entry(s.key()).or_insert_with(|| path.to_path_buf());
+                o.sources.push(s);
+            }
+            Err(e) => {
+                o.failed += 1;
+                o.warnings.push(format!("{e:#}"));
+            }
+        }
+    }
+    o.bytes = o.sources.iter().map(|s| s.byte_len()).sum();
+    Ok(o)
 }
 
 #[cfg(test)]
