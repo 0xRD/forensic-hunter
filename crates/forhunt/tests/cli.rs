@@ -1085,6 +1085,82 @@ fn short_field_name_in_a_filter_warns() {
     assert!(err.contains("`img` is a short output name"), "{err}");
 }
 
+fn mail(name: &str) -> String {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/mail")
+        .join(name)
+        .display()
+        .to_string()
+}
+
+const MAILBOXES: &str = "WS-07/C/Users/jdoe/AppData/Local/Microsoft/Outlook";
+
+/// Both formats hold one mailbox: encrypted PST, compressed OST.
+#[test]
+fn mailbox_reads_alike_in_both_formats() {
+    let lines = |file: &str| -> Vec<Value> {
+        let path = mail(&format!("{MAILBOXES}/{file}"));
+        let out = ok(&["search", "-q", "-c", "Mail", "-F", "jsonl", &path]);
+        out.lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect()
+    };
+    let (pst, ost) = (lines("archive.pst"), lines("jdoe@contoso.test.ost"));
+    assert_eq!(pst.len(), 5);
+    let data = |v: &[Value]| v.iter().map(|e| e["data"].clone()).collect::<Vec<_>>();
+    assert_eq!(data(&pst), data(&ost));
+    let d = data(&pst);
+    assert_eq!(d[0]["User"], "jdoe");
+    assert_eq!(d[0]["Folder"], "Inbox");
+    assert_eq!(d[0]["From"], "It's Me <secret@example.test>");
+    assert_eq!(d[0]["Urls"], "http://198.51.100.7:9000/MemberCard.tiff.exe");
+    assert_eq!(d[0]["Body"], "See & your card");
+    assert_eq!(d[1]["Size"], "20000".parse::<Value>().unwrap());
+    assert!(
+        d[1]["Sha256"]
+            .as_str()
+            .unwrap()
+            .starts_with("93a6015a3874a774")
+    );
+    assert_eq!(d[2]["Bcc"], "A <a@contoso.test>; B <b@contoso.test>");
+    assert_eq!(d[2]["RecipientCount"], "3".parse::<Value>().unwrap());
+    assert_eq!(d[3]["Unsent"], true);
+    assert_eq!(d[4]["Email"], "ann.lee@contoso.test");
+    assert_eq!(pst[0]["computer"], "");
+}
+
+#[test]
+fn damaged_mailbox_is_reported() {
+    let o = Command::new(env!("CARGO_BIN_EXE_forhunt"))
+        .args(["search", "-c", "Mail", "-F", "jsonl", &mail("damaged")])
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains("unreadable"), "{err}");
+}
+
+/// Mail checks, including ones that need a query to fire to prove it works.
+#[test]
+fn mail_checks_fire() {
+    let checks = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../skill/references/checklists/checklists.json");
+    let out = ok(&[
+        "checklist",
+        "-q",
+        "-k",
+        &checks.display().to_string(),
+        &mail("WS-07"),
+        "-F",
+        "json",
+    ]);
+    let v: Value = serde_json::from_str(&out).unwrap();
+    let rows = v.as_array().unwrap();
+    let status = |id: &str| rows.iter().find(|r| r["id"] == id).unwrap()["status"].clone();
+    for n in [1, 2, 3, 5, 6] {
+        assert_eq!(status(&format!("FH-MAIL-{n:03}")), "HIT?", "{n}");
+    }
+}
+
 #[test]
 fn registry_damage_is_counted() {
     let o = forhunt(&["parse", "--strict", &regx("damaged/SYSTEM"), "-o", "-"]);

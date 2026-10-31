@@ -928,3 +928,23 @@ channel = "UsnJrnl"
 id = 6
 title = "File closed"
 keep = ["Path", "FileName", "Reason", "EntryNumber", "FileAttributes"]
+
+# Mail: mailboxes (.pst, .ost).
+
+[[event]]
+channel = "Mail"
+id = 1
+title = "Mail message"
+keep = ["Folder", "Subject", "From", "To", "Cc", "Bcc", "RecipientCount", "Sent", "Received", "Unsent", "Attachments", "Urls", "Body"]
+
+[[event]]
+channel = "Mail"
+id = 2
+title = "Mail attachment"
+keep = ["Folder", "Subject", "From", "FileName", "Size", "MimeType", "Sha256"]
+
+[[event]]
+channel = "Mail"
+id = 3
+title = "Mail contact"
+keep = ["Name", "Email"]

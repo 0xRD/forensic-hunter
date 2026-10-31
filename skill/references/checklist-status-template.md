@@ -407,6 +407,19 @@ Case: <name>  Evidence: <path>  Analyst: <name>  Started: <UTC time>
 | FH-REG-023 | Built-in Administrator or Guest enabled and used | Registry 42 |  |  |
 | FH-REG-024 | Failed password attempts on local accounts | Registry 42 |  |  |
 
+## Mail (phishing, spreading, exposed secrets)
+
+| Id | Check | Source | Status | Evidence / reason |
+|---|---|---|---|---|
+| FH-MAIL-001 | Links to a bare IP address | Mail 1 |  |  |
+| FH-MAIL-002 | Links ending in an executable or script | Mail 1 |  |  |
+| FH-MAIL-003 | Attachments of a risky type | Mail 2 |  |  |
+| FH-MAIL-004 | Free or anonymous mail senders | Mail 1 |  |  |
+| FH-MAIL-005 | One message to many, or with a blind copy list | Mail 1 |  |  |
+| FH-MAIL-006 | Secrets in message bodies, drafts included | Mail 1 |  |  |
+| FH-MAIL-007 | Archives or mail stores leaving by mail | Mail 2 |  |  |
+| FH-MAIL-008 | Inventory of unsent drafts | Mail 1 |  |  |
+
 ## Summary
 
 | Tactic | HIT | NO_HIT | NOT_APPLICABLE | LOG_SOURCE_MISSING |
@@ -426,3 +439,4 @@ Case: <name>  Evidence: <path>  Analyst: <name>  Started: <UTC time>
 | filesystem |  |  |  |  |
 | prefetch |  |  |  |  |
 | registry |  |  |  |  |
+| mail |  |  |  |  |

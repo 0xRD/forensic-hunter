@@ -309,7 +309,7 @@ fn read_computer_name(path: &Path) -> Option<String> {
 }
 
 /// Writes a time like every other date field of forhunt.
-fn iso(ts: Ts) -> String {
+pub(crate) fn iso(ts: Ts) -> String {
     let mut v = Vec::with_capacity(27);
     ts.write_iso(&mut v);
     String::from_utf8_lossy(&v).into_owned()

@@ -1,5 +1,5 @@
-//! The extension point for artifact types (EVTX, `$MFT`, `$UsnJrnl:$J`, prefetch
-//! and registry hives today; LNK, jump lists, shellbags later).
+//! The extension point for artifact types (EVTX, `$MFT`, `$UsnJrnl:$J`, prefetch,
+//! registry hives and mailboxes today; LNK, jump lists, shellbags later).
 //!
 //! An [`Artifact`] recognises a file and opens it as a [`Source`]. A source is
 //! split into independent *units* that the engine parses in parallel and
@@ -130,5 +130,6 @@ pub fn registry() -> Vec<Box<dyn Artifact>> {
         Box::new(crate::ntfs::UsnArtifact),
         Box::new(crate::prefetch::PrefetchArtifact),
         Box::new(crate::registry::RegistryArtifact),
+        Box::new(crate::mail::MailArtifact),
     ]
 }

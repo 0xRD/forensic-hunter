@@ -4,6 +4,9 @@ Open work, roughly by priority.
 
 ## Artifacts
 - LNK, jump lists, shellbags (the `Artifact`/`Source` traits are ready for them).
+- Mail: ANSI PST (Outlook 2002 and earlier), RTF-only bodies, messages attached
+  to messages, contact addresses through the name-to-id map, deleted items, and
+  searching attachments' contents.
 - Registry: deleted keys and values from slack, old-format (`DIRT`) log replay,
   ShimCache before Windows 10, scheduled task actions, ShellBags in
   `UsrClass.dat`, SID to account name, control sets other than the current one.

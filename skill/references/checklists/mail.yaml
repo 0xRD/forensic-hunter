@@ -1,0 +1,223 @@
+tactic: mail
+title: Mail (phishing, spreading, exposed secrets)
+description: 'What a host''s mailbox says, which no log holds: who sent the lure, its link and attachment, what the host then sent, and what a thief of the file gets. forhunt reads .pst and .ost files onto channel Mail: 1 messages, 2 attachments, 3 contacts. Times are the sender''s clock when a message was sent (Sent), so they can differ from the host''s logs. A mailbox only holds what was synchronised: an empty result says nothing about the server. See references/mail-hunting.md.'
+checks:
+- id: FH-MAIL-001
+  title: Links to a bare IP address
+  tactic: mail
+  attack:
+  - T1566.002
+  channel: Mail
+  event_ids:
+  - 1
+  prerequisites:
+  - .ost or .pst collected (AppData\Local\Microsoft\Outlook, or wherever an archive sits)
+  logic:
+    selection:
+      EventID: 1
+      Urls|re: https?://[0-9]{1,3}(\.[0-9]{1,3}){3}
+    condition: selection
+  forhunt:
+  - forhunt search <paths> -c Mail -e 1 --regex 'Urls=https?://[0-9]{1,3}(\.[0-9]{1,3}){3}' --format llm
+  pivots:
+  - Same URL in Sysmon 1 and 3, browser history and ZoneId HostUrl (FH-FS-004)
+  - Who else received it
+  false_positives:
+  - Devices and internal tools reached by address
+  severity: high
+  sources:
+  - https://attack.mitre.org/techniques/T1566/001/
+  - https://attack.mitre.org/techniques/T1566/002/
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-056).
+- id: FH-MAIL-002
+  title: Links ending in an executable or script
+  tactic: mail
+  attack:
+  - T1566.002
+  - T1204.001
+  channel: Mail
+  event_ids:
+  - 1
+  prerequisites:
+  - .ost or .pst collected (AppData\Local\Microsoft\Outlook, or wherever an archive sits)
+  logic:
+    selection:
+      EventID: 1
+      Urls|re: \.(exe|scr|com|pif|bat|cmd|ps1|vbs|js|jse|hta|msi|lnk|iso|img)(\?|\s|$)
+    condition: selection
+  forhunt:
+  - forhunt search <paths> -c Mail -e 1 --regex 'Urls=\.(exe|scr|com|pif|bat|cmd|ps1|vbs|js|jse|hta|msi|lnk|iso|img)(\?|\s|$)' --format llm
+  pivots:
+  - 'The name in prefetch, BAM and $MFT: forhunt search <paths> -f ExePath~<name>'
+  false_positives:
+  - IT messages pointing to an installer
+  severity: high
+  sources:
+  - https://attack.mitre.org/techniques/T1566/001/
+  - https://attack.mitre.org/techniques/T1566/002/
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-056).
+- id: FH-MAIL-003
+  title: Attachments of a risky type
+  tactic: mail
+  attack:
+  - T1566.001
+  channel: Mail
+  event_ids:
+  - 2
+  prerequisites:
+  - .ost or .pst collected (AppData\Local\Microsoft\Outlook, or wherever an archive sits)
+  logic:
+    selection:
+      EventID: 2
+      FileName|re: \.[a-z0-9]{2,5}\.(exe|scr|com|pif|bat|cmd|ps1|vbs|js|hta)$|\.(exe|scr|com|pif|bat|cmd|ps1|vbs|js|jse|hta|lnk|iso|img|vhd|one|docm|xlsm)$|\.tiff?$
+    condition: selection
+  forhunt:
+  - forhunt search <paths> -c Mail -e 2 --regex 'FileName=\.[a-z0-9]{2,5}\.(exe|scr|com|pif|bat|cmd|ps1|vbs|js|hta)$|\.(exe|scr|com|pif|bat|cmd|ps1|vbs|js|jse|hta|lnk|iso|img|vhd|one|docm|xlsm)$|\.tiff?$' --format llm
+  pivots:
+  - Sha256 against threat intelligence and Sysmon 11/15 hashes; the saved copy under INetCache\Content.Outlook
+  false_positives:
+  - Scanned documents sent as TIFF; signed installers
+  severity: medium
+  sources:
+  - https://attack.mitre.org/techniques/T1566/001/
+  - https://attack.mitre.org/techniques/T1566/002/
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-056). TIFF is here because lures use it to carry an image with a link.
+- id: FH-MAIL-004
+  title: Free or anonymous mail senders
+  tactic: mail
+  attack:
+  - T1566
+  channel: Mail
+  event_ids:
+  - 1
+  prerequisites:
+  - .ost or .pst collected (AppData\Local\Microsoft\Outlook, or wherever an archive sits)
+  logic:
+    selection:
+      EventID: 1
+      From|re: '@(proton(mail)?\.|tutanota\.|tuta\.|cock\.li|guerrillamail\.|mailfence\.|yopmail\.)'
+    condition: selection
+  forhunt:
+  - forhunt search <paths> -c Mail -e 1 --regex 'From=@(proton(mail)?\.|tutanota\.|tuta\.|cock\.li|guerrillamail\.|mailfence\.|yopmail\.)' --format llm
+  pivots:
+  - 'Headers: `forhunt show <id> --all-fields`'
+  false_positives:
+  - Personal contacts of the user
+  severity: low
+  sources:
+  - https://attack.mitre.org/techniques/T1566/
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-056).
+- id: FH-MAIL-005
+  title: One message to many, or with a blind copy list
+  tactic: mail
+  attack:
+  - T1534
+  channel: Mail
+  event_ids:
+  - 1
+  prerequisites:
+  - .ost or .pst collected (AppData\Local\Microsoft\Outlook, or wherever an archive sits)
+  logic:
+    selection:
+      EventID: 1
+      Folder|contains: Sent
+      Bcc|re: .
+    condition: selection
+  forhunt:
+  - forhunt search <paths> -c Mail -e 1 -f Folder~Sent --regex 'Bcc=.' --format llm
+  - forhunt search <paths> -c Mail -e 1 -f Folder~Sent --regex 'RecipientCount=^([2-9][0-9]|[0-9]{3,})$' --format llm
+  pivots:
+  - 'Sent against the execution time of the payload: a mail sent seconds after it is the implant, not the user'
+  - Does the same link appear? Then the host was used to spread the lure
+  false_positives:
+  - Newsletters and all-staff messages
+  severity: high
+  sources:
+  - https://attack.mitre.org/techniques/T1534/
+  verified: false
+  notes: 'Sources cited, not re-read in this session. Field names come from forhunt''s own parser (D-056). Read Sent, not the file times: the Sent Mail copy of a provider can be written later.'
+- id: FH-MAIL-006
+  title: Secrets in message bodies, drafts included
+  tactic: mail
+  attack:
+  - T1552
+  channel: Mail
+  event_ids:
+  - 1
+  prerequisites:
+  - .ost or .pst collected (AppData\Local\Microsoft\Outlook, or wherever an archive sits)
+  logic:
+    selection:
+      EventID: 1
+      Body|re: \b(AKIA|ASIA)[0-9A-Z]{16}\b|aws_secret|-----BEGIN [A-Z ]*PRIVATE KEY|(password|passwd|mot de passe)\s*[:=]\s*[^\s]+|\bghp_[0-9A-Za-z]{36}\b|\bxox[bp]-
+    condition: selection
+  forhunt:
+  - forhunt search <paths> -c Mail -e 1 --regex 'Body=\b(AKIA|ASIA)[0-9A-Z]{16}\b|aws_secret|-----BEGIN [A-Z ]*PRIVATE KEY|(password|passwd|mot de passe)\s*[:=]\s*[^\s]+|\bghp_[0-9A-Za-z]{36}\b|\bxox[bp]-' --format llm
+  pivots:
+  - 'Unsent drafts count: anyone holding the file has them'
+  - Was the OST or its copy taken? Files in a staging folder (FH-FS checks), Sysmon 11
+  - Rotate and check use of the key at its provider
+  false_positives:
+  - Password reset notices, examples in documentation
+  severity: high
+  sources:
+  - https://attack.mitre.org/techniques/T1552/
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-056). An attachment's content is not searched.
+- id: FH-MAIL-007
+  title: Archives or mail stores leaving by mail
+  tactic: mail
+  attack:
+  - T1048.003
+  channel: Mail
+  event_ids:
+  - 2
+  prerequisites:
+  - .ost or .pst collected (AppData\Local\Microsoft\Outlook, or wherever an archive sits)
+  logic:
+    selection:
+      EventID: 2
+      Folder|contains: Sent
+      FileName|re: \.(zip|rar|7z|tar|gz|pst|ost)$
+    condition: selection
+  forhunt:
+  - forhunt search <paths> -c Mail -e 2 -f Folder~Sent --regex 'FileName=\.(zip|rar|7z|tar|gz|pst|ost)$' --format llm
+  pivots:
+  - Recipient outside the organisation? Size against the staged archive
+  false_positives:
+  - Normal exchange of archives
+  severity: medium
+  sources:
+  - https://attack.mitre.org/techniques/T1048/003/
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-056).
+- id: FH-MAIL-008
+  title: Inventory of unsent drafts
+  tactic: mail
+  attack:
+  - T1114.001
+  channel: Mail
+  event_ids:
+  - 1
+  prerequisites:
+  - .ost or .pst collected (AppData\Local\Microsoft\Outlook, or wherever an archive sits)
+  logic:
+    selection:
+      EventID: 1
+      Unsent: true
+    condition: selection
+  forhunt:
+  - forhunt search <paths> -c Mail -e 1 -f Unsent=true --format llm
+  pivots:
+  - 'Read them: users keep notes and credentials there'
+  false_positives:
+  - 'Every unfinished mail: an inventory, not a detection'
+  severity: informational
+  sources:
+  - https://attack.mitre.org/techniques/T1114/001/
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-056).

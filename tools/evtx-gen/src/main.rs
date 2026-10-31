@@ -18,6 +18,7 @@
 mod events;
 mod ntfs;
 mod prefetch;
+mod pst;
 mod registry;
 mod writer;
 
@@ -75,6 +76,11 @@ enum Cmd {
     /// transaction log, and a damaged copy.
     Registry {
         #[arg(long, default_value = "fixtures/registry")]
+        out: PathBuf,
+    },
+    /// Mailboxes of WS-07 for the same scenario: an OST, a PST, a damaged copy.
+    Mail {
+        #[arg(long, default_value = "fixtures/mail")]
         out: PathBuf,
     },
     /// A large `$MFT` and `$J` of background activity.
@@ -1368,6 +1374,219 @@ fn prefetch_fixtures(out: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A phishing mail with a link and an attachment, what the implant sent on
+/// to the contacts, a draft holding a key, one contact.
+fn mailbox(format: pst::Format) -> Vec<u8> {
+    use pst::{File, V, props, table};
+    let t = |m: u64, s_: u64| BASE + (2 * 3600 + m * 60 + s_) * SEC + 1_234_567;
+    let mut f = File::new(format);
+    const NAME: u16 = 0x3001;
+    const SUBJECT: u16 = 0x0037;
+    const CLASS: u16 = 0x001A;
+    const PT_INT: u16 = 3;
+    const PT_TEXT: u16 = 0x1F;
+    let store = f.block(props(&[(NAME, V::Text("jdoe@contoso.test"))], &[]));
+    f.node(0x21, store, 0, 0);
+    let folders = [
+        (0x122u32, 0x122u32, "Root"),
+        (0x8022, 0x122, "IPM_SUBTREE"),
+        (0x8042, 0x8022, "Inbox"),
+        (0x8062, 0x8022, "Sent Items"),
+        (0x8082, 0x8022, "Drafts"),
+        (0x80A2, 0x8022, "Contacts"),
+    ];
+    let att_cols = [(0x3704, PT_TEXT), (0x0E20, PT_INT)];
+    let rec_cols = [(0x3001, PT_TEXT), (0x0C15, PT_INT), (0x39FE, PT_TEXT)];
+    let link = "http://198.51.100.7:9000/MemberCard.tiff.exe";
+    let html = format!(
+        "<html xmlns:o=\"http://schemas.example.test/office\"><head><style>p {{}}</style></head>\
+         <body><p>See &amp; <a href=\"{link}\">your card</a></p></body></html>"
+    );
+    // Attachment bytes: over two blocks.
+    let lure: Vec<u8> = (0..20_000u32).map(|i| (i % 251) as u8).collect();
+    let message = |f: &mut File,
+                   nid: u32,
+                   parent: u32,
+                   values: Vec<(u16, V<'_>)>,
+                   to: &[(&str, u32, &str)],
+                   attach: Option<(&str, &[u8])>| {
+        let mut subs = Vec::new();
+        let rows: Vec<_> = to
+            .iter()
+            .enumerate()
+            .map(|(i, (n, kind, a))| {
+                let cells = vec![Some(V::Text(n)), Some(V::Int(*kind)), Some(V::Text(a))];
+                (i as u32, cells)
+            })
+            .collect();
+        if !to.is_empty() {
+            let b = f.block(table(&rec_cols, &rows));
+            subs.push((0x692, b, 0));
+        }
+        if let Some((name, data)) = attach {
+            let content = f.spanned(data);
+            let inner = f.subnodes(&[(0x60F, content, 0)]);
+            let pc = props(
+                &[
+                    (0x3701, V::Binary(data)),
+                    (0x3704, V::Text(name)),
+                    (0x3707, V::Text(name)),
+                    (0x3705, V::Int(1)),
+                    (0x0E20, V::Int(data.len() as u32)),
+                    (0x370E, V::Text("image/tiff")),
+                ],
+                &[(0x3701, 0x60F)],
+            );
+            let a = f.block(pc);
+            subs.push((0x8025, a, inner));
+            let size = V::Int(data.len() as u32);
+            let row = (0x8025u32, vec![Some(V::Text(name)), Some(size)]);
+            let b = f.block(table(&att_cols, &[row]));
+            subs.push((0x671, b, 0));
+        }
+        let sub = if subs.is_empty() {
+            0
+        } else {
+            f.subnodes(&subs)
+        };
+        let pc = f.block(props(&values, &[]));
+        f.node(nid, pc, sub, parent);
+    };
+    let phish = "Fingers crossed";
+    message(
+        &mut f,
+        0x20_0004,
+        0x8042,
+        vec![
+            (CLASS, V::Text("IPM.Note")),
+            (SUBJECT, V::Text(phish)),
+            (0x0042, V::Text("It's Me")),
+            (0x5D02, V::Text("secret@example.test")),
+            (0x0039, V::Time(t(2, 0))),
+            (0x0E06, V::Time(t(2, 9))),
+            (0x1013, V::Binary(html.as_bytes())),
+            (0x007D, V::Text("Received: from mx.example.test\r\n")),
+        ],
+        &[("jdoe", 1, "jdoe@contoso.test")],
+        Some(("Lure.tiff", &lure)),
+    );
+    message(
+        &mut f,
+        0x20_0024,
+        0x8062,
+        vec![
+            (CLASS, V::Text("IPM.Note")),
+            (SUBJECT, V::Text(phish)),
+            (0x0042, V::Text("jdoe")),
+            (0x5D02, V::Text("jdoe@contoso.test")),
+            (0x0039, V::Time(t(5, 0))),
+            (
+                0x1000,
+                V::Text("See your card: http://198.51.100.7:9000/MemberCard.tiff.exe"),
+            ),
+        ],
+        &[
+            ("jdoe", 1, "jdoe@contoso.test"),
+            ("A", 3, "a@contoso.test"),
+            ("B", 3, "b@contoso.test"),
+        ],
+        None,
+    );
+    message(
+        &mut f,
+        0x20_0044,
+        0x8082,
+        vec![
+            (CLASS, V::Text("IPM.Note")),
+            (SUBJECT, V::Text("IAM")),
+            (0x0E07, V::Int(8)),
+            (0x3007, V::Time(t(0, 30))),
+            (
+                0x1000,
+                V::Text("Access key ID,Secret\nAKIAIOSFODNN7EXAMPLE,wJalrXUtnFEMI"),
+            ),
+        ],
+        &[],
+        None,
+    );
+    message(
+        &mut f,
+        0x20_0064,
+        0x80A2,
+        vec![
+            (CLASS, V::Text("IPM.Contact")),
+            (SUBJECT, V::Text("Ann Lee")),
+            (0x3008, V::Time(t(0, 1))),
+            (0x8084, V::Text("ann.lee@contoso.test")),
+        ],
+        &[],
+        None,
+    );
+    // Folders with their hierarchy and contents tables.
+    for (nid, parent, name) in folders {
+        let children: Vec<u32> = folders
+            .iter()
+            .filter(|c| c.1 == nid && c.0 != nid)
+            .map(|c| c.0)
+            .collect();
+        let messages: Vec<u32> = [0x20_0004, 0x20_0024, 0x20_0044, 0x20_0064]
+            .into_iter()
+            .filter(|m| {
+                matches!(
+                    (*m, nid),
+                    (0x20_0004, 0x8042)
+                        | (0x20_0024, 0x8062)
+                        | (0x20_0044, 0x8082)
+                        | (0x20_0064, 0x80A2)
+                )
+            })
+            .collect();
+        let pc = f.block(props(
+            &[
+                (NAME, V::Text(name)),
+                (0x3602, V::Int(messages.len() as u32)),
+                (0x3603, V::Int(0)),
+                (0x360A, V::Int(u32::from(!children.is_empty()))),
+            ],
+            &[],
+        ));
+        f.node(nid, pc, 0, parent);
+        let rows: Vec<_> = children
+            .iter()
+            .map(|c| {
+                let n = folders.iter().find(|x| x.0 == *c).map_or("", |x| x.2);
+                (*c, vec![Some(V::Text(n))])
+            })
+            .collect();
+        let h = f.block(table(&[(NAME, PT_TEXT)], &rows));
+        f.node((nid & !0x1F) | 0xD, h, 0, 0);
+        let rows: Vec<_> = messages.iter().map(|m| (*m, vec![None])).collect();
+        let c = f.block(table(&[(SUBJECT, PT_TEXT)], &rows));
+        f.node((nid & !0x1F) | 0xE, c, 0, 0);
+        let a = f.block(table(&[(SUBJECT, PT_TEXT)], &[]));
+        f.node((nid & !0x1F) | 0xF, a, 0, 0);
+    }
+    f.finish()
+}
+
+fn mail_fixtures(out: &Path) -> anyhow::Result<()> {
+    let dir = out.join("WS-07/C/Users/jdoe/AppData/Local/Microsoft/Outlook");
+    std::fs::create_dir_all(&dir)?;
+    let ost = mailbox(pst::Format::Ost);
+    std::fs::write(dir.join("jdoe@contoso.test.ost"), &ost)?;
+    let pst = mailbox(pst::Format::Pst);
+    std::fs::write(dir.join("archive.pst"), &pst)?;
+    // Damaged: the tail with the second half of the trees is gone.
+    let dmg = out.join("damaged");
+    std::fs::create_dir_all(&dmg)?;
+    std::fs::write(dmg.join("cut.pst"), &pst[..pst.len() - 1024])?;
+    let mut noise = pst.clone();
+    noise[0x4600..0x6000].fill(0xAB);
+    std::fs::write(dmg.join("blocks.pst"), noise)?;
+    println!("{}: 1 OST, 1 PST, 2 damaged", out.display());
+    Ok(())
+}
+
 fn registry_fixtures(out: &Path) -> anyhow::Result<()> {
     use registry::{Key, dirty, hive};
     let t = |m: u64, s_: u64| BASE + (2 * 3600 + m * 60 + s_) * SEC + 1_234_567;
@@ -1616,6 +1835,7 @@ fn main() -> anyhow::Result<()> {
         Cmd::Ntfs { out } => ntfs_fixtures(&out),
         Cmd::Prefetch { out } => prefetch_fixtures(&out),
         Cmd::Registry { out } => registry_fixtures(&out),
+        Cmd::Mail { out } => mail_fixtures(&out),
         Cmd::NtfsCorpus { out, records, seed } => ntfs_corpus(&out, records, seed),
         Cmd::Corpus {
             out,

@@ -61,6 +61,10 @@ jobs:
           (cd fixtures/registry && find . -type f) | while IFS= read -r f; do
             cmp "fixtures/registry/$f" "target/registry-check/$f" || exit 1
           done
+          cargo run --release --locked -p evtx-gen -- mail --out target/mail-check
+          (cd fixtures/mail && find . -type f) | while IFS= read -r f; do
+            cmp "fixtures/mail/$f" "target/mail-check/$f" || exit 1
+          done
       - name: Benchmarks compile
         run: cargo bench --workspace --no-run --locked
 

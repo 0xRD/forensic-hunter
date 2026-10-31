@@ -17,6 +17,7 @@ pub mod filter;
 pub mod id;
 pub mod input;
 pub(crate) mod io;
+pub mod mail;
 pub mod normalize;
 pub mod ntfs;
 pub mod prefetch;

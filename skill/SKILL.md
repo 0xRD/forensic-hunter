@@ -79,13 +79,15 @@ List the rest of the collection too, because forhunt does not read it:
 ```bash
 find "$CASE/evidence" -type f | sed 's/.*\.//' | sort | uniq -c | sort -rn | head -30
 ```
-Mailboxes (`.ost`, `.pst`), browser profiles, `.lnk` and jump lists, `SRUDB.dat`,
-`WebCacheV01.dat`, task XML and the WMI repository need other tools. For each one
-present, either examine it or name it in the gaps. A **mailbox is never closed by
-strings**: if the case involves mail, open it in a mail tool (Microsoft 365 or
-libpff `pffexport`) or say it was not analysed. Addresses found by `strings` are
-contacts, not senders, and you must not state "no credentials exposed" or "no
-further mail sent" for an unread mailbox: drafts and the Sent folder hold both.
+Browser profiles, `.lnk` and jump lists, `SRUDB.dat`, `WebCacheV01.dat`, task XML and
+the WMI repository need other tools. For each one present, either examine it or name
+it in the gaps.
+
+Outlook mailboxes (`.ost`, `.pst`) are read by forhunt onto channel `Mail`: read every
+message and draft, not only the checks (`references/mail-hunting.md`). A mailbox is
+**never closed by strings**: addresses found that way are contacts, not senders. If
+one could not be read (ANSI PST, or an error), say so, and do not state "no credentials
+exposed" or "no further mail sent": drafts and the Sent folder hold both.
 If the analyst wants to browse in Timeline Explorer:
 `forhunt parse "$CASE/evidence" -F csv -O "$CASE/work/csv" --split host`.
 
@@ -138,7 +140,7 @@ nothing covered is `LOG_SOURCE_MISSING`. It does not decide: you review every
 row. (Without the sweep, copy `references/checklist-status-template.md` and
 fill it by hand.)
 
-The status file is large (about 100 KB for 326 checks). Work from the rows
+The status file is large (about 100 KB for 334 checks). Work from the rows
 that need you, then read the full file only to fill the coverage table:
 ```bash
 forhunt checklist "$CASE/evidence" -k references/checklists/checklists.json --actionable -q   # HIT? / REVIEW rows + summary
@@ -220,6 +222,7 @@ self-contained HTML file (`references/attack-path.md`).
 - `references/forhunt.md`: commands, filters, `llm` format keys, exit codes
 - `references/hayabusa.md`: Hayabusa commands, levels, filters, licence notice
 - `references/ntfs-hunting.md`: hunting and interpreting `$MFT` / `$UsnJrnl:$J` (timestomping, staging, persistence, anti-forensics, correlation)
+- `references/mail-hunting.md`: reading `.ost` and `.pst` mailboxes (senders, links, what the host sent on, secrets in drafts, where a mailbox misleads)
 - `references/prefetch-hunting.md`: hunting and interpreting `.pf` files (locations, tools, loaded files, where Prefetch misleads)
 - `references/checklists/INDEX.md`: tactic order, coverage matrix, blind spots
 - `references/checklists/*.yaml`: the checks (schema in `SCHEMA.md`);

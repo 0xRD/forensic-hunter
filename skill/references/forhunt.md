@@ -169,6 +169,20 @@ Hives are found by name in any folder and by content when named directly; their
 hundreds of thousands of events, use it on one hive. `ExePath` is the same field on
 prefetch and on ids 20 to 23: `forhunt search E -f ExePath~name`.
 
+## Mail
+
+`.ost` and `.pst` (Unicode, Outlook 2003 onward) are found by extension and by content.
+Every message in the file is an event. Reading guide: `mail-hunting.md`.
+
+| `-c Mail -e` | Meaning | Date of the event |
+|---|---|---|
+| 1 | Message: `Folder`, `Subject`, `From`, `To`, `Cc`, `Bcc`, `RecipientCount`, `Sent`, `Received`, `Created`, `Modified`, `Unsent`, `MessageClass`, `AttachmentCount`, `Attachments`, `Urls`, `Body`, `RtfOnly`, `MessageId`, `InReplyTo`, `Headers`, `Nid` | Sent, else received, modified, created |
+| 2 | Attachment: `Folder`, `Subject`, `From`, `FileName`, `Size`, `MimeType`, `Sha256`, `EmbeddedMessage`, `Nid` | Its message's |
+| 3 | Contact: `Folder`, `Name`, `Email` | Modified |
+
+`User` is the profile holding the file, `Mailbox` the store's name when it has one, and
+`Nid` links an attachment to its message.
+
 ## Order and counts
 
 `search` prints events in file and record order, and a log can hold records out of

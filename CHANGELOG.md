@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.0 (2026-10-31)
+
+Outlook mailboxes.
+
+- `.ost` and `.pst` (Unicode), compressed or encrypted, on channel `Mail`: messages
+  (1), attachments with SHA-256 (2), contacts (3). Sender, recipients with blind
+  copies, links, body as text, headers, drafts. Read on demand, so large mailboxes
+  stay out of memory.
+- 14 messages compared with libpff on a real OST, no difference.
+- 8 checks, `FH-MAIL-001` to `008`, 334 in all, and `references/mail-hunting.md`.
+
 ## 0.5.1 (2026-10-31)
 
 - `forhunt checklist --since/--until` count only matches in that window, to leave

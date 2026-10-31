@@ -6030,6 +6030,143 @@
    "severity": "low",
    "verified": false,
    "absence_is_no_hit": false
+  },
+  {
+   "id": "FH-MAIL-001",
+   "title": "Links to a bare IP address",
+   "tactic": "mail",
+   "channels": [
+    "Mail"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> -c Mail -e 1 --regex 'Urls=https?://[0-9]{1,3}(\\.[0-9]{1,3}){3}' --format llm"
+   ],
+   "severity": "high",
+   "verified": false,
+   "absence_is_no_hit": false
+  },
+  {
+   "id": "FH-MAIL-002",
+   "title": "Links ending in an executable or script",
+   "tactic": "mail",
+   "channels": [
+    "Mail"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> -c Mail -e 1 --regex 'Urls=\\.(exe|scr|com|pif|bat|cmd|ps1|vbs|js|jse|hta|msi|lnk|iso|img)(\\?|\\s|$)' --format llm"
+   ],
+   "severity": "high",
+   "verified": false,
+   "absence_is_no_hit": false
+  },
+  {
+   "id": "FH-MAIL-003",
+   "title": "Attachments of a risky type",
+   "tactic": "mail",
+   "channels": [
+    "Mail"
+   ],
+   "event_ids": [
+    2
+   ],
+   "forhunt": [
+    "forhunt search <paths> -c Mail -e 2 --regex 'FileName=\\.[a-z0-9]{2,5}\\.(exe|scr|com|pif|bat|cmd|ps1|vbs|js|hta)$|\\.(exe|scr|com|pif|bat|cmd|ps1|vbs|js|jse|hta|lnk|iso|img|vhd|one|docm|xlsm)$|\\.tiff?$' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false,
+   "absence_is_no_hit": false
+  },
+  {
+   "id": "FH-MAIL-004",
+   "title": "Free or anonymous mail senders",
+   "tactic": "mail",
+   "channels": [
+    "Mail"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> -c Mail -e 1 --regex 'From=@(proton(mail)?\\.|tutanota\\.|tuta\\.|cock\\.li|guerrillamail\\.|mailfence\\.|yopmail\\.)' --format llm"
+   ],
+   "severity": "low",
+   "verified": false,
+   "absence_is_no_hit": false
+  },
+  {
+   "id": "FH-MAIL-005",
+   "title": "One message to many, or with a blind copy list",
+   "tactic": "mail",
+   "channels": [
+    "Mail"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> -c Mail -e 1 -f Folder~Sent --regex 'Bcc=.' --format llm",
+    "forhunt search <paths> -c Mail -e 1 -f Folder~Sent --regex 'RecipientCount=^([2-9][0-9]|[0-9]{3,})$' --format llm"
+   ],
+   "severity": "high",
+   "verified": false,
+   "absence_is_no_hit": false
+  },
+  {
+   "id": "FH-MAIL-006",
+   "title": "Secrets in message bodies, drafts included",
+   "tactic": "mail",
+   "channels": [
+    "Mail"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> -c Mail -e 1 --regex 'Body=\\b(AKIA|ASIA)[0-9A-Z]{16}\\b|aws_secret|-----BEGIN [A-Z ]*PRIVATE KEY|(password|passwd|mot de passe)\\s*[:=]\\s*[^\\s]+|\\bghp_[0-9A-Za-z]{36}\\b|\\bxox[bp]-' --format llm"
+   ],
+   "severity": "high",
+   "verified": false,
+   "absence_is_no_hit": false
+  },
+  {
+   "id": "FH-MAIL-007",
+   "title": "Archives or mail stores leaving by mail",
+   "tactic": "mail",
+   "channels": [
+    "Mail"
+   ],
+   "event_ids": [
+    2
+   ],
+   "forhunt": [
+    "forhunt search <paths> -c Mail -e 2 -f Folder~Sent --regex 'FileName=\\.(zip|rar|7z|tar|gz|pst|ost)$' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false,
+   "absence_is_no_hit": false
+  },
+  {
+   "id": "FH-MAIL-008",
+   "title": "Inventory of unsent drafts",
+   "tactic": "mail",
+   "channels": [
+    "Mail"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> -c Mail -e 1 -f Unsent=true --format llm"
+   ],
+   "severity": "informational",
+   "verified": false,
+   "absence_is_no_hit": false
   }
  ]
 }

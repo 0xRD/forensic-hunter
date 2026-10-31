@@ -1,7 +1,7 @@
 # Forensic Hunter
 
 **`forhunt`**: a very fast, single-binary Windows forensic toolkit for event
-logs (EVTX), NTFS metadata (`$MFT`, `$UsnJrnl:$J`), prefetch and registry hives,
+logs (EVTX), NTFS metadata (`$MFT`, `$UsnJrnl:$J`), prefetch, registry hives and Outlook mailboxes,
 built to be driven by
 an LLM with a limited context window, plus a
 **Claude skill** that turns Claude into a systematic, checklist-driven Windows
@@ -35,6 +35,10 @@ for the picture.
   devices, networks and local accounts. Dirty hives are brought up to date from
   their `.LOG1`/`.LOG2`, in memory. The `SYSTEM` hive also names the host on
   prefetch and NTFS events of the same collection.
+- **Mail**: `.ost` and `.pst` (Unicode) become events for every message,
+  attachment (with SHA-256) and contact: sender, recipients with blind copies,
+  links, body as text, headers, and drafts. Compressed and encrypted stores are
+  read, and a mailbox of any size stays out of memory.
 - **Extensible**: an `Artifact`/`Source` abstraction ready for LNK, jump lists
   and shellbags.
 
@@ -85,6 +89,7 @@ forhunt search  ./evidence -c MFT -e 16 -f SiLtFn=true   # timestomped files ($M
 forhunt search  ./evidence -c Prefetch -f 'ExePath~\USERS\'   # programs run from a profile
 forhunt search  ./evidence -f ExePath~winscp             # one program across prefetch, BAM, Amcache, ShimCache
 forhunt search  ./evidence -c Registry -e 11             # services
+forhunt search  ./evidence -c Mail -e 1 -r 'Urls=.'      # mail with links
 forhunt search  ./evidence -c UsnJrnl -e 2               # file deletions ($J)
 ```
 
@@ -199,6 +204,7 @@ cargo test --workspace                     # unit + end-to-end tests
 cargo run -p evtx-gen -- fixtures          # regenerate fixtures/synthetic
 cargo run -p evtx-gen -- prefetch          # regenerate fixtures/prefetch
 cargo run -p evtx-gen -- registry          # regenerate fixtures/registry
+cargo run -p evtx-gen -- mail              # regenerate fixtures/mail
 cargo deny check                           # licences and advisories
 python3 scripts/gen-checklist-index.py     # regenerate checklist index
 ```
