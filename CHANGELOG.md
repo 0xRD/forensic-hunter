@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.1 (2026-10-31)
 
 Fixes: a crafted mailbox could spend time and memory far beyond its size through
 repeated heap values, lists of URLs or index offsets outside the file; all are now
