@@ -137,23 +137,37 @@ impl Ctx {
                 }),
             }
         };
+        let fields: Vec<FieldCond> = f
+            .field
+            .iter()
+            .map(|s| FieldCond::parse(s))
+            .collect::<anyhow::Result<_>>()?;
+        let regexes: Vec<RegexCond> = f
+            .regex
+            .iter()
+            .map(|s| RegexCond::parse(s))
+            .collect::<anyhow::Result<_>>()?;
+        // A short name matches nothing, and `!~` is then true on every event.
+        let names = fields
+            .iter()
+            .map(|c| c.name.as_str())
+            .chain(regexes.iter().filter_map(|r| r.field.as_deref()));
+        for name in names {
+            let full = self.map.full_fields(name);
+            if !full.is_empty() {
+                self.warn(&format!(
+                    "`{name}` is a short output name, filters need the field name: {}",
+                    full.join(", ")
+                ));
+            }
+        }
         Ok(Filter::new()
             .event_ids(parse_event_ids(&f.event_id)?)
             .channels(f.channel.clone())
             .computers(f.computer.clone())
             .time(ts(&f.since, "since")?, ts(&f.until, "until")?)
-            .fields(
-                f.field
-                    .iter()
-                    .map(|s| FieldCond::parse(s))
-                    .collect::<anyhow::Result<_>>()?,
-            )
-            .regexes(
-                f.regex
-                    .iter()
-                    .map(|s| RegexCond::parse(s))
-                    .collect::<anyhow::Result<_>>()?,
-            ))
+            .fields(fields)
+            .regexes(regexes))
     }
 
     pub fn writer(

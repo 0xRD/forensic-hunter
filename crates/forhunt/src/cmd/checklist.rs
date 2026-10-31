@@ -43,6 +43,10 @@ struct Check {
     severity: Option<String>,
     #[serde(default)]
     verified: bool,
+    /// The event is always written when it happens: with its channel
+    /// present, not seeing it is a `NO_HIT`, not a coverage gap.
+    #[serde(default)]
+    absence_is_no_hit: bool,
 }
 
 struct Query {
@@ -167,6 +171,8 @@ fn is_placeholder(arg: &str) -> bool {
 struct Counts {
     /// Events of the check's declared channels and event ids.
     source: u64,
+    /// Only for `absence_is_no_hit`: events of its channels.
+    channel: u64,
     /// Per query: events of its source; of those, with its fields; matches.
     q_source: Vec<u64>,
     q_covered: Vec<u64>,
@@ -185,11 +191,22 @@ struct PartSink<'a> {
     /// Compiled queries by event id, and those without event ids.
     q_by_eid: &'a HashMap<u32, Vec<(usize, usize)>>,
     q_any: &'a [(usize, usize)],
+    /// Checks that need the channel count.
+    absence: &'a [usize],
+    window: &'a Filter,
     part: &'a mut Part,
 }
 
 impl Sink for PartSink<'_> {
     fn event(&mut self, ev: &EventView<'_>) {
+        for &ci in self.absence {
+            let c = &self.checks[ci];
+            if c.channels.iter().any(|ch| channel_matches(ch, &ev.channel)) {
+                self.part.counts[ci].channel += 1;
+            }
+        }
+        let in_window = self.window.since.is_none_or(|t| ev.ts >= t)
+            && self.window.until.is_none_or(|t| ev.ts <= t);
         if let Some(idx) = self.by_eid.get(&ev.event_id) {
             for &ci in idx {
                 let c = &self.checks[ci];
@@ -215,7 +232,7 @@ impl Sink for PartSink<'_> {
             if f.fields_present(ev) {
                 k.q_covered[qi] += 1;
             }
-            if f.matches(ev) {
+            if in_window && f.matches(ev) {
                 k.hits[qi] += 1;
                 let s = &mut k.samples[qi];
                 s.push((ev.ts, ev.id));
@@ -304,6 +321,14 @@ pub fn run(a: ChecklistArgs) -> anyhow::Result<()> {
             }
         }
     }
+    let absence: Vec<usize> = (0..checks.len())
+        .filter(|&i| checks[i].absence_is_no_hit)
+        .collect();
+    let window = ctx.filter(&crate::cli::FilterArgs {
+        since: a.since.clone(),
+        until: a.until.clone(),
+        ..Default::default()
+    })?;
     let inputs = ctx.open(&a.paths)?;
     let progress = common::Progress::new(ctx.progress, inputs.bytes);
     let empty = || Part {
@@ -311,6 +336,7 @@ pub fn run(a: ChecklistArgs) -> anyhow::Result<()> {
             .iter()
             .map(|q| Counts {
                 source: 0,
+                channel: 0,
                 q_source: vec![0; q.len()],
                 q_covered: vec![0; q.len()],
                 hits: vec![0; q.len()],
@@ -333,6 +359,8 @@ pub fn run(a: ChecklistArgs) -> anyhow::Result<()> {
                     by_eid: &by_eid,
                     q_by_eid: &q_by_eid,
                     q_any: &q_any,
+                    absence: &absence,
+                    window: &window,
                     part: &mut part,
                 };
                 src.parse_unit(u.unit, &mut sink)
@@ -344,6 +372,7 @@ pub fn run(a: ChecklistArgs) -> anyhow::Result<()> {
             totals.add(inputs.sources[u.source].path(), &rep);
             for (t, p) in total.counts.iter_mut().zip(part.counts) {
                 t.source += p.source;
+                t.channel += p.channel;
                 for (qi, h) in p.hits.iter().enumerate() {
                     t.hits[qi] += h;
                     t.q_source[qi] += p.q_source[qi];
@@ -372,6 +401,8 @@ pub fn run(a: ChecklistArgs) -> anyhow::Result<()> {
             let any_eval = qs.iter().any(|q| q.filter.is_some());
             let status = if hit {
                 "HIT?"
+            } else if k.channel > 0 {
+                "NO_HIT"
             } else if k.source == 0 && !covered {
                 "LOG_SOURCE_MISSING"
             } else if any_eval && !covered && all_eval {

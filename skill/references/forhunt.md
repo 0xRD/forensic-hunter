@@ -26,6 +26,7 @@ read-only, positional reads).
 | `-f Name!=value` | not equal (also true when the field is absent) |
 | `-f Name~text` | case-insensitive substring (a GUID value also contains its braces) |
 | `-f Name!~text` | does not contain (also true when the field is absent); repeat to drop noise, e.g. `-f Image!~\\MsMpEng.exe` |
+| Field names | always the full name (`TargetFilename`, `Image`); the short names of `llm` output (`file`, `img`) only work in `--fields`. A short name in a filter gives a warning, and `!=` or `!~` on it matches everything |
 | `-r, --regex [Name=]REGEX` | case-insensitive regex on one field, or on every value |
 | `--computer HOST` | exact host, or short name of an FQDN; an FQDN also keeps events logged under its short name; comma list, repeatable |
 
@@ -138,6 +139,7 @@ full lists, and `--all-fields` or `--fields` shows them. Paths look like
 folder, never with `--computer`.
 
 ```bash
+forhunt search E -c Prefetch -f RunIndex=1            # one row per .pf, not one per run
 forhunt search E -c Prefetch -f 'ExePath~\USERS\'     # run from a profile
 forhunt search E -c Prefetch -f FilesLoaded~VAULTCLI  # what loaded this DLL
 forhunt timeline E -c Prefetch --since 2024-03-13T10:00:00Z
@@ -166,6 +168,12 @@ Hives are found by name in any folder and by content when named directly; their
 `--registry-keys` adds id 1, one event per key (`KeyPath`, `ValueCount`, `Values`):
 hundreds of thousands of events, use it on one hive. `ExePath` is the same field on
 prefetch and on ids 20 to 23: `forhunt search E -f ExePath~name`.
+
+## Order and counts
+
+`search` prints events in file and record order, and a log can hold records out of
+time order. Use `timeline` for a time-ordered window. `scanned` counts records:
+one `$MFT` record gives several events, so it is lower than the `events` of `stats`.
 
 ## `llm` format
 

@@ -26,6 +26,8 @@ Open work, roughly by priority.
 - Drop revoked ATT&CK ids kept next to their replacements
   (T1070.001/T1685.005, T1562.x/T1685/T1686, T1574.002/T1574.001).
 - A Command and Control checklist.
+- `forhunt checklist --explain <id>`: the matching events of one check in compact
+  form, so a `HIT?` needs no separate search.
 - Registry checks that need `--registry-keys` (LSA packages, RDP settings):
   `forhunt checklist` does not read id 1 events.
 

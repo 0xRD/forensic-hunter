@@ -300,6 +300,13 @@ pub struct ChecklistArgs {
     /// summary; the full table is still in the JSON format.
     #[arg(long)]
     pub actionable: bool,
+    /// Count only matches at or after this time, e.g. to leave out the
+    /// build of the image. Coverage still looks at the whole evidence.
+    #[arg(long, value_name = "TIME")]
+    pub since: Option<String>,
+    /// Count only matches at or before this time.
+    #[arg(long, value_name = "TIME")]
+    pub until: Option<String>,
     #[arg(long, short = 'o', default_value = "-")]
     pub output: String,
     #[command(flatten)]

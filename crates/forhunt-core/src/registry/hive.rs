@@ -204,6 +204,14 @@ impl Hive {
         if !is_key(&data, root) {
             anyhow::bail!("hive has no root key");
         }
+        let bins = u32_at(&data, 0x28).unwrap_or(0) as usize;
+        if data.len() < BINS + bins {
+            warnings.push(format!(
+                "hive is truncated: {} of {} bytes, the keys in the lost part are missing",
+                data.len(),
+                BINS + bins
+            ));
+        }
         let mut name = Vec::new();
         push_utf16(&mut name, data.get(0x30..0x70).unwrap_or(&[]));
         let stored_name = String::from_utf8_lossy(&name)
@@ -595,6 +603,20 @@ mod tests {
         r.list(ri, 0, &mut out);
         assert!(!out.is_empty());
         assert!(out.len() <= len, "{} offsets", out.len());
+    }
+
+    #[test]
+    fn says_when_a_hive_is_cut_short() {
+        let mut d = vec![0u8; BINS];
+        d[..4].copy_from_slice(b"regf");
+        d[0x28..0x2C].copy_from_slice(&4096u32.to_le_bytes());
+        d.extend((-16i32).to_le_bytes());
+        d.extend(b"nk");
+        d.extend([0; 10]);
+        let (_, warnings) = Hive::open(d.clone(), &[]).unwrap();
+        assert!(warnings[0].contains("truncated"));
+        d.resize(BINS + 4096, 0);
+        assert!(Hive::open(d, &[]).unwrap().1.is_empty());
     }
 
     #[test]

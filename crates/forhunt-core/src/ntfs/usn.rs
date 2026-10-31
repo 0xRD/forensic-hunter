@@ -101,7 +101,8 @@ impl Artifact for UsnArtifact {
     fn matches_name(&self, path: &Path) -> bool {
         path.file_name().is_some_and(|n| {
             let n = n.to_string_lossy().to_ascii_lowercase();
-            n == "$j" || n == "%24j" || n.contains("usnjrnl")
+            let text = [".csv", ".tsv", ".txt"].iter().any(|e| n.ends_with(e));
+            n == "$j" || n == "%24j" || (n.contains("usnjrnl") && !text)
         })
     }
     fn open(&self, path: &Path, opts: &ParseOptions) -> anyhow::Result<Arc<dyn Source>> {

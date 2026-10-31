@@ -801,6 +801,7 @@ checks:
     notes: "Sources cited, not re-read in this session. The exclusions are anchored on the closing brace of the volume id (`}\\WINDOWS\\`) so that a folder such as C:\\Users\\x\\AppData\\Roaming\\Microsoft\\Windows\\ is not mistaken for the Windows folder. The $WINREAGENT and Defender exclusions are the Windows servicing and antimalware components seen as one-run programs on a real collection. This is the catch-all after FH-PF-001 to FH-PF-004: it also covers unusual root folders (C:\\Intel, C:\\inetpub, drive root) that those checks do not name."
 
   - id: FH-PF-026
+    absence_is_no_hit: true
     title: Prefetch files with no run time recorded
     tactic: prefetch
     attack: []

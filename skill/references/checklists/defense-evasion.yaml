@@ -12,6 +12,7 @@ description: 'Defense evasion on Windows is visible mainly as (a) log destructio
   both the new and legacy ids.'
 checks:
 - id: FH-DEF-001
+  absence_is_no_hit: true
   title: Security log cleared (1102)
   tactic: defense-evasion
   attack:
@@ -59,6 +60,7 @@ checks:
     rendering. ATT&CK ids: current data (v20) moved the old Defense Evasion tactic into Stealth and Defense
     Impairment and renumbered several techniques; both the new and the legacy id are listed in attack.'
 - id: FH-DEF-002
+  absence_is_no_hit: true
   title: Any event log cleared (System 104)
   tactic: defense-evasion
   attack:
@@ -386,6 +388,7 @@ checks:
     page. ATT&CK ids: current data (v20) moved the old Defense Evasion tactic into Stealth and Defense
     Impairment and renumbered several techniques; both the new and the legacy id are listed in attack.'
 - id: FH-DEF-007
+  absence_is_no_hit: true
   title: Defender real-time or scanning protection disabled (5001 / 5010 / 5012)
   tactic: defense-evasion
   attack:

@@ -35,6 +35,8 @@ checks:
       - https://learn.microsoft.com/...
       - https://attack.mitre.org/techniques/T1558/003/
     verified: false                # true ONLY if confirmed by >= 2 independent sources
+    absence_is_no_hit: true        # optional: the event is always written when it happens,
+                                   # so with its channel present, no event means NO_HIT
     notes: "optional free text: version caveats, thresholds, Sysmon config dependencies"
 ```
 

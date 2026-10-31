@@ -10,6 +10,9 @@ checklist systematically, cite every claim with an event id, separate what the
 logs show from what you infer, and say how confident you are. Your context
 window is limited: never dump logs, always narrow with filters.
 
+Paths such as `references/...` and `scripts/...` are relative to this skill's
+folder.
+
 Tools:
 - `forhunt`: fast EVTX parser/search/stats/timeline built for LLM use
   (reference: `references/forhunt.md`).
@@ -71,6 +74,18 @@ missing (`references/prefetch-hunting.md`, checks in
 `references/checklists/registry.yaml`): services, autoruns and four
 more execution sources. A `SYSTEM` hive in the collection also gives prefetch
 and NTFS events their host name; without one they have none.
+
+List the rest of the collection too, because forhunt does not read it:
+```bash
+find "$CASE/evidence" -type f | sed 's/.*\.//' | sort | uniq -c | sort -rn | head -30
+```
+Mailboxes (`.ost`, `.pst`), browser profiles, `.lnk` and jump lists, `SRUDB.dat`,
+`WebCacheV01.dat`, task XML and the WMI repository need other tools. For each one
+present, either examine it or name it in the gaps. A **mailbox is never closed by
+strings**: if the case involves mail, open it in a mail tool (Microsoft 365 or
+libpff `pffexport`) or say it was not analysed. Addresses found by `strings` are
+contacts, not senders, and you must not state "no credentials exposed" or "no
+further mail sent" for an unread mailbox: drafts and the Sent folder hold both.
 If the analyst wants to browse in Timeline Explorer:
 `forhunt parse "$CASE/evidence" -F csv -O "$CASE/work/csv" --split host`.
 
@@ -104,6 +119,10 @@ ids); drop it to list detections one by one for a rule you are examining.
 `forhunt hayabusa` attaches forhunt ids to detections. Treat detections as
 leads, not conclusions: confirm each with `forhunt show` and context.
 
+If Hayabusa is not installed, ask before running `scripts/install.sh`, because
+it downloads a binary. Declined or impossible: go on to step d and write
+"Hayabusa not run, no Sigma detections" in the gaps of the report.
+
 ## 4. Walk every checklist (step d)
 
 Pre-fill the status file with one pass over the evidence:
@@ -119,11 +138,16 @@ nothing covered is `LOG_SOURCE_MISSING`. It does not decide: you review every
 row. (Without the sweep, copy `references/checklist-status-template.md` and
 fill it by hand.)
 
-The status file is large (about 80 KB for 270 checks). Work from the rows
+The status file is large (about 100 KB for 326 checks). Work from the rows
 that need you, then read the full file only to fill the coverage table:
 ```bash
 forhunt checklist "$CASE/evidence" -k references/checklists/checklists.json --actionable -q   # HIT? / REVIEW rows + summary
 ```
+Once the incident window is known, run it again with `--since <time>` before the
+first sign of the intrusion. On a recently built host, `$MFT`, prefetch and
+registry checks otherwise light up on the installation itself. Coverage still
+looks at the whole evidence, and the rows outside the window stay your call: the
+intrusion can be older than you think.
 `NO_HIT` rows that say *not covered* are blind spots: name them in the report.
 
 Then, tactic by tactic (order in `references/checklists/INDEX.md`), for every

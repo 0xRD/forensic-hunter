@@ -242,20 +242,25 @@ fn field<'a>(name: &'static str, value: Val<'a>) -> Field<'a> {
     }
 }
 
-type HostCache = Mutex<std::collections::HashMap<PathBuf, Option<String>>>;
+/// By hive, its size and modification time.
+type HostKey = (PathBuf, u64, Option<std::time::SystemTime>);
+type HostCache = Mutex<std::collections::HashMap<HostKey, Option<String>>>;
 
 /// The computer name from the `SYSTEM` hive of the collection `path` is in:
 /// in the same folder, or at `Windows/System32/config` under any parent
-/// (KAPE and Velociraptor keep the volume's layout). Read once per hive.
+/// (KAPE and Velociraptor keep the volume's layout). Read once per version of
+/// the hive: a long-lived process may see it replaced.
 pub fn computer_for(path: &Path) -> Option<String> {
     static CACHE: OnceLock<HostCache> = OnceLock::new();
     let hive = system_hive(path)?;
     let cache = CACHE.get_or_init(Default::default);
-    if let Some(known) = cache.lock().ok()?.get(&hive) {
+    let meta = std::fs::metadata(&hive).ok()?;
+    let key = (hive, meta.len(), meta.modified().ok());
+    if let Some(known) = cache.lock().ok()?.get(&key) {
         return known.clone();
     }
-    let name = read_computer_name(&hive);
-    cache.lock().ok()?.insert(hive, name.clone());
+    let name = read_computer_name(&key.0);
+    cache.lock().ok()?.insert(key, name.clone());
     name
 }
 

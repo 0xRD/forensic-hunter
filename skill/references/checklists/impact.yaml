@@ -342,6 +342,7 @@ checks:
     ATT&CK: legacy id(s) T1562.001 were revoked in the current mitre/cti enterprise-attack data; the replacement
     id is listed first and the legacy id is kept after it. || Original notes: Single source opened.'
 - id: FH-IMP-009
+  absence_is_no_hit: true
   title: Event log cleared as precursor (Security 1102, System 104)
   tactic: impact
   attack:

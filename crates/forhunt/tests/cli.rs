@@ -1048,6 +1048,44 @@ fn registry_checks_fire() {
 }
 
 #[test]
+fn checklist_window_and_absent_events() {
+    let checks = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../skill/references/checklists/checklists.json");
+    let checks = checks.display().to_string();
+    let sweep = |extra: &[&str]| -> Vec<Value> {
+        let mut a = vec!["checklist", "-q", "-k", &checks, "-F", "json"];
+        a.extend_from_slice(extra);
+        let v: Value = serde_json::from_str(&ok(&a)).unwrap();
+        v.as_array().unwrap().clone()
+    };
+    let hunt = regx("HUNT");
+    let status = |rows: &[Value], id: &str| {
+        let row = rows.iter().find(|r| r["id"] == id).unwrap();
+        row["status"].as_str().unwrap().to_string()
+    };
+    let all = sweep(&[&hunt]);
+    // No prefetch at all: still a gap. An old window: coverage stays.
+    assert_eq!(status(&all, "FH-PF-026"), "LOG_SOURCE_MISSING");
+    let late = sweep(&[&hunt, "--since", "2099-01-01T00:00:00Z"]);
+    assert_eq!(status(&all, "FH-REG-004"), "HIT?");
+    assert_eq!(status(&late, "FH-REG-004"), "NO_HIT");
+    assert_eq!(status(&late, "FH-REG-019"), "NO_HIT");
+    let pf = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/prefetch");
+    let rows = sweep(&[&pf.display().to_string()]);
+    assert_eq!(status(&rows, "FH-PF-026"), "NO_HIT");
+}
+
+#[test]
+fn short_field_name_in_a_filter_warns() {
+    let o = Command::new(env!("CARGO_BIN_EXE_forhunt"))
+        .args(["search", "-f", "img!~x", "-n", "1", &fx("Security.evtx")])
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains("`img` is a short output name"), "{err}");
+}
+
+#[test]
 fn registry_damage_is_counted() {
     let o = forhunt(&["parse", "--strict", &regx("damaged/SYSTEM"), "-o", "-"]);
     assert_eq!(o.status.code(), Some(4));

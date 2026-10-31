@@ -111,6 +111,25 @@ impl FieldMap {
         self.fields.get(name).map(|s| s.as_str()).unwrap_or(name)
     }
 
+    /// Full field names behind a short output name; empty when `name` is
+    /// itself a field name.
+    pub fn full_fields(&self, name: &str) -> Vec<&str> {
+        if self.fields.keys().any(|k| k.eq_ignore_ascii_case(name)) {
+            return Vec::new();
+        }
+        let renamed = self.events.values().flat_map(|e| e.rename.iter());
+        let mut out: Vec<&str> = self
+            .fields
+            .iter()
+            .chain(renamed)
+            .filter(|(_, short)| short.as_str() == name)
+            .map(|(full, _)| full.as_str())
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
     pub fn event(&self, channel: &str, id: u32) -> Option<&EventSpec> {
         // Forwarded events keep their original channel name, so one lookup
         // covers both.

@@ -1,8 +1,21 @@
 # Changelog
 
-## Unreleased
+## 0.5.1 (2026-10-31)
 
-Fixes: a crafted hive could use memory far beyond its size through aliased
+- `forhunt checklist --since/--until` count only matches in that window, to leave
+  out the build of a host. Coverage still looks at the whole evidence.
+- `FH-DEF-001`, `002`, `007`, `FH-IMP-009` and `FH-PF-026` are `NO_HIT`, not
+  `LOG_SOURCE_MISSING`, when their channel is present and nothing matched.
+- A short output name in `-f` or `-r` (`file`, `img`) now gives a warning naming
+  the field: it matched nothing, and with `!~` silently everything.
+- Skill: what to do with evidence forhunt does not read, mailboxes first; what to
+  do without Hayabusa; narrowing the checklist by time.
+
+Fixes:
+- A hive cut short now gives a warning: its lost keys were missing silently.
+- `usnjrnl.csv` and the like are no longer taken for a change journal.
+- The host name follows a `SYSTEM` hive replaced while a process runs.
+- A crafted hive could use memory far beyond its size through aliased
 subkey and value lists or very long names, and a crafted log through a large
 hive size. All are now bounded by the files.
 

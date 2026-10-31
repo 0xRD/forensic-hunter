@@ -204,6 +204,7 @@ def gen(files):
                 "channels": chans, "event_ids": [int(x) for x in (c.get("event_ids") or []) if str(x).isdigit()],
                 "forhunt": [q for q in fq if isinstance(q, str)],
                 "severity": c.get("severity"), "verified": bool(c.get("verified")),
+                "absence_is_no_hit": bool(c.get("absence_is_no_hit")),
             })
     machine_json = json.dumps(machine, indent=1, ensure_ascii=False) + "\n"
     return index, "\n".join(t).rstrip() + "\n", machine_json
