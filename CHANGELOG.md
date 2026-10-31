@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Fixes: a crafted hive could use memory far beyond its size through aliased
+subkey and value lists or very long names, and a crafted log through a large
+hive size. All are now bounded by the files.
+
 ## 0.5.0 (2026-10-31)
 
 Registry hives.

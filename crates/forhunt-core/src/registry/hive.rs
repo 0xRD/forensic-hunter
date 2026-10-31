@@ -162,10 +162,14 @@ impl Hive {
                         .to_string()
                 });
             } else {
+                // New bins are mostly in the logs, so a header alone cannot
+                // ask for gigabytes.
+                let limit =
+                    (2 * data.len() + logs.iter().map(Vec::len).sum::<usize>()).min(1 << 31);
                 let mut applied = data.clone();
                 let mut fits = true;
                 for (e, log_root) in &entries {
-                    if BINS + e.bins > 1 << 31 {
+                    if BINS + e.bins > limit {
                         fits = false;
                         break;
                     }
@@ -285,6 +289,12 @@ impl<'h> Reader<'h> {
         }
     }
 
+    /// Real names are short, so only long ones are charged: lookups read
+    /// names all the time.
+    fn name_fits(&self, n: usize) -> bool {
+        n <= 1024 || self.spend(n)
+    }
+
     /// Follows `lf`, `lh`, `li` and one level of `ri`.
     fn list(&self, off: u32, depth: u8, out: &mut Vec<u32>) {
         let Some(c) = self.cell(off) else {
@@ -292,6 +302,10 @@ impl<'h> Reader<'h> {
             return;
         };
         let count = u16_at(c, 2).unwrap_or(0) as usize;
+        // Lists can alias each other too, and `ri` multiplies them.
+        if !self.spend(count * 4) {
+            return;
+        }
         let (step, nested) = match c.get(..2) {
             Some(b"lf" | b"lh") => (8, false),
             Some(b"li") => (4, false),
@@ -342,8 +356,8 @@ impl<'r, 'h> Key<'r, 'h> {
         let n = u16_at(self.c, 72).unwrap_or(0) as usize;
         let ascii = u16_at(self.c, 2).unwrap_or(0) & 0x20 != 0;
         match self.c.get(NK_NAME..NK_NAME + n) {
-            Some(raw) => name_of(raw, ascii),
-            None => String::new(),
+            Some(raw) if self.r.name_fits(n) => name_of(raw, ascii),
+            _ => String::new(),
         }
     }
 
@@ -382,6 +396,9 @@ impl<'r, 'h> Key<'r, 'h> {
             self.r.bad.set(self.r.bad.get() + 1);
             return Vec::new();
         };
+        if !self.r.spend(n.min(l.len() / 4) * 4) {
+            return Vec::new();
+        }
         let mut out = Vec::with_capacity(n.min(l.len() / 4));
         for i in 0..n {
             let Some(v) = u32_at(l, i * 4) else {
@@ -428,8 +445,8 @@ impl<'h> Value<'_, 'h> {
         let n = u16_at(self.c, 2).unwrap_or(0) as usize;
         let ascii = u16_at(self.c, 16).unwrap_or(0) & 1 != 0;
         match self.c.get(VK_NAME..VK_NAME + n) {
-            Some(raw) => name_of(raw, ascii),
-            None => String::new(),
+            Some(raw) if self.r.name_fits(n) => name_of(raw, ascii),
+            _ => String::new(),
         }
     }
 
@@ -546,6 +563,38 @@ mod tests {
         assert_eq!(seqs, [521, 522, 523]);
         log[512 + 100] ^= 1;
         assert!(log_entries(&log).is_empty());
+    }
+
+    #[test]
+    fn aliased_lists_cannot_multiply_memory() {
+        // An `ri` whose entries all name the same `lf`: 16,000 x 16,000
+        // offsets from 130 KB.
+        let n = 16_000usize;
+        let mut d = vec![0u8; BINS];
+        d[..4].copy_from_slice(b"regf");
+        d.extend((-16i32).to_le_bytes());
+        d.extend(b"nk");
+        d.extend([0; 10]);
+        let cell = |d: &mut Vec<u8>, sig: &[u8], item: &[u8]| {
+            let off = (d.len() - BINS) as u32;
+            let size = 8 + n * item.len();
+            d.extend((-(size as i32)).to_le_bytes());
+            d.extend(sig);
+            d.extend((n as u16).to_le_bytes());
+            for _ in 0..n {
+                d.extend(item);
+            }
+            off
+        };
+        let lf = cell(&mut d, b"lf", &[0; 8]);
+        let ri = cell(&mut d, b"ri", &lf.to_le_bytes());
+        let len = d.len();
+        let (hive, _) = Hive::open(d, &[]).unwrap();
+        let r = hive.reader();
+        let mut out = Vec::new();
+        r.list(ri, 0, &mut out);
+        assert!(!out.is_empty());
+        assert!(out.len() <= len, "{} offsets", out.len());
     }
 
     #[test]
