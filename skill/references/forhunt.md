@@ -121,7 +121,8 @@ forhunt timeline evidence/WS-07 --since 2024-03-11T10:10:00Z --until 2024-03-11T
 ## Prefetch
 
 `.pf` files (formats 17 to 31, compressed or not) are found in any folder.
-How to read them: `prefetch-hunting.md`.
+How to read them: `prefetch-hunting.md`; checks: `forhunt checklist E -k
+checklists.json --tactic prefetch` (FH-PF-001..026).
 
 | Channel | Event id | Meaning |
 |---|---|---|

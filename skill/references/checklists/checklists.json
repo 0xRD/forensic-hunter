@@ -4899,6 +4899,423 @@
    ],
    "severity": "high",
    "verified": false
+  },
+  {
+   "id": "FH-PF-001",
+   "title": "Programs run from user content folders (Downloads, Desktop, Documents, Public)",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExePath=\\\\USERS\\\\([^\\\\]+\\\\(DOWNLOADS|DESKTOP|DOCUMENTS|MUSIC|VIDEOS|PICTURES)|PUBLIC)\\\\' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-002",
+   "title": "Programs run from AppData (Temp, Roaming, Local), vendor folders left out",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExePath=\\\\USERS\\\\[^\\\\]+\\\\APPDATA\\\\' --field 'ExePath!~\\MICROSOFT\\ONEDRIVE\\' --field 'ExePath!~\\MICROSOFT\\TEAMS\\' --field 'ExePath!~\\APPDATA\\LOCAL\\PROGRAMS\\' --field 'ExePath!~\\.CR\\' --field 'ExePath!~\\.BE\\' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-003",
+   "title": "Programs run from Windows\\Temp, ProgramData, PerfLogs or the Recycle Bin",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExePath=\\\\(PROGRAMDATA|PERFLOGS|WINDOWS\\\\TEMP|\\$RECYCLE\\.BIN|RECYCLER)\\\\' --field 'ExePath!~\\PROGRAMDATA\\MICROSOFT\\WINDOWS DEFENDER\\PLATFORM\\' --field 'ExePath!~\\PROGRAMDATA\\PACKAGE CACHE\\' --field 'ExePath!~\\.CR\\' --field 'ExePath!~\\.BE\\' --field 'ExePath!~\\MPRECOVERY.EXE' --field 'ExePath!~\\MPSIGSTUB.EXE' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-004",
+   "title": "Programs run from a mounted image or media with no volume creation time",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExePath=^\\\\VOLUME\\{0{16}-' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-005",
+   "title": "Executables with a document or archive name before the real extension",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExePath=\\.(PDF|DOCX?|XLSX?|PPTX?|CSV|TXT|RTF|JPE?G|PNG|GIF|TIFF?|BMP|ZIP|RAR|7Z)\\.(EXE|SCR|COM)(,|$)' --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-006",
+   "title": "System process names run from user-writable folders",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(SVCHOST|LSASS|CSRSS|SMSS|WININIT|WINLOGON|SERVICES|LSM|TASKHOSTW|DLLHOST|CONHOST|SPOOLSV|RUNTIMEBROKER|SEARCHINDEXER|EXPLORER|CMD|POWERSHELL|RUNDLL32|REGSVR32|WMIC|NET|NET1|SCHTASKS|SC)\\.EXE$' --regex 'ExePath=\\\\(USERS|PROGRAMDATA|PERFLOGS|WINDOWS\\\\TEMP|\\$RECYCLE\\.BIN)\\\\' --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-007",
+   "title": "PsExec and similar remote execution services",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(PSEXESVC|PSEXEC|PSEXEC64)\\.EXE$|^PAEXEC' --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-008",
+   "title": "wmic, schtasks and sc (remote execution and persistence by command line)",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(WMIC|SCHTASKS|SC)\\.EXE$' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-009",
+   "title": "certutil and bitsadmin (download and decode)",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(CERTUTIL|BITSADMIN)\\.EXE$' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-010",
+   "title": "Proxy execution binaries (mshta, cmstp, installutil, msbuild, regasm, regsvcs, odbcconf)",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(MSHTA|CMSTP|INSTALLUTIL|MSBUILD|REGASM|REGSVCS|ODBCCONF)\\.EXE$' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-011",
+   "title": "regsvr32 or rundll32 loading a library or scriptlet from a writable folder",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(REGSVR32|RUNDLL32)\\.EXE$' --regex 'FilesLoaded=\\\\(USERS|PROGRAMDATA|WINDOWS\\\\TEMP|PERFLOGS)\\\\[^,]*\\.(DLL|OCX|CPL|SCT)(,|$)' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-012",
+   "title": "Credential theft tools (mimikatz, procdump, nanodump, rubeus, lazagne, ntdsutil)",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(MIMIKATZ|PROCDUMP|PROCDUMP64|NANODUMP|RUBEUS|LAZAGNE|SAFETYKATZ|SHARPDUMP|DUMPERT|NTDSUTIL)\\.EXE$' --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-013",
+   "title": "rundll32 loading comsvcs.dll (LSASS dump through MiniDump)",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --field ExecutableName=RUNDLL32.EXE --regex 'FilesLoaded=\\\\COMSVCS\\.DLL(,|$)' --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-014",
+   "title": "Domain and network reconnaissance tools (adfind, sharphound, nltest, dsquery, setspn)",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(ADFIND|SHARPHOUND|BLOODHOUND|NETSCAN|NLTEST|DSQUERY|SETSPN|CSVDE)\\.EXE$' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-015",
+   "title": "Local discovery commands run once (whoami, systeminfo, net, ipconfig, tasklist, netstat)",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --field RunCount=1 --regex 'ExecutableName=^(WHOAMI|SYSTEMINFO|NET|NET1|IPCONFIG|QUSER|ARP|NETSTAT|TASKLIST|HOSTNAME|NSLOOKUP)\\.EXE$' --format llm"
+   ],
+   "severity": "low",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-016",
+   "title": "File transfer and cloud sync clients (rclone, megasync, pscp, psftp, winscp, curl, ftp)",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(RCLONE|MEGASYNC|PSCP|PSFTP|WINSCP|CURL|FTP)\\.(EXE|COM)$' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-017",
+   "title": "Archivers run outside Program Files (7z, rar, winrar)",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(7Z|7ZA|7ZR|7ZG|RAR|WINRAR|UNRAR|WINZIP)\\.EXE$' --field 'ExePath!~\\PROGRAM FILES' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-018",
+   "title": "Tunnelling tools (ngrok, plink, chisel, frp, cloudflared)",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(NGROK|PLINK|CHISEL|FRPC|FRPS|CLOUDFLARED)\\.EXE$' --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-019",
+   "title": "Remote access and RMM tools (AnyDesk, TeamViewer, Atera, ScreenConnect, MeshAgent, RustDesk)",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(ANYDESK|TEAMVIEWER|ATERAAGENT|MESHAGENT|RUSTDESK|SCREENCONNECT)' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-020",
+   "title": "Recovery inhibition (vssadmin, wbadmin, bcdedit)",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(VSSADMIN|WBADMIN|BCDEDIT)\\.EXE$' --format llm"
+   ],
+   "severity": "high",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-021",
+   "title": "wevtutil run (event log clearing or export)",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --field ExecutableName=WEVTUTIL.EXE --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-022",
+   "title": "Secure deletion, journal and timestamp tools (sdelete, cipher, fsutil, timestomp)",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(SDELETE|SDELETE64|CIPHER|FSUTIL|TIMESTOMP)\\.EXE$' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-023",
+   "title": "Script hosts that loaded a script or shortcut from a writable folder",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(WSCRIPT|CSCRIPT|MSHTA|POWERSHELL|POWERSHELL_ISE|PWSH|CMD)\\.EXE$' --regex 'FilesLoaded=\\\\(USERS|PROGRAMDATA|WINDOWS\\\\TEMP|PERFLOGS)\\\\[^,]*\\.(PS1|VBS|VBE|HTA|JSE?|WSF|BAT|CMD|LNK)(,|$)' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-024",
+   "title": "DLL loaded from a writable folder by a trusted program (side-loading)",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExePath=^\\\\VOLUME\\{[^}]*\\}\\\\WINDOWS\\\\(SYSTEM32|SYSWOW64)\\\\' --regex 'FilesLoaded=\\\\(USERS|PERFLOGS)\\\\[^,]*\\.(DLL|OCX|CPL)(,|$)' --format llm",
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'FilesLoaded=\\\\USERS\\\\([^\\\\,]+\\\\(DOWNLOADS|DESKTOP|DOCUMENTS|APPDATA\\\\ROAMING)|PUBLIC)\\\\[^,]*\\.(DLL|OCX|CPL)(,|$)' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-025",
+   "title": "One-run programs outside the Windows and Program Files folders",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --field RunCount=1 --field 'ExePath!~}\\WINDOWS\\' --field 'ExePath!~}\\PROGRAM FILES' --field 'ExePath!~}\\$WINREAGENT\\' --field 'ExePath!~}\\PROGRAMDATA\\MICROSOFT\\WINDOWS DEFENDER\\' --field 'ExePath!~\\MICROSOFT\\ONEDRIVE\\' --format llm"
+   ],
+   "severity": "medium",
+   "verified": false
+  },
+  {
+   "id": "FH-PF-026",
+   "title": "Prefetch files with no run time recorded",
+   "tactic": "prefetch",
+   "channels": [
+    "Prefetch"
+   ],
+   "event_ids": [
+    1
+   ],
+   "forhunt": [
+    "forhunt search <paths> --channel Prefetch --event-id 1 --field NoRunTime=true --format llm"
+   ],
+   "severity": "informational",
+   "verified": false
   }
  ]
 }

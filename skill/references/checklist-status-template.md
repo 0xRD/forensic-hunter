@@ -347,6 +347,37 @@ Case: <name>  Evidence: <path>  Analyst: <name>  Started: <UTC time>
 | FH-FS-030 | Executables renamed in staging folders and lure-style file names | UsnJrnl 3,1 |  |  |
 | FH-FS-031 | USN journal reset or late start (journal deleted) | MFT 16 |  |  |
 
+## Prefetch (program execution)
+
+| Id | Check | Source | Status | Evidence / reason |
+|---|---|---|---|---|
+| FH-PF-001 | Programs run from user content folders (Downloads, Desktop, Documents, Public) | Prefetch 1 |  |  |
+| FH-PF-002 | Programs run from AppData (Temp, Roaming, Local), vendor folders left out | Prefetch 1 |  |  |
+| FH-PF-003 | Programs run from Windows\Temp, ProgramData, PerfLogs or the Recycle Bin | Prefetch 1 |  |  |
+| FH-PF-004 | Programs run from a mounted image or media with no volume creation time | Prefetch 1 |  |  |
+| FH-PF-005 | Executables with a document or archive name before the real extension | Prefetch 1 |  |  |
+| FH-PF-006 | System process names run from user-writable folders | Prefetch 1 |  |  |
+| FH-PF-007 | PsExec and similar remote execution services | Prefetch 1 |  |  |
+| FH-PF-008 | wmic, schtasks and sc (remote execution and persistence by command line) | Prefetch 1 |  |  |
+| FH-PF-009 | certutil and bitsadmin (download and decode) | Prefetch 1 |  |  |
+| FH-PF-010 | Proxy execution binaries (mshta, cmstp, installutil, msbuild, regasm, regsvcs, odbcconf) | Prefetch 1 |  |  |
+| FH-PF-011 | regsvr32 or rundll32 loading a library or scriptlet from a writable folder | Prefetch 1 |  |  |
+| FH-PF-012 | Credential theft tools (mimikatz, procdump, nanodump, rubeus, lazagne, ntdsutil) | Prefetch 1 |  |  |
+| FH-PF-013 | rundll32 loading comsvcs.dll (LSASS dump through MiniDump) | Prefetch 1 |  |  |
+| FH-PF-014 | Domain and network reconnaissance tools (adfind, sharphound, nltest, dsquery, setspn) | Prefetch 1 |  |  |
+| FH-PF-015 | Local discovery commands run once (whoami, systeminfo, net, ipconfig, tasklist, netstat) | Prefetch 1 |  |  |
+| FH-PF-016 | File transfer and cloud sync clients (rclone, megasync, pscp, psftp, winscp, curl, ftp) | Prefetch 1 |  |  |
+| FH-PF-017 | Archivers run outside Program Files (7z, rar, winrar) | Prefetch 1 |  |  |
+| FH-PF-018 | Tunnelling tools (ngrok, plink, chisel, frp, cloudflared) | Prefetch 1 |  |  |
+| FH-PF-019 | Remote access and RMM tools (AnyDesk, TeamViewer, Atera, ScreenConnect, MeshAgent, RustDesk) | Prefetch 1 |  |  |
+| FH-PF-020 | Recovery inhibition (vssadmin, wbadmin, bcdedit) | Prefetch 1 |  |  |
+| FH-PF-021 | wevtutil run (event log clearing or export) | Prefetch 1 |  |  |
+| FH-PF-022 | Secure deletion, journal and timestamp tools (sdelete, cipher, fsutil, timestomp) | Prefetch 1 |  |  |
+| FH-PF-023 | Script hosts that loaded a script or shortcut from a writable folder | Prefetch 1 |  |  |
+| FH-PF-024 | DLL loaded from a writable folder by a trusted program (side-loading) | Prefetch 1 |  |  |
+| FH-PF-025 | One-run programs outside the Windows and Program Files folders | Prefetch 1 |  |  |
+| FH-PF-026 | Prefetch files with no run time recorded | Prefetch 1 |  |  |
+
 ## Summary
 
 | Tactic | HIT | NO_HIT | NOT_APPLICABLE | LOG_SOURCE_MISSING |
@@ -364,3 +395,4 @@ Case: <name>  Evidence: <path>  Analyst: <name>  Started: <UTC time>
 | collection-exfiltration |  |  |  |  |
 | impact |  |  |  |  |
 | filesystem |  |  |  |  |
+| prefetch |  |  |  |  |

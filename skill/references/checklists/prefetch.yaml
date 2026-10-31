@@ -1,0 +1,828 @@
+tactic: prefetch
+title: Prefetch (program execution)
+description: >
+  What the `.pf` files of C:\Windows\Prefetch show when process creation logs
+  (4688, Sysmon 1) are missing or cleared: which programs started, from which
+  folder, how often, and which files they touched in their first seconds.
+  forhunt exposes one event per stored run time on channel Prefetch, event id
+  1 (RunIndex 1 is the latest run, so `--field RunIndex=1` gives one event per
+  file). Fields: ExecutableName (29 characters at most), ExePath (every loaded
+  file named like the program, joined with `, `), Hash, RunCount, RunTimes,
+  VolumeNames, VolumeSerials, VolumeCreated, Directories, FilesLoaded and
+  NoRunTime. Names and paths are upper-case and start with `\VOLUME{...}\`
+  (no drive letter). A `.pf` proves that a program started; it says nothing
+  about arguments, user or success. Prefetch records no host name: scope by
+  evidence folder, never with --computer. Most checks match on names that an
+  attacker can change: a renamed tool is only caught by its location, by the
+  files it loads, or by FH-PF-006. See references/prefetch-hunting.md.
+checks:
+  - id: FH-PF-001
+    title: Programs run from user content folders (Downloads, Desktop, Documents, Public)
+    tactic: prefetch
+    attack: [T1204.002]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected (C:\\Windows\\Prefetch) and Prefetch enabled on the host (often off on servers [K])"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExePath|re: '\\USERS\\([^\\]+\\(DOWNLOADS|DESKTOP|DOCUMENTS|MUSIC|VIDEOS|PICTURES)|PUBLIC)\\'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExePath=\\USERS\\([^\\]+\\(DOWNLOADS|DESKTOP|DOCUMENTS|MUSIC|VIDEOS|PICTURES)|PUBLIC)\\' --format llm
+    pivots:
+      - "Timeline of the first run (RunTimes, oldest last): forhunt timeline <paths> with a window around it, to see the logon, mail or browser activity just before"
+      - "Mark of the web (FH-FS-004) and creation time of the file in $MFT/$J: where it came from"
+      - "Parent and command line in 4688 or Sysmon 1 when they exist"
+    false_positives:
+      - "Installers just downloaded and run by the user (setup.exe, vendor stubs)"
+      - "Portable tools kept by IT in a shared folder such as C:\\Users\\Public"
+    severity: medium
+    sources:
+      - https://attack.mitre.org/techniques/T1204/002/
+      - https://github.com/libyal/libscca/blob/main/documentation/Windows%20Prefetch%20File%20(PF)%20format.asciidoc
+    verified: false
+    notes: "Sources cited, not re-read in this session. Field names and path shape come from forhunt's own parser (D-049). Exercised on the synthetic fixtures and on a real workstation collection; no data from it is stored here. Prefetch being enabled and C:\\Windows\\Prefetch being collected are prerequisites that forhunt cannot test: an empty folder is LOG_SOURCE_MISSING."
+
+  - id: FH-PF-002
+    title: Programs run from AppData (Temp, Roaming, Local), vendor folders left out
+    tactic: prefetch
+    attack: [T1204.002]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExePath|re: '\\USERS\\[^\\]+\\APPDATA\\'
+      filter_vendors:
+        ExePath|contains:
+          - '\MICROSOFT\ONEDRIVE\'
+          - '\MICROSOFT\TEAMS\'
+          - '\APPDATA\LOCAL\PROGRAMS\'
+          - '\.CR\'
+          - '\.BE\'
+      condition: selection and not filter_vendors
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExePath=\\USERS\\[^\\]+\\APPDATA\\' --field 'ExePath!~\MICROSOFT\ONEDRIVE\' --field 'ExePath!~\MICROSOFT\TEAMS\' --field 'ExePath!~\APPDATA\LOCAL\PROGRAMS\' --field 'ExePath!~\.CR\' --field 'ExePath!~\.BE\' --format llm
+    pivots:
+      - "Directories and FilesLoaded of the hit: other files dropped next to it (`forhunt show <id> --all-fields`)"
+      - "Same folder in $J (FH-FS-003): what else was created there and when"
+      - "Browser downloads or mail attachments around the first run time"
+    false_positives:
+      - "Self-extracting installers and update stubs unpack to AppData\\Local\\Temp (7-Zip SFX folders named 7zS*, NSIS folders named nsXXXX.tmp, browser and runtime updaters)"
+      - "Bundle installers (WiX Burn, folders .CR and .BE) copy themselves around: the program then shows a second path in a profile, which the .CR and .BE exclusions remove"
+      - "Per-user applications installed in AppData (Teams, Slack, VS Code, Discord): add them to the exclusions after you confirm them"
+    severity: medium
+    sources:
+      - https://attack.mitre.org/techniques/T1204/002/
+    verified: false
+    notes: "Sources cited, not re-read in this session. The exclusions came from the noise seen on a real workstation collection (OneDrive updater and sync client are run from the profile on every Windows 10/11 install [K]); they match anywhere in ExePath, so an attacker folder named like them hides: review the exclusions when the case turns out to involve those paths."
+
+  - id: FH-PF-003
+    title: Programs run from Windows\Temp, ProgramData, PerfLogs or the Recycle Bin
+    tactic: prefetch
+    attack: [T1036.005]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExePath|re: '\\(PROGRAMDATA|PERFLOGS|WINDOWS\\TEMP|\$RECYCLE\.BIN|RECYCLER)\\'
+      filter_windows_components:
+        ExePath|contains:
+          - '\PROGRAMDATA\MICROSOFT\WINDOWS DEFENDER\PLATFORM\'
+          - '\PROGRAMDATA\PACKAGE CACHE\'
+          - '\.CR\'
+          - '\.BE\'
+          - '\MPRECOVERY.EXE'
+          - '\MPSIGSTUB.EXE'
+      condition: selection and not filter_windows_components
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExePath=\\(PROGRAMDATA|PERFLOGS|WINDOWS\\TEMP|\$RECYCLE\.BIN|RECYCLER)\\' --field 'ExePath!~\PROGRAMDATA\MICROSOFT\WINDOWS DEFENDER\PLATFORM\' --field 'ExePath!~\PROGRAMDATA\PACKAGE CACHE\' --field 'ExePath!~\.CR\' --field 'ExePath!~\.BE\' --field 'ExePath!~\MPRECOVERY.EXE' --field 'ExePath!~\MPSIGSTUB.EXE' --format llm
+    pivots:
+      - "Service installs (System 7045) and scheduled tasks pointing at the same path"
+      - "$J/$MFT for the folder (FH-FS-003): the dropper and the other staged files"
+      - "For the Recycle Bin: a program started from there was moved or deleted after use; look for the original name in $MFT"
+    false_positives:
+      - "Software deployment agents and installers running from ProgramData or Windows\\Temp"
+      - "Per-machine apps installed under ProgramData (vendors that avoid Program Files)"
+    severity: medium
+    sources:
+      - https://attack.mitre.org/techniques/T1036/005/
+    verified: false
+    notes: "Sources cited, not re-read in this session. Exclusions remove the Defender platform and engine updater (ProgramData and Windows\\Temp), Windows Installer Burn bundles (.CR and .BE folders) and the Package Cache, all seen on a real collection. The two Defender file names are excluded by name: an attacker program named MPRECOVERY.EXE or MPSIGSTUB.EXE in Temp is missed, which is a known gap. PerfLogs and the Recycle Bin have no legitimate programs, so they are worth reading even when the rest is noisy."
+
+  - id: FH-PF-004
+    title: Programs run from a mounted image or media with no volume creation time
+    tactic: prefetch
+    attack: [T1204.002, T1553.005]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExePath|re: '^\\VOLUME\{0{16}-'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExePath=^\\VOLUME\{0{16}-' --format llm
+    pivots:
+      - "VolumeNames, VolumeSerials and VolumeCreated of the hit (`--fields ExePath,VolumeNames,VolumeSerials,VolumeCreated`): the second volume serial identifies the media"
+      - "Other .pf files that list the same volume serial: everything run from it"
+      - "Mounting events (Microsoft-Windows-VHDMP, Storage) and the .iso or .img file in Downloads ($MFT, $J)"
+      - "USB sticks usually have a real creation time and are not found by this query: compare the VolumeSerials of every run with the system volume serial instead"
+    false_positives:
+      - "Software installed from an ISO or a virtual disk (Office or Visual Studio setup, driver CDs)"
+    severity: medium
+    sources:
+      - https://attack.mitre.org/techniques/T1204/002/
+      - https://attack.mitre.org/techniques/T1553/005/
+      - https://github.com/libyal/libscca/blob/main/documentation/Windows%20Prefetch%20File%20(PF)%20format.asciidoc
+    verified: false
+    notes: "Sources cited, not re-read in this session. Based on two observations on a real collection: setup programs started from a mounted installation image show a volume id with a zero creation part and `-` in VolumeCreated [K: the meaning of the zero part is analyst knowledge, not confirmed]. ISO files were used to avoid mark-of-the-web (T1553.005) in several campaigns; this check only tells that something ran from such a volume."
+
+  - id: FH-PF-005
+    title: Executables with a document or archive name before the real extension
+    tactic: prefetch
+    attack: [T1036.007, T1204.002]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExePath|re: '\.(PDF|DOCX?|XLSX?|PPTX?|CSV|TXT|RTF|JPE?G|PNG|GIF|TIFF?|BMP|ZIP|RAR|7Z)\.(EXE|SCR|COM)(,|$)'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExePath=\.(PDF|DOCX?|XLSX?|PPTX?|CSV|TXT|RTF|JPE?G|PNG|GIF|TIFF?|BMP|ZIP|RAR|7Z)\.(EXE|SCR|COM)(,|$)' --format llm
+    pivots:
+      - "Where it ran from and when: the mail attachment or download just before (browser, mail client, FH-FS-004)"
+      - "Icon spoofing is common with this trick; check the file in $MFT for the real size and creation time"
+      - "Everything the same user ran in the following minutes (timeline)"
+    false_positives:
+      - "Almost none: a program legitimately named like a document is very rare"
+    severity: high
+    sources:
+      - https://attack.mitre.org/techniques/T1036/007/
+    verified: false
+    notes: "Sources cited, not re-read in this session. The pattern is applied to ExePath, not to ExecutableName, because the 29-character limit on the name can cut the real extension. Windows hides known extensions by default, which is why the trick works [K]."
+
+  - id: FH-PF-006
+    title: System process names run from user-writable folders
+    tactic: prefetch
+    attack: [T1036.005]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExecutableName|re: '^(SVCHOST|LSASS|CSRSS|SMSS|WININIT|WINLOGON|SERVICES|LSM|TASKHOSTW|DLLHOST|CONHOST|SPOOLSV|RUNTIMEBROKER|SEARCHINDEXER|EXPLORER|CMD|POWERSHELL|RUNDLL32|REGSVR32|WMIC|NET|NET1|SCHTASKS|SC)\.EXE$'
+        ExePath|re: '\\(USERS|PROGRAMDATA|PERFLOGS|WINDOWS\\TEMP|\$RECYCLE\.BIN)\\'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(SVCHOST|LSASS|CSRSS|SMSS|WININIT|WINLOGON|SERVICES|LSM|TASKHOSTW|DLLHOST|CONHOST|SPOOLSV|RUNTIMEBROKER|SEARCHINDEXER|EXPLORER|CMD|POWERSHELL|RUNDLL32|REGSVR32|WMIC|NET|NET1|SCHTASKS|SC)\.EXE$' --regex 'ExePath=\\(USERS|PROGRAMDATA|PERFLOGS|WINDOWS\\TEMP|\$RECYCLE\.BIN)\\' --format llm
+    pivots:
+      - "Hash and size of the file in $MFT/$J; signature and version info if the file was collected"
+      - "Parent process and command line (4688, Sysmon 1): a real system process has a fixed parent"
+      - "Hosting programs (SVCHOST, DLLHOST, RUNDLL32) have one .pf per command line: several .pf with the same name are normal, a different folder is not"
+    false_positives:
+      - "Copies of cmd.exe or powershell.exe kept by admins or build tools in a user folder (rare)"
+    severity: high
+    sources:
+      - https://attack.mitre.org/techniques/T1036/005/
+    verified: false
+    notes: "Sources cited, not re-read in this session. This is the one renamed-binary hint a prefetch query can state exactly: a name that only exists in System32 (or SysWOW64) running from a writable folder. It misses the reverse case (a tool renamed to something unusual in System32) and a lookalike in a system folder. ExePath lists every loaded file with that name, so a genuine copy in System32 next to the fake one is still reported."
+
+  - id: FH-PF-007
+    title: PsExec and similar remote execution services
+    tactic: prefetch
+    attack: [T1569.002, T1021.002, T1570]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected from the source and the target host; Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExecutableName|re: '^(PSEXESVC|PSEXEC|PSEXEC64)\.EXE$|^PAEXEC'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(PSEXESVC|PSEXEC|PSEXEC64)\.EXE$|^PAEXEC' --format llm
+    pivots:
+      - "PSEXESVC on the target means a PsExec session ended there: System 7045 (service install), Security 4624 type 3 and 5145 for the ADMIN$ share (FH-LAT checks)"
+      - "PSEXEC.EXE on a host means that host was the source: the targets are in Security 4648 and in the network logs"
+      - "The service binary is copied to ADMIN$: FH-FS-001 and FH-FS-003 on the target"
+    false_positives:
+      - "Sysadmins using PsExec for remote support (check change tickets); backup and deployment tools that embed PsExec"
+    severity: high
+    sources:
+      - https://attack.mitre.org/techniques/T1569/002/
+      - https://attack.mitre.org/techniques/T1021/002/
+      - https://learn.microsoft.com/en-us/sysinternals/downloads/psexec
+    verified: false
+    notes: "Sources cited, not re-read in this session. PSEXESVC.EXE is the default service name; PsExec can be told to use another service name and then only the location (ADMIN$ copy) and 7045 give it away [K]. PAExec starts its service under a name that begins with PAEXEC [K]. Exercised by the fixture (PSEXESVC.EXE)."
+
+  - id: FH-PF-008
+    title: wmic, schtasks and sc (remote execution and persistence by command line)
+    tactic: prefetch
+    attack: [T1047, T1053.005, T1543.003]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExecutableName|re: '^(WMIC|SCHTASKS|SC)\.EXE$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(WMIC|SCHTASKS|SC)\.EXE$' --format llm
+    pivots:
+      - "The matching events by time: wmic process call create (WMI-Activity, 4688), task creation (4698, TaskScheduler 106), service creation (7045, 4697)"
+      - "WMIPRVSE.EXE and its children in the same window: remote wmic runs on the target under WmiPrvSE"
+      - "RunCount and RunTimes: one run in the incident window on a host where the tool was never used before is stronger than the same count spread over months"
+    false_positives:
+      - "Inventory and management scripts calling wmic; installers and updaters creating tasks with schtasks; admin work with sc"
+      - "wmic is deprecated on recent Windows 11 builds [K]: its presence is then more telling"
+    severity: medium
+    sources:
+      - https://attack.mitre.org/techniques/T1047/
+      - https://attack.mitre.org/techniques/T1053/005/
+      - https://attack.mitre.org/techniques/T1543/003/
+    verified: false
+    notes: "Sources cited, not re-read in this session. A prefetch hit shows that the tool ran, not what it did: use it to date the activity and then read the arguments in logs. Exercised by the fixture (WMIC.EXE, SCHTASKS.EXE)."
+
+  - id: FH-PF-009
+    title: certutil and bitsadmin (download and decode)
+    tactic: prefetch
+    attack: [T1105, T1197, T1140]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExecutableName|re: '^(CERTUTIL|BITSADMIN)\.EXE$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(CERTUTIL|BITSADMIN)\.EXE$' --format llm
+    pivots:
+      - "BITS-Client/Operational (3, 59, 60) for the job and URL; Sysmon 3 or firewall logs for the connection"
+      - "Files created just after the run in $J (FH-FS-003): the downloaded or decoded file"
+      - "FilesLoaded of the CERTUTIL file: a user-folder path points at the file it decoded or hashed"
+    false_positives:
+      - "certutil used by admins for certificates and hashes (certutil -hashfile); BITS used by Windows Update and some installers (those run under svchost, not bitsadmin)"
+    severity: medium
+    sources:
+      - https://attack.mitre.org/techniques/T1105/
+      - https://attack.mitre.org/techniques/T1197/
+      - https://attack.mitre.org/techniques/T1140/
+    verified: false
+    notes: "Sources cited, not re-read in this session. certutil -urlcache -f downloads a file and certutil -decode / -decodehex converts encoded content [K]; bitsadmin /transfer creates a BITS job [K]. The .pf cannot tell which option was used."
+
+  - id: FH-PF-010
+    title: Proxy execution binaries (mshta, cmstp, installutil, msbuild, regasm, regsvcs, odbcconf)
+    tactic: prefetch
+    attack: [T1218.005, T1218.003, T1218.004, T1218.009, T1218.008, T1127.001]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExecutableName|re: '^(MSHTA|CMSTP|INSTALLUTIL|MSBUILD|REGASM|REGSVCS|ODBCCONF)\.EXE$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(MSHTA|CMSTP|INSTALLUTIL|MSBUILD|REGASM|REGSVCS|ODBCCONF)\.EXE$' --format llm
+    pivots:
+      - "FilesLoaded: an .hta, .xml, .csproj, .inf or .dll in a user folder is the payload"
+      - "Parent process (Office, browser, script host) and command line in 4688 or Sysmon 1"
+      - "Network connections from the same time window (Sysmon 3, DNS)"
+    false_positives:
+      - "msbuild, installutil and regasm run on developer machines and during .NET installs; cmstp for VPN profiles; mshta is rare on current systems"
+    severity: medium
+    sources:
+      - https://attack.mitre.org/techniques/T1218/005/
+      - https://attack.mitre.org/techniques/T1218/003/
+      - https://attack.mitre.org/techniques/T1218/004/
+      - https://attack.mitre.org/techniques/T1218/009/
+      - https://attack.mitre.org/techniques/T1218/008/
+      - https://attack.mitre.org/techniques/T1127/001/
+    verified: false
+    notes: "Sources cited, not re-read in this session. The tool list is analyst knowledge of commonly abused signed binaries [K]; no rule text was copied. On a developer or build host msbuild gives constant hits: scope by user and path instead."
+
+  - id: FH-PF-011
+    title: regsvr32 or rundll32 loading a library or scriptlet from a writable folder
+    tactic: prefetch
+    attack: [T1218.010, T1218.011]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExecutableName|re: '^(REGSVR32|RUNDLL32)\.EXE$'
+        FilesLoaded|re: '\\(USERS|PROGRAMDATA|WINDOWS\\TEMP|PERFLOGS)\\[^,]*\.(DLL|OCX|CPL|SCT)(,|$)'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(REGSVR32|RUNDLL32)\.EXE$' --regex 'FilesLoaded=\\(USERS|PROGRAMDATA|WINDOWS\\TEMP|PERFLOGS)\\[^,]*\.(DLL|OCX|CPL|SCT)(,|$)' --format llm
+    pivots:
+      - "The library path in FilesLoaded: its creation in $J/$MFT (FH-FS-003) and its signature if collected"
+      - "Several rundll32 .pf files exist (one per command line): list all with `forhunt search <paths> -c Prefetch -f ExecutableName=RUNDLL32.EXE --all-fields` and compare their FilesLoaded"
+      - "Parent and arguments in 4688 or Sysmon 1; network connections from the same process"
+    false_positives:
+      - "Per-user applications that register or run components from their profile (OneDrive and some printer or scanner software)"
+      - "Installers registering their own DLLs from Temp"
+    severity: medium
+    sources:
+      - https://attack.mitre.org/techniques/T1218/010/
+      - https://attack.mitre.org/techniques/T1218/011/
+    verified: false
+    notes: "Sources cited, not re-read in this session. Plain REGSVR32 and RUNDLL32 runs are everywhere on Windows, so the name alone is not a check: the loaded-file path is what carries the signal. Whether a remote .sct fetched over HTTP appears in FilesLoaded is not confirmed [K]; a regsvr32 run with no library listed from a writable folder may be that case, check the network logs."
+
+  - id: FH-PF-012
+    title: Credential theft tools (mimikatz, procdump, nanodump, rubeus, lazagne, ntdsutil)
+    tactic: prefetch
+    attack: [T1003.001, T1003.003, T1558.003, T1555]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExecutableName|re: '^(MIMIKATZ|PROCDUMP|PROCDUMP64|NANODUMP|RUBEUS|LAZAGNE|SAFETYKATZ|SHARPDUMP|DUMPERT|NTDSUTIL)\.EXE$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(MIMIKATZ|PROCDUMP|PROCDUMP64|NANODUMP|RUBEUS|LAZAGNE|SAFETYKATZ|SHARPDUMP|DUMPERT|NTDSUTIL)\.EXE$' --format llm
+    pivots:
+      - "LSASS access: Sysmon 10 and Security 4656/4663 on lsass.exe in the same minutes (FH-CRED checks)"
+      - "Dump files created afterwards in $J (.dmp, large files in Temp or Public)"
+      - "Next lateral movement: 4624 type 3 or 9 with the harvested account (FH-LAT checks)"
+      - "Renamed copies: FH-PF-006 (location), FH-PF-013 (comsvcs) and Defender detections"
+    false_positives:
+      - "procdump is a legitimate Sysinternals tool used by developers and support to capture crash dumps; ntdsutil is used by AD admins on domain controllers"
+    severity: high
+    sources:
+      - https://attack.mitre.org/techniques/T1003/001/
+      - https://attack.mitre.org/techniques/T1003/003/
+      - https://attack.mitre.org/techniques/T1558/003/
+      - https://attack.mitre.org/techniques/T1555/
+      - https://learn.microsoft.com/en-us/sysinternals/downloads/procdump
+    verified: false
+    notes: "Sources cited, not re-read in this session. Tool names are the usual executable names [K] and a one-line rename defeats the match; attackers often do rename them. Mimikatz is also run in memory (PowerShell, C2 frameworks), which leaves no .pf of its own."
+
+  - id: FH-PF-013
+    title: rundll32 loading comsvcs.dll (LSASS dump through MiniDump)
+    tactic: prefetch
+    attack: [T1003.001]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExecutableName: RUNDLL32.EXE
+        FilesLoaded|re: '\\COMSVCS\.DLL(,|$)'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --field ExecutableName=RUNDLL32.EXE --regex 'FilesLoaded=\\COMSVCS\.DLL(,|$)' --format llm
+    pivots:
+      - "Sysmon 10 / 4656 on lsass.exe at the same time, and the dump file created in $J right after"
+      - "Parent process and command line in 4688 or Sysmon 1 (`comsvcs.dll, MiniDump <pid> <file> full` is the usual form)"
+      - "Who ran it and from where: 4624 around the run time"
+    false_positives:
+      - "Very rare. COM+ administration can load comsvcs.dll, but through dllhost.exe and svchost.exe rather than rundll32"
+    severity: high
+    sources:
+      - https://attack.mitre.org/techniques/T1003/001/
+    verified: false
+    notes: "Sources cited, not re-read in this session. comsvcs.dll exports MiniDump and living-off-the-land LSASS dumping with rundll32 is widely documented [K]. Other programs that legitimately load comsvcs.dll (EXPLORER, SVCHOST, DLLHOST) were seen on a real collection and are deliberately left out: the query is tied to rundll32. If the attacker renamed or copied rundll32, find the copy with FH-PF-006."
+
+  - id: FH-PF-014
+    title: Domain and network reconnaissance tools (adfind, sharphound, nltest, dsquery, setspn)
+    tactic: prefetch
+    attack: [T1087.002, T1482, T1018, T1069.002, T1046]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExecutableName|re: '^(ADFIND|SHARPHOUND|BLOODHOUND|NETSCAN|NLTEST|DSQUERY|SETSPN|CSVDE)\.EXE$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(ADFIND|SHARPHOUND|BLOODHOUND|NETSCAN|NLTEST|DSQUERY|SETSPN|CSVDE)\.EXE$' --format llm
+    pivots:
+      - "Output files in $J right after the run (adfind and sharphound write text or zip files into the working folder)"
+      - "LDAP-heavy activity on the domain controller (Security 4662, 1644 if enabled, 5145 for SYSVOL) in the same window"
+      - "Kerberoasting or other follow-up from the same host (FH-AD, FH-CRED checks)"
+    false_positives:
+      - "nltest, dsquery, setspn and csvde are built-in or RSAT tools used by domain admins; netscan is also run by network staff"
+      - "BloodHound and SharpHound are used legitimately by red teams and AD audits: check the engagement dates"
+    severity: medium
+    sources:
+      - https://attack.mitre.org/techniques/T1482/
+      - https://attack.mitre.org/techniques/T1087/002/
+      - https://attack.mitre.org/techniques/T1018/
+      - https://attack.mitre.org/techniques/T1069/002/
+      - https://attack.mitre.org/techniques/T1046/
+    verified: false
+    notes: "Sources cited, not re-read in this session. Names are the usual executable names [K]; netscan.exe is the SoftPerfect network scanner [K]. nltest on a workstation that never ran it (RunCount 1) is the interesting case."
+
+  - id: FH-PF-015
+    title: Local discovery commands run once (whoami, systeminfo, net, ipconfig, tasklist, netstat)
+    tactic: prefetch
+    attack: [T1033, T1082, T1016, T1049, T1057, T1087.001]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        RunCount: 1
+        ExecutableName|re: '^(WHOAMI|SYSTEMINFO|NET|NET1|IPCONFIG|QUSER|ARP|NETSTAT|TASKLIST|HOSTNAME|NSLOOKUP)\.EXE$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --field RunCount=1 --regex 'ExecutableName=^(WHOAMI|SYSTEMINFO|NET|NET1|IPCONFIG|QUSER|ARP|NETSTAT|TASKLIST|HOSTNAME|NSLOOKUP)\.EXE$' --format llm
+    pivots:
+      - "Several of these within a few minutes of each other is hands-on-keyboard discovery: timeline around the run times, and the parent (cmd.exe, a remote shell) in 4688 or Sysmon 1"
+      - "Run times against the first suspicious logon (FH-INIT checks) or the first execution from FH-PF-001 to FH-PF-004"
+    false_positives:
+      - "Helpdesk and admin use; scripts at logon; these tools are used all the time on busy hosts, which is why only RunCount 1 is selected"
+    severity: low
+    sources:
+      - https://attack.mitre.org/techniques/T1033/
+      - https://attack.mitre.org/techniques/T1082/
+      - https://attack.mitre.org/techniques/T1016/
+      - https://attack.mitre.org/techniques/T1049/
+      - https://attack.mitre.org/techniques/T1057/
+    verified: false
+    notes: "Sources cited, not re-read in this session. RunCount 1 means the program ran once since its .pf file was created, not once in the life of the host: Windows removes old .pf files, so a count of 1 can also be the first run after an eviction. To see repeated discovery, read RunCount and RunTimes of the commands instead. Not exercised by the fixtures or the real collection (no hit)."
+
+  - id: FH-PF-016
+    title: File transfer and cloud sync clients (rclone, megasync, pscp, psftp, winscp, curl, ftp)
+    tactic: prefetch
+    attack: [T1567.002, T1048, T1105]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExecutableName|re: '^(RCLONE|MEGASYNC|PSCP|PSFTP|WINSCP|CURL|FTP)\.(EXE|COM)$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(RCLONE|MEGASYNC|PSCP|PSFTP|WINSCP|CURL|FTP)\.(EXE|COM)$' --format llm
+    pivots:
+      - "ExePath: a profile, Temp or Public folder is much worse than Program Files (also FH-PF-001/002)"
+      - "FilesLoaded: config files (rclone.conf) or staged archives named in the list tie the tool to the data"
+      - "Network volume at the time: firewall, proxy or DNS logs (not in the event logs); Sysmon 3 and 22 when present"
+      - "Archives created shortly before the run (FH-PF-017, $J)"
+    false_positives:
+      - "WinSCP and curl installed by admins and developers (curl.exe ships with Windows 10 and 11 [K]); sanctioned sync clients"
+    severity: medium
+    sources:
+      - https://attack.mitre.org/techniques/T1567/002/
+      - https://attack.mitre.org/techniques/T1048/
+      - https://attack.mitre.org/techniques/T1105/
+    verified: false
+    notes: "Sources cited, not re-read in this session. WinSCP also ships WINSCP.COM, a console front end, so both extensions are matched. rclone is the usual exfiltration tool in ransomware intrusions [K]. This only shows that the client ran, never what or how much it transferred."
+
+  - id: FH-PF-017
+    title: Archivers run outside Program Files (7z, rar, winrar)
+    tactic: prefetch
+    attack: [T1560.001, T1074.001]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExecutableName|re: '^(7Z|7ZA|7ZR|7ZG|RAR|WINRAR|UNRAR|WINZIP)\.EXE$'
+      filter_installed:
+        ExePath|contains: '\PROGRAM FILES'
+      condition: selection and not filter_installed
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(7Z|7ZA|7ZR|7ZG|RAR|WINRAR|UNRAR|WINZIP)\.EXE$' --field 'ExePath!~\PROGRAM FILES' --format llm
+    pivots:
+      - "Archive files created next to the run in $J (FH-FS-003 for the folder), their size and name"
+      - "FilesLoaded: the archive and the folders it read"
+      - "Exfiltration after archiving: FH-PF-016, FH-PF-018 and network logs"
+    false_positives:
+      - "Portable 7-Zip or WinRAR copies kept by users; archive tools run by software installers"
+    severity: medium
+    sources:
+      - https://attack.mitre.org/techniques/T1560/001/
+      - https://attack.mitre.org/techniques/T1074/001/
+    verified: false
+    notes: "Sources cited, not re-read in this session. Archivers installed in Program Files are everyday software; the useful signal is a standalone rar.exe or 7z.exe dropped in a writable folder, so installed copies are filtered out. A copy installed under Program Files and used for staging is missed, use the archives in $J for that."
+
+  - id: FH-PF-018
+    title: Tunnelling tools (ngrok, plink, chisel, frp, cloudflared)
+    tactic: prefetch
+    attack: [T1572, T1090]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExecutableName|re: '^(NGROK|PLINK|CHISEL|FRPC|FRPS|CLOUDFLARED)\.EXE$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(NGROK|PLINK|CHISEL|FRPC|FRPS|CLOUDFLARED)\.EXE$' --format llm
+    pivots:
+      - "Long-lived outbound connections from the host: firewall or proxy logs, Sysmon 3, 5156"
+      - "Inbound RDP or SMB logons from 127.0.0.1 or the tunnel endpoint (Security 4624 with IpAddress 127.0.0.1, 1149 in TerminalServices)"
+      - "FilesLoaded: a configuration file in a user folder names the remote endpoint"
+    false_positives:
+      - "plink is the command-line SSH client of PuTTY, common in admin use; cloudflared and ngrok are used by developers for demos"
+    severity: high
+    sources:
+      - https://attack.mitre.org/techniques/T1572/
+      - https://attack.mitre.org/techniques/T1090/
+    verified: false
+    notes: "Sources cited, not re-read in this session. Names are the usual executable names [K]. The built-in OpenSSH client (ssh.exe) can tunnel too but runs too often to be a useful name match."
+
+  - id: FH-PF-019
+    title: Remote access and RMM tools (AnyDesk, TeamViewer, Atera, ScreenConnect, MeshAgent, RustDesk)
+    tactic: prefetch
+    attack: [T1219]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExecutableName|re: '^(ANYDESK|TEAMVIEWER|ATERAAGENT|MESHAGENT|RUSTDESK|SCREENCONNECT)'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(ANYDESK|TEAMVIEWER|ATERAAGENT|MESHAGENT|RUSTDESK|SCREENCONNECT)' --format llm
+    pivots:
+      - "First run time against the intrusion timeline: a new agent installed minutes after a suspicious logon is persistence"
+      - "Service installs (System 7045) and the install folder (ExePath: a profile or Temp path means a portable copy rather than the managed install)"
+      - "Remote sessions from the vendor's logs on the host (AnyDesk connection_trace.txt, TeamViewer logs) if collected"
+    false_positives:
+      - "Sanctioned remote support tools: compare with the asset inventory and the vendor the organisation actually uses"
+    severity: medium
+    sources:
+      - https://attack.mitre.org/techniques/T1219/
+    verified: false
+    notes: "Sources cited, not re-read in this session. The pattern is a prefix because ExecutableName is cut at 29 characters (ScreenConnect.ClientService.exe is longer) and vendors use several executables (TeamViewer.exe, TeamViewer_Service.exe) [K]. Whether the T1219 sub-technique numbers exist in the ATT&CK version used by the other checklists was not checked: the parent id is used."
+
+  - id: FH-PF-020
+    title: Recovery inhibition (vssadmin, wbadmin, bcdedit)
+    tactic: prefetch
+    attack: [T1490]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExecutableName|re: '^(VSSADMIN|WBADMIN|BCDEDIT)\.EXE$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(VSSADMIN|WBADMIN|BCDEDIT)\.EXE$' --format llm
+    pivots:
+      - "Shadow copy deletion in the logs: VSS events (System 7036 for the service, Application VSS), 4688 command lines with delete shadows, wbadmin delete catalog"
+      - "Mass file renames and new extensions in $J (FH-FS-007 and related): ransomware encryption starts around these runs"
+      - "Which account and logon: 4624 around the run time"
+    false_positives:
+      - "Backup software calling vssadmin or wbadmin; bcdedit during OS setup, driver work or dual-boot configuration"
+    severity: high
+    sources:
+      - https://attack.mitre.org/techniques/T1490/
+    verified: false
+    notes: "Sources cited, not re-read in this session. Deleting shadow copies with vssadmin or wbadmin and disabling recovery with bcdedit before encryption is typical ransomware behaviour [K]. The VSSVC service has its own .pf file and is not the same thing: it is a service that runs when shadow copies are used, and is not matched here."
+
+  - id: FH-PF-021
+    title: wevtutil run (event log clearing or export)
+    tactic: prefetch
+    attack: [T1070.001]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExecutableName: WEVTUTIL.EXE
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --field ExecutableName=WEVTUTIL.EXE --format llm
+    pivots:
+      - "Log clearing events: Security 1102, System 104 (FH-DEF-001 and following) at the same times; a gap in stats (log_tampering, quiet_periods) before the first run time"
+      - "RunTimes of WEVTUTIL against the other suspicious executions: clearing usually comes last"
+      - "The 8 latest run times only: RunCount above 8 means older runs have no time"
+    false_positives:
+      - "Admins exporting or querying logs (wevtutil epl, qe); monitoring or collection scripts. A high RunCount over months points to a scheduled script"
+      - "Installers and servicing register event manifests with wevtutil (im, um) [K]: runs in pairs a second apart at install or update times"
+    severity: medium
+    sources:
+      - https://attack.mitre.org/techniques/T1070/001/
+    verified: false
+    notes: "Sources cited, not re-read in this session. wevtutil cl <log> clears a log [K]. A hit is only a lead: confirm with the clear events or a gap in the logs. Not marked with the newer technique ids that FH-DEF-001 also lists, to avoid claiming ids not checked here."
+
+  - id: FH-PF-022
+    title: Secure deletion, journal and timestamp tools (sdelete, cipher, fsutil, timestomp)
+    tactic: prefetch
+    attack: [T1070.004, T1070.006]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExecutableName|re: '^(SDELETE|SDELETE64|CIPHER|FSUTIL|TIMESTOMP)\.EXE$'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(SDELETE|SDELETE64|CIPHER|FSUTIL|TIMESTOMP)\.EXE$' --format llm
+    pivots:
+      - "$J: journal deletion or a reset (FH-FS-031), mass deletions (FH-FS-007, FH-FS-024), timestamp anomalies (FH-FS-001, FH-FS-002)"
+      - "FilesLoaded: the files the tool was pointed at, when they were opened in the first seconds"
+      - "Parent and command line in 4688 or Sysmon 1 (cipher /w, fsutil usn deletejournal, sdelete -p)"
+    false_positives:
+      - "fsutil and cipher are built-in tools used for disk and EFS administration; sdelete is a Sysinternals tool used for legitimate data sanitisation"
+    severity: medium
+    sources:
+      - https://attack.mitre.org/techniques/T1070/004/
+      - https://attack.mitre.org/techniques/T1070/006/
+      - https://learn.microsoft.com/en-us/sysinternals/downloads/sdelete
+    verified: false
+    notes: "Sources cited, not re-read in this session. sdelete overwrites files, cipher /w overwrites free space, fsutil usn deletejournal removes the USN journal, and a standalone timestomp.exe changes file times [K]. The journal deletion has no ATT&CK id given here because the right technique was not confirmed. Not exercised by the fixtures or the real collection."
+
+  - id: FH-PF-023
+    title: Script hosts that loaded a script or shortcut from a writable folder
+    tactic: prefetch
+    attack: [T1059.001, T1059.005, T1059.007, T1218.005, T1204.002]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        ExecutableName|re: '^(WSCRIPT|CSCRIPT|MSHTA|POWERSHELL|POWERSHELL_ISE|PWSH|CMD)\.EXE$'
+        FilesLoaded|re: '\\(USERS|PROGRAMDATA|WINDOWS\\TEMP|PERFLOGS)\\[^,]*\.(PS1|VBS|VBE|HTA|JSE?|WSF|BAT|CMD|LNK)(,|$)'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExecutableName=^(WSCRIPT|CSCRIPT|MSHTA|POWERSHELL|POWERSHELL_ISE|PWSH|CMD)\.EXE$' --regex 'FilesLoaded=\\(USERS|PROGRAMDATA|WINDOWS\\TEMP|PERFLOGS)\\[^,]*\.(PS1|VBS|VBE|HTA|JSE?|WSF|BAT|CMD|LNK)(,|$)' --format llm
+    pivots:
+      - "The script path in FilesLoaded: creation in $J/$MFT, mark of the web (FH-FS-004), contents if collected"
+      - "PowerShell 4104 script block logging for the same time (FH-EXE checks), 4688 or Sysmon 1 for the command line"
+      - "The parent: Office, browser or mail client starting a script host (Sysmon 1, 4688)"
+    false_positives:
+      - "Logon scripts and admin batch files kept in ProgramData or a profile; software that starts cmd.exe on its own .bat files"
+      - "Explorer, Office and the browsers list many .lnk files, which is why only script hosts are matched, not every program"
+    severity: medium
+    sources:
+      - https://attack.mitre.org/techniques/T1059/001/
+      - https://attack.mitre.org/techniques/T1059/005/
+      - https://attack.mitre.org/techniques/T1059/007/
+      - https://attack.mitre.org/techniques/T1218/005/
+    verified: false
+    notes: "Sources cited, not re-read in this session. A wider version (any program that loaded a script path) was tried on a real collection and returned the browser, OneDrive and shell components, so it was narrowed to script hosts. A script that is run through a renamed host, or passed on the command line and never opened as a file, is not listed in FilesLoaded [K]."
+
+  - id: FH-PF-024
+    title: DLL loaded from a writable folder by a trusted program (side-loading)
+    tactic: prefetch
+    attack: [T1574.002]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection_system_binary:
+        EventID: 1
+        RunIndex: 1
+        ExePath|re: '^\\VOLUME\{[^}]*\}\\WINDOWS\\(SYSTEM32|SYSWOW64)\\'
+        FilesLoaded|re: '\\(USERS|PERFLOGS)\\[^,]*\.(DLL|OCX|CPL)(,|$)'
+      selection_any_program:
+        EventID: 1
+        RunIndex: 1
+        FilesLoaded|re: '\\USERS\\([^\\,]+\\(DOWNLOADS|DESKTOP|DOCUMENTS|APPDATA\\ROAMING)|PUBLIC)\\[^,]*\.(DLL|OCX|CPL)(,|$)'
+      condition: selection_system_binary or selection_any_program
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'ExePath=^\\VOLUME\{[^}]*\}\\WINDOWS\\(SYSTEM32|SYSWOW64)\\' --regex 'FilesLoaded=\\(USERS|PERFLOGS)\\[^,]*\.(DLL|OCX|CPL)(,|$)' --format llm
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --regex 'FilesLoaded=\\USERS\\([^\\,]+\\(DOWNLOADS|DESKTOP|DOCUMENTS|APPDATA\\ROAMING)|PUBLIC)\\[^,]*\.(DLL|OCX|CPL)(,|$)' --format llm
+    pivots:
+      - "Compare the DLL name with the legitimate one the program normally loads from its own folder (same name beside a signed program copied to a user folder is the classic side-load)"
+      - "$J/$MFT: when the DLL and the program were created in that folder, and whether they arrived together"
+      - "Network activity of the process afterwards (Sysmon 3, DNS)"
+    false_positives:
+      - "Applications installed in a profile (they keep their own DLLs there), installers unpacking libraries to Temp"
+    severity: medium
+    sources:
+      - https://attack.mitre.org/techniques/T1574/002/
+    verified: false
+    notes: "Sources cited, not re-read in this session. Two queries because one alone is either blind or noisy: Windows binaries loading libraries from a profile (query 1) is very rare, and any program loading a library from Downloads, Desktop, Documents, Public or Roaming (query 2) was clean on a real collection. Windows\\Temp and ProgramData were left out on purpose: Defender and Windows Update load hundreds of libraries from there [K], and AppData\\Local\\Temp is full of installer helper libraries (NSIS plug-ins), so a side-load staged there is only found by FH-PF-002."
+
+  - id: FH-PF-025
+    title: One-run programs outside the Windows and Program Files folders
+    tactic: prefetch
+    attack: [T1204.002, T1036.005]
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        RunIndex: 1
+        RunCount: 1
+      filter_standard_locations:
+        ExePath|contains:
+          - '}\WINDOWS\'
+          - '}\PROGRAM FILES'
+          - '}\$WINREAGENT\'
+          - '}\PROGRAMDATA\MICROSOFT\WINDOWS DEFENDER\'
+          - '\MICROSOFT\ONEDRIVE\'
+      condition: selection and not filter_standard_locations
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field RunIndex=1 --field RunCount=1 --field 'ExePath!~}\WINDOWS\' --field 'ExePath!~}\PROGRAM FILES' --field 'ExePath!~}\$WINREAGENT\' --field 'ExePath!~}\PROGRAMDATA\MICROSOFT\WINDOWS DEFENDER\' --field 'ExePath!~\MICROSOFT\ONEDRIVE\' --format llm
+    pivots:
+      - "Each hit is one program that ran a single time from an unusual place: read the folder, the name and the run time, then the same questions as FH-PF-001 to FH-PF-004"
+      - "Dropped and run once is typical of an initial payload or a one-shot tool; look for its creation and deletion in $J (the file may be gone: the .pf outlives it)"
+      - "Programs on other volumes (a mounted image or media) appear here too, with the volume id in ExePath"
+    false_positives:
+      - "Software installed or updated once from a download folder, a mounted setup image, a vendor folder at the root of the drive"
+      - "RunCount 1 can also follow the eviction of an older .pf (Windows keeps a limited number of files): the program may have run many times"
+    severity: medium
+    sources:
+      - https://attack.mitre.org/techniques/T1204/002/
+      - https://github.com/libyal/libscca/blob/main/documentation/Windows%20Prefetch%20File%20(PF)%20format.asciidoc
+    verified: false
+    notes: "Sources cited, not re-read in this session. The exclusions are anchored on the closing brace of the volume id (`}\\WINDOWS\\`) so that a folder such as C:\\Users\\x\\AppData\\Roaming\\Microsoft\\Windows\\ is not mistaken for the Windows folder. The $WINREAGENT and Defender exclusions are the Windows servicing and antimalware components seen as one-run programs on a real collection. This is the catch-all after FH-PF-001 to FH-PF-004: it also covers unusual root folders (C:\\Intel, C:\\inetpub, drive root) that those checks do not name."
+
+  - id: FH-PF-026
+    title: Prefetch files with no run time recorded
+    tactic: prefetch
+    attack: []
+    channel: Prefetch
+    event_ids: [1]
+    prerequisites:
+      - ".pf files collected and Prefetch enabled"
+    logic:
+      selection:
+        EventID: 1
+        NoRunTime: 'true'
+      condition: selection
+    forhunt:
+      - forhunt search <paths> --channel Prefetch --event-id 1 --field NoRunTime=true --format llm
+    pivots:
+      - "The name and folder (ExePath) of the file: is it one of the programs flagged by the other prefetch checks?"
+      - "File times of the .pf itself in $MFT: when the file was created or last written"
+      - "Other files of the same program: a second .pf for the same name that has run times"
+    false_positives:
+      - "A run time of zero is also what the file holds when the program was only scheduled for tracing or could not be recorded completely [K]; some tools write such files"
+    severity: informational
+    sources:
+      - https://github.com/libyal/libscca/blob/main/documentation/Windows%20Prefetch%20File%20(PF)%20format.asciidoc
+    verified: false
+    notes: "Sources cited, not re-read in this session. forhunt gives such a file one event timestamped 1970 and marks it NoRunTime=true; filter these out of time windows (they sort first) but do not ignore them. What causes them is not confirmed here. The field exists only on those events, so on a collection without any such file this check comes out as LOG_SOURCE_MISSING instead of NO_HIT (seen on the fixtures and on a real collection): that is a limit of how forhunt reports an absent field, not evidence about the host, and the analyst should record it as NO_HIT. Not exercised by the fixtures or the real collection (no hit)."

@@ -1,7 +1,8 @@
 # Prefetch hunting
 
 Analyst guide for `.pf` files in forhunt. Syntax and fields are in `forhunt.md`
-(section "Prefetch"). Items marked **[K]** are analyst knowledge that was not
+(section "Prefetch"); the ready-made checks are `checklists/prefetch.yaml`
+(FH-PF-001..026). Items marked **[K]** are analyst knowledge that was not
 checked against a source in the session that wrote this file; treat them as
 leads.
 
@@ -14,6 +15,7 @@ say who ran it, with which arguments, or whether it succeeded.
 ## Triage
 
 ```bash
+forhunt checklist E -k references/checklists/checklists.json --tactic prefetch -o work/pf.md   # FH-PF-*
 forhunt search E -c Prefetch -r 'ExePath=\\(USERS|PROGRAMDATA|PERFLOGS|TEMP)\\'   # odd locations
 forhunt search E -c Prefetch -r 'ExePath=\\WINDOWS\\TEMP\\'
 forhunt search E -c Prefetch -f RunCount=1 --since <incident start>            # new, once
@@ -21,6 +23,13 @@ forhunt search E -c Prefetch -r 'ExecutableName=^(PSEXESVC|WMIC|VSSADMIN|BITSADM
 forhunt search E -c Prefetch -f FilesLoaded~<tool or DLL>                       # what touched it
 forhunt timeline E --since <t> --until <t>                                      # merged with logs and NTFS
 ```
+
+The checklist reads a result as follows. Every query selects one event per file
+(`RunIndex=1`), so a `HIT?` count is a number of programs, not of runs. Most name
+checks only show that a tool ran: ask the logs for its arguments. A renamed tool
+is found only by its location (FH-PF-001 to FH-PF-006, FH-PF-025) or by what it
+loaded (FH-PF-011, FH-PF-013, FH-PF-024). FH-PF-026 (`NoRunTime`) comes out as
+`LOG_SOURCE_MISSING` when no such file exists: record it as `NO_HIT`.
 
 ## Reading it
 

@@ -65,7 +65,8 @@ cleared (`references/forhunt.md`, NTFS section; how to hunt and read them:
 `references/ntfs-hunting.md`). They carry no host name, so
 scope them by the host's folder, never with `--computer`. Ask for
 `C:\Windows\Prefetch` too: `.pf` files prove execution when 4688 and Sysmon are
-missing (`references/prefetch-hunting.md`); they have no host name either.
+missing (`references/prefetch-hunting.md`, checks in
+`references/checklists/prefetch.yaml`); they have no host name either.
 If the analyst wants to browse in Timeline Explorer:
 `forhunt parse "$CASE/evidence" -F csv -O "$CASE/work/csv" --split host`.
 
@@ -191,6 +192,7 @@ self-contained HTML file (`references/attack-path.md`).
 - `references/forhunt.md`: commands, filters, `llm` format keys, exit codes
 - `references/hayabusa.md`: Hayabusa commands, levels, filters, licence notice
 - `references/ntfs-hunting.md`: hunting and interpreting `$MFT` / `$UsnJrnl:$J` (timestomping, staging, persistence, anti-forensics, correlation)
+- `references/prefetch-hunting.md`: hunting and interpreting `.pf` files (locations, tools, loaded files, where Prefetch misleads)
 - `references/checklists/INDEX.md`: tactic order, coverage matrix, blind spots
 - `references/checklists/*.yaml`: the checks (schema in `SCHEMA.md`);
   `checklists.json` is the same content for `forhunt checklist`
