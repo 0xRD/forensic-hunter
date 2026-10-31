@@ -59,7 +59,8 @@ impl Heap<'_, '_> {
             return Some(Vec::new());
         }
         if hnid & 0x1F == 0 {
-            return self.alloc(hnid).map(<[u8]>::to_vec);
+            let item = self.alloc(hnid)?;
+            return self.r.spend(item.len()).then(|| item.to_vec());
         }
         let node = self.subs.get(&hnid)?;
         Some(self.r.data(node.data).concat())

@@ -104,15 +104,16 @@ impl Store {
     }
 
     fn tree(&mut self, ib: u64, kind: u8, depth: u8, seen: &mut HashSet<u64>) {
-        if depth > MAX_DEPTH || !seen.insert(ib) {
-            self.bad_pages += 1;
-            return;
-        }
         let (size, trailer) = if self.wide_page {
             (4096, 24)
         } else {
             (512, 16)
         };
+        let misplaced = ib % size as u64 != 0 || ib.saturating_add(size as u64) > self.len;
+        if depth > MAX_DEPTH || misplaced || !seen.insert(ib) {
+            self.bad_pages += 1;
+            return;
+        }
         let mut p = vec![0u8; size];
         if !read_at(&self.file, &mut p, ib) || p[size - trailer] != kind {
             self.bad_pages += 1;
@@ -157,7 +158,8 @@ impl Store {
     pub fn reader(&self) -> Reader<'_> {
         Reader {
             store: self,
-            budget: Cell::new((self.len as usize).saturating_mul(4).max(1 << 20)),
+            // Items are read more than once, and compressed blocks inflate.
+            budget: Cell::new((self.len as usize).saturating_mul(32).max(1 << 26)),
             bad: Cell::new(0),
         }
     }

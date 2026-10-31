@@ -65,6 +65,8 @@ const PR_SMTP: u16 = 0x39FE;
 const PR_SENDER_SMTP: u16 = 0x5D01;
 const PR_SENT_SMTP: u16 = 0x5D02;
 const MSGFLAG_UNSENT: u64 = 8;
+/// Per message: more says nothing new, and the body still holds them.
+const MAX_URLS: usize = 1000;
 
 pub struct MailArtifact;
 
@@ -282,12 +284,16 @@ fn urls_of(texts: &[&str]) -> Vec<String> {
     static URL: OnceLock<Regex> = OnceLock::new();
     let re = URL
         .get_or_init(|| Regex::new(r#"(?i)\b(?:https?|ftp)://[^\s"'<>\\]+"#).expect("valid regex"));
+    let mut seen = std::collections::HashSet::new();
     let mut out: Vec<String> = Vec::new();
     for m in texts.iter().flat_map(|t| re.find_iter(t)) {
         let url = unescape(m.as_str());
         let url = url.trim_end_matches(['.', ',', ')', ';']).to_string();
-        if !out.contains(&url) {
+        if seen.insert(url.clone()) {
             out.push(url);
+            if out.len() == MAX_URLS {
+                break;
+            }
         }
     }
     out
@@ -430,14 +436,13 @@ impl Walk<'_, '_> {
         if class.starts_with("IPM.Contact") {
             let mut c = Rec::new(EID_CONTACT, ts);
             c.s("Folder", folder).s("Name", subject(&p));
-            let addresses: Vec<String> = p
+            let address = p
                 .ids(PT_UNICODE)
                 .into_iter()
                 .filter(|id| *id >= 0x8000)
                 .filter_map(|id| p.text(id))
-                .filter(|v| v.contains('@') && !v.contains(' '))
-                .collect();
-            c.opt("Email", addresses.into_iter().next());
+                .find(|v| v.contains('@') && !v.contains(' '));
+            c.opt("Email", address);
             out.push(c);
             return;
         }
