@@ -378,6 +378,35 @@ Case: <name>  Evidence: <path>  Analyst: <name>  Started: <UTC time>
 | FH-PF-025 | One-run programs outside the Windows and Program Files folders | Prefetch 1 |  |  |
 | FH-PF-026 | Prefetch files with no run time recorded | Prefetch 1 |  |  |
 
+## Registry (persistence, execution, accounts)
+
+| Id | Check | Source | Status | Evidence / reason |
+|---|---|---|---|---|
+| FH-REG-001 | Autoruns pointing to user-writable folders | Registry 10 |  |  |
+| FH-REG-002 | Autoruns launching an interpreter or a signed proxy binary | Registry 10 |  |  |
+| FH-REG-003 | Winlogon Shell or Userinit changed from the default | Registry 10 |  |  |
+| FH-REG-004 | Debugger set in Image File Execution Options | Registry 10 |  |  |
+| FH-REG-005 | AppInit_DLLs, or the Load and Run values of the Windows key | Registry 10 |  |  |
+| FH-REG-006 | BootExecute other than autocheck | Registry 10 |  |  |
+| FH-REG-007 | Service image in a user-writable folder | Registry 11 |  |  |
+| FH-REG-008 | Service started through an interpreter or a signed proxy binary | Registry 11 |  |  |
+| FH-REG-009 | ServiceDll outside System32 | Registry 11 |  |  |
+| FH-REG-010 | Remote administration and attack tool services | Registry 11 |  |  |
+| FH-REG-011 | Kernel driver outside the drivers folder | Registry 11 |  |  |
+| FH-REG-012 | Security services disabled | Registry 11 |  |  |
+| FH-REG-013 | Scheduled tasks outside the \Microsoft\ tree | Registry 12 |  |  |
+| FH-REG-014 | BAM or DAM: program run from a user-writable folder | Registry 23 |  |  |
+| FH-REG-015 | Amcache: non-Microsoft program in a user-writable folder | Registry 21 |  |  |
+| FH-REG-016 | ShimCache: program in a staging folder | Registry 20 |  |  |
+| FH-REG-017 | Known attack and remote tool names in any execution source | Registry 20,21,22,23 |  |  |
+| FH-REG-018 | UserAssist: console and admin tools started from the desktop | Registry 22 |  |  |
+| FH-REG-019 | Run dialog: interpreters, URLs or network paths | Registry 30 |  |  |
+| FH-REG-020 | Explorer address bar: network paths and admin shares | Registry 30 |  |  |
+| FH-REG-021 | USB storage devices ever connected | Registry 40 |  |  |
+| FH-REG-022 | Local accounts created by hand | Registry 42 |  |  |
+| FH-REG-023 | Built-in Administrator or Guest enabled and used | Registry 42 |  |  |
+| FH-REG-024 | Failed password attempts on local accounts | Registry 42 |  |  |
+
 ## Summary
 
 | Tactic | HIT | NO_HIT | NOT_APPLICABLE | LOG_SOURCE_MISSING |
@@ -396,3 +425,4 @@ Case: <name>  Evidence: <path>  Analyst: <name>  Started: <UTC time>
 | impact |  |  |  |  |
 | filesystem |  |  |  |  |
 | prefetch |  |  |  |  |
+| registry |  |  |  |  |

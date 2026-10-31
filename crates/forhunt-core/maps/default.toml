@@ -803,6 +803,86 @@ id = 48
 title = "File timestamps ($FN)"
 keep = ["MACB", "Path", "FileSize", "Deleted", "IsDirectory", "SiLtFn", "uSecZeros", "Copied", "AdsNames", "ZoneIdContents", "EntryNumber"]
 
+# Registry: known keys, by what they answer. Id 1 needs --registry-keys.
+
+[[event]]
+channel = "Registry"
+id = 1
+title = "Registry key written"
+keep = ["KeyPath", "ValueCount", "User"]
+
+[[event]]
+channel = "Registry"
+id = 2
+title = "System information"
+keep = ["ComputerName", "TimeZone", "LastShutdown", "ProductName", "DisplayVersion", "CurrentBuild", "InstallDate", "RegisteredOwner"]
+
+[[event]]
+channel = "Registry"
+id = 10
+title = "Autorun entry"
+keep = ["User", "KeyPath", "Name", "Command"]
+
+[[event]]
+channel = "Registry"
+id = 11
+title = "Service"
+keep = ["ServiceName", "ImagePath", "ServiceDll", "ServiceAccount", "StartType"]
+
+[[event]]
+channel = "Registry"
+id = 12
+title = "Scheduled task"
+keep = ["TaskPath", "Author", "Date"]
+
+[[event]]
+channel = "Registry"
+id = 20
+title = "ShimCache entry (file seen, not proof of execution)"
+keep = ["ExePath", "Package", "Position", "FileModified", "NoFileTime", "UnsupportedFormat"]
+
+[[event]]
+channel = "Registry"
+id = 21
+title = "Amcache file"
+keep = ["ExePath", "Sha1", "Publisher", "Version", "IsOsComponent"]
+
+[[event]]
+channel = "Registry"
+id = 22
+title = "UserAssist (program run by user)"
+keep = ["User", "ExePath", "RunCount", "FocusCount", "NoRunTime"]
+
+[[event]]
+channel = "Registry"
+id = 23
+title = "BAM/DAM last execution"
+keep = ["ExePath", "UserSid", "Source"]
+
+[[event]]
+channel = "Registry"
+id = 30
+title = "Typed by user"
+keep = ["User", "Source", "Command"]
+
+[[event]]
+channel = "Registry"
+id = 40
+title = "USB storage device"
+keep = ["FriendlyName", "Device", "Serial"]
+
+[[event]]
+channel = "Registry"
+id = 41
+title = "Network profile"
+keep = ["ProfileName", "Description", "CreatedLocal", "LastConnectedLocal"]
+
+[[event]]
+channel = "Registry"
+id = 42
+title = "Local account"
+keep = ["User", "Rid", "LastLogon", "PasswordSet", "LogonCount", "FailedCount", "Disabled"]
+
 # Prefetch: one event per stored run time.
 
 [[event]]

@@ -3,13 +3,13 @@
 Open work, roughly by priority.
 
 ## Artifacts
-- Registry hives, LNK, jump lists, shellbags, amcache (the `Artifact`/`Source`
-  traits are ready for them).
-- Prefetch: MFT references of loaded files, `.pf` host name from the SYSTEM
-  hive once registry support exists.
+- LNK, jump lists, shellbags (the `Artifact`/`Source` traits are ready for them).
+- Registry: deleted keys and values from slack, old-format (`DIRT`) log replay,
+  ShimCache before Windows 10, scheduled task actions, ShellBags in
+  `UsrClass.dat`, SID to account name, control sets other than the current one.
+- Prefetch: MFT references of loaded files.
 - NTFS: MFTECmd-layout CSV option, `$I30` / `$LogFile`, hard links (one event
-  set per name), attribute lists (names in extension records), host name from
-  the SYSTEM hive once registry support exists.
+  set per name), attribute lists (names in extension records).
 
 ## Commands
 - `stats`: `$J` first/last time and USN discontinuities (journal reset,
@@ -26,6 +26,8 @@ Open work, roughly by priority.
 - Drop revoked ATT&CK ids kept next to their replacements
   (T1070.001/T1685.005, T1562.x/T1685/T1686, T1574.002/T1574.001).
 - A Command and Control checklist.
+- Registry checks that need `--registry-keys` (LSA packages, RDP settings):
+  `forhunt checklist` does not read id 1 events.
 
 ## Packaging and benchmarks
 - Notarized macOS binaries (needs an Apple Developer account).

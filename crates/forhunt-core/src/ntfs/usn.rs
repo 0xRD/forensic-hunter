@@ -115,6 +115,7 @@ pub struct UsnSource {
     data: Data,
     units: usize,
     dirs: Option<Arc<DirTable>>,
+    host: String,
     warnings: Vec<String>,
 }
 
@@ -202,12 +203,14 @@ impl UsnSource {
         let key = opts
             .key
             .unwrap_or_else(|| FileKey::from_samples(len, &hb, tb.as_deref()));
+        let path_for_host = path.clone();
         Ok(UsnSource {
             units: (len as usize).div_ceil(UNIT_BYTES),
             path,
             key,
             data,
             dirs,
+            host: crate::registry::computer_for(&path_for_host).unwrap_or_default(),
             warnings,
         })
     }
@@ -324,6 +327,7 @@ impl UsnSource {
             event_id: eid,
             provider: Cow::Borrowed(PROVIDER),
             channel: Cow::Borrowed(CHANNEL),
+            computer: Cow::Borrowed(&self.host),
             event_record_id: offset,
             fields,
             ..EventView::default()

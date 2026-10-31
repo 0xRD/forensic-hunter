@@ -119,6 +119,7 @@ pub(crate) const IP_FIELDS: &[&str] = &[
 ];
 pub(crate) const PROC_FIELDS: &[&str] = &[
     "ExePath",
+    "ImagePath",
     "ExecutableName",
     "NewProcessName",
     "Image",

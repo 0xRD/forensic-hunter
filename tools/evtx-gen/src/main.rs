@@ -6,6 +6,7 @@
 //! evtx-gen ntfs --out fixtures/ntfs               # $MFT + $J fixtures (same scenario)
 //! evtx-gen ntfs-corpus --out corpus/ntfs --records 1000000
 //! evtx-gen prefetch --out fixtures/prefetch       # .pf fixtures (same scenario)
+//! evtx-gen registry --out fixtures/registry       # hive fixtures (same scenario)
 //! ```
 //!
 //! No real log data is involved: every value comes from a seeded generator
@@ -17,6 +18,7 @@
 mod events;
 mod ntfs;
 mod prefetch;
+mod registry;
 mod writer;
 
 use std::fs::File;
@@ -67,6 +69,12 @@ enum Cmd {
     /// format, plus corrupt and truncated variants.
     Prefetch {
         #[arg(long, default_value = "fixtures/prefetch")]
+        out: PathBuf,
+    },
+    /// Registry hives of WS-07 for the same scenario, a dirty one with its
+    /// transaction log, and a damaged copy.
+    Registry {
+        #[arg(long, default_value = "fixtures/registry")]
         out: PathBuf,
     },
     /// A large `$MFT` and `$J` of background activity.
@@ -1360,11 +1368,254 @@ fn prefetch_fixtures(out: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn registry_fixtures(out: &Path) -> anyhow::Result<()> {
+    use registry::{Key, dirty, hive};
+    let t = |m: u64, s_: u64| BASE + (2 * 3600 + m * 60 + s_) * SEC + 1_234_567;
+    let root = |time| Key::new("ROOT", time);
+    let vol = out.join("WS-07/C");
+    let config = vol.join("Windows/System32/config");
+    let profile = vol.join("Users/jdoe");
+    let amcache = vol.join("Windows/AppCompat/Programs");
+    for d in [&config, &profile, &amcache] {
+        std::fs::create_dir_all(d)?;
+    }
+    // SYSTEM: host name, a PsExec-like service, ShimCache, BAM.
+    let mut shim = vec![0u8; 0x34];
+    shim[0] = 0x34;
+    let mut pos = 0x34;
+    let mut entry = |path: &str, time: u64| {
+        let name: Vec<u8> = path.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let body = 2 + name.len() + 8 + 4;
+        shim.extend(b"10ts");
+        shim.extend([0; 4]);
+        shim.extend((body as u32).to_le_bytes());
+        shim.extend((name.len() as u16).to_le_bytes());
+        shim.extend(&name);
+        shim.extend(time.to_le_bytes());
+        shim.extend([0; 4]);
+        pos += 12 + body;
+    };
+    entry("C:\\Users\\Public\\updater.exe", t(1, 0));
+    entry("C:\\Windows\\PSEXESVC.exe", t(10, 0));
+    entry(
+        "0000000b\t007a\t000a\t8664\tContoso.Notes\t8wekyb3d8bbwe\t",
+        0,
+    );
+    let bam_time = t(14, 9).to_le_bytes().to_vec();
+    let services = Key::new("Services", t(10, 5))
+        .sub(
+            Key::new("PSEXESVC", t(10, 5))
+                .sz("ImagePath", "%SystemRoot%\\PSEXESVC.exe")
+                .sz("ObjectName", "LocalSystem")
+                .dword("Start", 3)
+                .dword("Type", 16),
+        )
+        .path(
+            &["bam", "State", "UserSettings"],
+            Key::new("S-1-5-21-1-2-3-1104", t(14, 9))
+                .bin(
+                    "\\Device\\HarddiskVolume2\\Users\\Public\\updater.exe",
+                    bam_time,
+                )
+                .dword("Version", 1),
+        );
+    let control = Key::new("Control", t(0, 0))
+        .path(
+            &["ComputerName"],
+            Key::new("ComputerName", t(0, 0)).sz("ComputerName", "WS-07"),
+        )
+        .sub(Key::new("TimeZoneInformation", t(0, 0)).sz("TimeZoneKeyName", "UTC"))
+        .path(
+            &["Session Manager"],
+            Key::new("AppCompatCache", t(20, 0)).bin("AppCompatCache", shim),
+        );
+    let system = root(t(20, 0))
+        .sub(Key::new("Select", t(0, 0)).dword("Current", 1))
+        .sub(
+            Key::new("ControlSet001", t(0, 0))
+                .sub(control)
+                .sub(services)
+                .path(
+                    &["Enum", "USBSTOR"],
+                    Key::new("Disk&Ven_Contoso&Prod_USB", t(5, 0)).sub(
+                        Key::new("0123456789&0", t(5, 0)).sz("FriendlyName", "Contoso USB Device"),
+                    ),
+                ),
+        );
+    std::fs::write(config.join("SYSTEM"), hive(&system, "SYSTEM", 7))?;
+    // SOFTWARE: dirty, the Run key's second value only in the log.
+    let software = |extra: bool| {
+        let mut run = Key::new("Run", t(11, 0)).sz("Updater", "C:\\Users\\Public\\updater.exe");
+        if extra {
+            run = run.sz("Late", "C:\\Users\\Public\\late.exe");
+        }
+        root(t(11, 0)).sub(
+            Key::new("Microsoft", t(0, 0))
+                .path(&["Windows", "CurrentVersion"], run)
+                .path(
+                    &["Windows NT"],
+                    Key::new("CurrentVersion", t(0, 0))
+                        .sz("ProductName", "Windows 10 Pro")
+                        .sz("CurrentBuild", "19045")
+                        .dword("InstallDate", 1_685_577_600),
+                ),
+        )
+    };
+    let new = hive(&software(true), "SOFTWARE", 90);
+    let mut old = hive(&software(false), "SOFTWARE", 90);
+    let log = dirty(&mut old, &new, 90);
+    std::fs::write(config.join("SOFTWARE"), old)?;
+    std::fs::write(config.join("SOFTWARE.LOG1"), log)?;
+    // SAM: F holds logon times and counts.
+    let mut f = vec![0u8; 72];
+    f[8..16].copy_from_slice(&t(2, 0).to_le_bytes());
+    f[66] = 7;
+    let sam = root(t(0, 0)).path(
+        &["SAM", "Domains", "Account"],
+        Key::new("Users", t(0, 0))
+            .sub(Key::new("Names", t(0, 0)).sub(Key::new("jdoe", t(0, 0)).typed("", 0x450)))
+            .sub(Key::new("00000450", t(2, 0)).bin("F", f)),
+    );
+    std::fs::write(config.join("SAM"), hive(&sam, "SAM", 3))?;
+    // NTUSER.DAT: UserAssist (names are ROT13) and the Run dialog.
+    let mut ua = vec![0u8; 72];
+    ua[4] = 3;
+    ua[8] = 2;
+    ua[60..68].copy_from_slice(&t(13, 0).to_le_bytes());
+    let explorer = Key::new("Explorer", t(13, 0))
+        .sub(
+            Key::new("RunMRU", t(12, 0))
+                .sz("a", "powershell -nop -w hidden\\1")
+                .sz("MRUList", "a"),
+        )
+        .path(
+            &["UserAssist", "{CEBFF5CD-ACE2-4F4F-9178-9926F41749EA}"],
+            Key::new("Count", t(13, 0)).bin("{1NP14R77-02R7-4R5Q-O744-2RO1NR5198O7}\\pzq.rkr", ua),
+        );
+    let ntuser = root(t(13, 0)).path(
+        &["Software", "Microsoft", "Windows", "CurrentVersion"],
+        explorer,
+    );
+    std::fs::write(profile.join("NTUSER.DAT"), hive(&ntuser, "ntuser.dat", 5))?;
+    // Amcache.hve: a first-seen binary with its hash.
+    let sha1 = format!("0000{}", "ab12".repeat(10));
+    let am = root(t(9, 0)).path(
+        &["Root", "InventoryApplicationFile"],
+        Key::new("updater.exe|1a2b3c4d", t(9, 0))
+            .sz("LowerCaseLongPath", "c:\\users\\public\\updater.exe")
+            .sz("FileId", &sha1)
+            .sz("Name", "updater.exe")
+            .dword("Size", 73802),
+    );
+    std::fs::write(amcache.join("Amcache.hve"), hive(&am, "Amcache.hve", 2))?;
+    // Damaged: a subkey list cell overwritten.
+    let dir = out.join("damaged");
+    std::fs::create_dir_all(&dir)?;
+    let mut bad = hive(&system, "SYSTEM", 7);
+    let lf = bad
+        .windows(4)
+        .position(|w| w == b"lf\x02\0" || w == b"lf\x03\0")
+        .context("no subkey list")?;
+    bad[lf..lf + 2].copy_from_slice(b"xx");
+    std::fs::write(dir.join("SYSTEM"), bad)?;
+    // Hunt: one host that trips the registry checks the scenario leaves quiet.
+    let vol = out.join("HUNT/C");
+    let config = vol.join("Windows/System32/config");
+    let profile = vol.join("Users/jdoe");
+    for d in [&config, &profile] {
+        std::fs::create_dir_all(d)?;
+    }
+    let service = |name: &str, image: &str, start: u32, kind: u32| {
+        Key::new(name, t(30, 0))
+            .sz("ImagePath", image)
+            .dword("Start", start)
+            .dword("Type", kind)
+    };
+    let services = Key::new("Services", t(30, 0))
+        .sub(service("Dropped", "C:\\ProgramData\\Sync\\sync.exe", 2, 16))
+        .sub(service(
+            "Fxk2",
+            "cmd.exe /c C:\\Windows\\Temp\\a.bat",
+            3,
+            16,
+        ))
+        .sub(
+            service(
+                "Hooked",
+                "C:\\Windows\\system32\\svchost.exe -k netsvcs",
+                2,
+                32,
+            )
+            .sub(Key::new("Parameters", t(30, 0)).sz("ServiceDll", "C:\\Users\\Public\\hook.dll")),
+        )
+        .sub(service(
+            "WinDefend",
+            "C:\\ProgramData\\Microsoft\\MsMpEng.exe",
+            4,
+            16,
+        ))
+        .sub(service("Vuln", "C:\\Windows\\Temp\\vuln.sys", 3, 1));
+    let session =
+        Key::new("Session Manager", t(30, 0)).sz("BootExecute", "autocheck autochk * evil");
+    let system = root(t(30, 0))
+        .sub(Key::new("Select", t(0, 0)).dword("Current", 1))
+        .sub(
+            Key::new("ControlSet001", t(0, 0))
+                .sub(Key::new("Control", t(0, 0)).sub(session))
+                .sub(services),
+        );
+    std::fs::write(config.join("SYSTEM"), hive(&system, "SYSTEM", 3))?;
+    let current = Key::new("CurrentVersion", t(31, 0))
+        .sub(
+            Key::new("Winlogon", t(31, 0))
+                .sz("Shell", "explorer.exe, C:\\Users\\Public\\s.exe")
+                .sz(
+                    "Userinit",
+                    "C:\\Windows\\system32\\userinit.exe,C:\\Users\\Public\\u.exe",
+                ),
+        )
+        .sub(Key::new("Windows", t(31, 0)).sz("AppInit_DLLs", "C:\\Users\\Public\\i.dll"))
+        .path(
+            &["Image File Execution Options"],
+            Key::new("sethc.exe", t(31, 0)).sz("Debugger", "cmd.exe"),
+        )
+        .path(
+            &["Schedule", "TaskCache", "Tasks"],
+            Key::new("{00000000-0000-0000-0000-000000000001}", t(31, 0))
+                .sz("Path", "\\Updater")
+                .sz("Author", "jdoe"),
+        );
+    let software = root(t(31, 0)).path(&["Microsoft", "Windows NT"], current);
+    std::fs::write(config.join("SOFTWARE"), hive(&software, "SOFTWARE", 3))?;
+    let mut f = vec![0u8; 72];
+    f[8..16].copy_from_slice(&t(32, 0).to_le_bytes());
+    f[40..48].copy_from_slice(&t(31, 0).to_le_bytes());
+    f[64] = 9;
+    f[66] = 1;
+    let sam = root(t(0, 0)).path(
+        &["SAM", "Domains", "Account"],
+        Key::new("Users", t(0, 0))
+            .sub(Key::new("Names", t(0, 0)).sub(Key::new("Administrator", t(0, 0)).typed("", 500)))
+            .sub(Key::new("000001F4", t(2, 0)).bin("F", f)),
+    );
+    std::fs::write(config.join("SAM"), hive(&sam, "SAM", 3))?;
+    let explorer = Key::new("Explorer", t(33, 0))
+        .sub(Key::new("TypedPaths", t(33, 0)).sz("url1", "\\\\FS-01\\C$\\Finance"));
+    let ntuser = root(t(33, 0)).path(
+        &["Software", "Microsoft", "Windows", "CurrentVersion"],
+        explorer,
+    );
+    std::fs::write(profile.join("NTUSER.DAT"), hive(&ntuser, "ntuser.dat", 3))?;
+    println!("{}: 9 hives, 1 log, 1 damaged", out.display());
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
         Cmd::Fixtures { out } => fixtures(&out),
         Cmd::Ntfs { out } => ntfs_fixtures(&out),
         Cmd::Prefetch { out } => prefetch_fixtures(&out),
+        Cmd::Registry { out } => registry_fixtures(&out),
         Cmd::NtfsCorpus { out, records, seed } => ntfs_corpus(&out, records, seed),
         Cmd::Corpus {
             out,

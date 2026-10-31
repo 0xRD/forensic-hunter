@@ -62,6 +62,7 @@ pub struct MftSource {
     rec_size: usize,
     units: usize,
     dirs: Arc<DirTable>,
+    host: String,
     warnings: Vec<String>,
 }
 
@@ -113,6 +114,7 @@ impl MftSource {
             .key
             .unwrap_or_else(|| FileKey::from_samples(len, &hb, tb.as_deref()));
         let dirs = paths::cached(&path, &data, rec_size);
+        let host = crate::registry::computer_for(&path).unwrap_or_default();
         Ok(MftSource {
             units: (len as usize / rec_size).div_ceil(UNIT_BYTES / rec_size),
             path,
@@ -120,6 +122,7 @@ impl MftSource {
             data,
             rec_size,
             dirs,
+            host,
             warnings,
         })
     }
@@ -160,7 +163,7 @@ impl MftSource {
                         rep.note(|| format!("entry {entry}: {e}"));
                     }
                     Parsed::Ok(r) if r.base == 0 => {
-                        emit(self.key, &self.dirs, entry, &r, txt, sink);
+                        emit(self.key, &self.dirs, &self.host, entry, &r, txt, sink);
                     }
                     Parsed::Ok(_) => {} // extension record: attributes of its base entry
                 }
@@ -209,6 +212,7 @@ fn groups(t: &Times) -> Vec<(Ts, usize)> {
 fn emit(
     key: FileKey,
     dirs: &DirTable,
+    host: &str,
     entry: u64,
     r: &record::FileRecord<'_>,
     txt: &mut Vec<u8>,
@@ -379,6 +383,7 @@ fn emit(
     let mut ev = EventView {
         provider: Cow::Borrowed(PROVIDER),
         channel: Cow::Borrowed(CHANNEL),
+        computer: Cow::Borrowed(host),
         fields: Vec::with_capacity(common.len() + 1),
         ..EventView::default()
     };

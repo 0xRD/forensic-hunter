@@ -20,6 +20,7 @@ pub(crate) mod io;
 pub mod normalize;
 pub mod ntfs;
 pub mod prefetch;
+pub mod registry;
 pub mod time;
 
 pub use artifact::{Artifact, Source, UnitReport};

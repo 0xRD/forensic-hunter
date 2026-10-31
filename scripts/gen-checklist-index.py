@@ -25,7 +25,7 @@ ORDER = [
     "initial-access", "execution", "persistence", "privilege-escalation",
     "defense-evasion", "credential-access", "discovery", "lateral-movement",
     "remote-access", "active-directory", "collection-exfiltration", "impact",
-    "filesystem", "prefetch",
+    "filesystem", "prefetch", "registry",
 ]
 PREFIX = {
     "initial-access": "INIT", "execution": "EXE", "persistence": "PER",
@@ -33,6 +33,7 @@ PREFIX = {
     "credential-access": "CRED", "discovery": "DISC", "lateral-movement": "LAT",
     "remote-access": "RMT", "active-directory": "AD",
     "collection-exfiltration": "COLL", "impact": "IMP", "filesystem": "FS", "prefetch": "PF",
+    "registry": "REG",
 }
 REQUIRED = ["id", "title", "tactic", "attack", "channel", "event_ids", "prerequisites",
             "logic", "pivots", "false_positives", "severity", "sources", "verified"]
@@ -51,6 +52,7 @@ SOURCES = [
     ("Defender", lambda c: "defender" in c.lower()),
     ("NTFS", lambda c: c in ("MFT", "UsnJrnl")),
     ("Prefetch", lambda c: c == "Prefetch"),
+    ("Registry", lambda c: c == "Registry"),
     ("Other", None),
 ]
 
@@ -77,6 +79,7 @@ and the gap goes into the report.
 | Certificate Services auditing on the CA (4886-4900) | ADCS abuse (ESC1-ESC8) | active-directory |
 | `$MFT` / `$UsnJrnl:$J` not collected (or journal wrapped) | file creation, renames, deletions, timestomping, downloaded files (Zone.Identifier) when event logs are absent or cleared; the journal only covers its retention window | filesystem |
 | Prefetch not collected (`C:\\Windows\\Prefetch`), disabled (common on servers) or evicted (limited number of `.pf` files) | which programs ran, from where, how often and what they loaded when 4688 and Sysmon 1 are absent; arguments and users are never in a `.pf` | prefetch |
+| Registry hives not collected, or their `.LOG1`/`.LOG2` left behind | autoruns, services, ShimCache, Amcache, BAM, UserAssist, local accounts; without the logs, the last changes before collection; deleted keys are never visible | registry |
 | Retention: log rolled over or cleared | anything before the first event; check `stats` first/last time, `log_tampering`, `rid_gaps`, `quiet_periods` | all |
 | Not in EVTX at all | VPN/firewall/proxy logs, EDR telemetry, file contents, memory, network bytes transferred, browser history | exfiltration volume, C2 content, initial access via external services |
 """

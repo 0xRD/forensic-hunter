@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.5.0 (2026-10-31)
+
+Registry hives.
+
+- `SYSTEM`, `SOFTWARE`, `SAM`, `SECURITY`, `DEFAULT`, `NTUSER.DAT`,
+  `UsrClass.dat` and `Amcache.hve` are found in any folder. Channel `Registry`:
+  system information (2), autoruns (10), services (11), scheduled tasks (12),
+  ShimCache (20), Amcache (21), UserAssist (22), BAM/DAM (23), Run dialog and
+  Explorer address bar (30), USB storage (40), network profiles (41), local
+  accounts (42).
+- `--registry-keys` adds one event per key (id 1).
+- Dirty hives are replayed from new-format `.LOG1`/`.LOG2` in memory.
+- Prefetch, `$MFT`, `$J` and registry events now carry the host name when the
+  collection holds a `SYSTEM` hive (D-041 amended).
+- `ExePath` is the same field on prefetch, BAM, Amcache, ShimCache and
+  UserAssist, so one filter follows a program across them.
+- 613,000 values compared with python-registry on 7 real hives, no difference.
+
+Checklists: 26 prefetch checks (`FH-PF-001` to `026`) and 24 registry checks
+(`FH-REG-001` to `024`), 326 checks in all.
+
+Fixes: a crafted `.pf` whose entries all name the same bytes could use memory
+far beyond its size; decoded text is now bounded by the file.
+
 ## 0.4.0 (2026-10-31)
 
 Prefetch (`.pf`), the first execution artifact.

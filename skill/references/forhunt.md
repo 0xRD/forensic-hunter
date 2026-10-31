@@ -143,6 +143,30 @@ forhunt search E -c Prefetch -f FilesLoaded~VAULTCLI  # what loaded this DLL
 forhunt timeline E -c Prefetch --since 2024-03-13T10:00:00Z
 ```
 
+## Registry
+
+Hives are found by name in any folder and by content when named directly; their
+`.LOG1`/`.LOG2` must stay beside them. Reading guide: `registry-hunting.md`.
+
+| `-c Registry -e` | Meaning | Date of the event |
+|---|---|---|
+| 2 | System information: `ComputerName`, `TimeZone`, `LastShutdown`, `ProductName`, `CurrentBuild`, `InstallDate` | Key, install date |
+| 10 | Autorun: `KeyPath`, `Name`, `Command` (Run keys, Winlogon, AppInit, IFEO Debugger, BootExecute) | Key |
+| 11 | Service: `ServiceName`, `ImagePath`, `ServiceDll`, `ServiceAccount`, `StartType`, `ServiceType` | Key |
+| 12 | Scheduled task: `TaskPath`, `Author`, `Date` | Key |
+| 20 | ShimCache: `ExePath` or `Package`, `Position`, `FileModified`, `NoFileTime` | File's modification time |
+| 21 | Amcache: `ExePath`, `Sha1`, `FileName`, `Publisher`, `Version`, `LinkDate`, `Size` | Key |
+| 22 | UserAssist: `ExePath`, `RunCount`, `FocusCount`, `FocusMs`, `User` | Last run |
+| 23 | BAM/DAM: `ExePath`, `UserSid`, `Source` | Last run |
+| 30 | Typed by the user: `Source`, `Command`, `User` | Key (latest entry only) |
+| 40 | USB storage: `Device`, `Serial`, `FriendlyName` | Key |
+| 41 | Network profile: `ProfileName`, `CreatedLocal`, `LastConnectedLocal` | Key |
+| 42 | Local account: `User`, `Rid`, `LastLogon`, `PasswordSet`, `LogonCount`, `FailedCount`, `Disabled` | Last logon, else key |
+
+`--registry-keys` adds id 1, one event per key (`KeyPath`, `ValueCount`, `Values`):
+hundreds of thousands of events, use it on one hive. `ExePath` is the same field on
+prefetch and on ids 20 to 23: `forhunt search E -f ExePath~name`.
+
 ## `llm` format
 
 One JSON object per line:

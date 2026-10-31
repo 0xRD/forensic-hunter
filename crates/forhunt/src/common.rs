@@ -87,6 +87,7 @@ impl Ctx {
         ParseOptions {
             validate_checksums: self.common.checksums,
             slow_decoder: self.common.slow_decoder,
+            registry_keys: self.common.registry_keys,
             key: None,
         }
     }

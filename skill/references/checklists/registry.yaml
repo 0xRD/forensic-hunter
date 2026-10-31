@@ -1,0 +1,746 @@
+tactic: registry
+title: Registry (persistence, execution, accounts)
+description: 'What the hives say when logs are cleared or were never enabled: what is set to start, what ran or was at least seen, what users typed, which devices and accounts existed. forhunt exposes channel Registry with the event ids of references/forhunt.md (section Registry): 10 autoruns, 11 services, 12 tasks, 20 ShimCache, 21 Amcache, 22 UserAssist, 23 BAM/DAM, 30 typed commands, 40 USB, 41 networks, 42 local accounts. Most dates are the last write of a key, which says something under it changed, not what. Deleted keys are not recovered and only the current control set is read, so a NO_HIT means nothing is set now, not that nothing ever was. Paths differ between sources (BAM \Device\HarddiskVolumeN, ShimCache C:\, Amcache lower case): the queries are case-insensitive and match folder names only. See references/registry-hunting.md.'
+checks:
+- id: FH-REG-001
+  title: Autoruns pointing to user-writable folders
+  tactic: registry
+  attack:
+  - T1547.001
+  channel: Registry
+  event_ids:
+  - 10
+  prerequisites:
+  - SOFTWARE hive, and NTUSER.DAT of each profile for user autoruns
+  logic:
+    selection:
+      EventID: 10
+      Command|re: \\(users\\[^\\]+\\(appdata|downloads|desktop|documents|music|videos|pictures)|users\\public|windows\\temp|programdata|perflogs|\$recycle\.bin)\\
+    filter_vendors:
+      Command|contains:
+      - \MICROSOFT\ONEDRIVE\
+      - \MICROSOFT\TEAMS\
+      - \MICROSOFT\EDGE
+      - \WINDOWS DEFENDER\
+      - \PACKAGE CACHE\
+    condition: selection and not filter_vendors
+  forhunt:
+  - forhunt search <paths> -c Registry -e 10 --regex 'Command=\\(users\\[^\\]+\\(appdata|downloads|desktop|documents|music|videos|pictures)|users\\public|windows\\temp|programdata|perflogs|\$recycle\.bin)\\' --field 'Command!~\MICROSOFT\ONEDRIVE\' --field 'Command!~\MICROSOFT\TEAMS\' --field 'Command!~\MICROSOFT\EDGE' --field 'Command!~\WINDOWS DEFENDER\' --field 'Command!~\PACKAGE CACHE\' --format llm
+  pivots:
+  - 'Same file in BAM, prefetch and Amcache: forhunt search <paths> -f ExePath~<name>'
+  - 'Key date against $J and logons: only one value of the key changed at that date'
+  false_positives:
+  - Per-user installers in AppData that register themselves (Discord, Slack, Spotify)
+  severity: high
+  sources:
+  - https://attack.mitre.org/techniques/T1547/001/
+  - https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-050).
+- id: FH-REG-002
+  title: Autoruns launching an interpreter or a signed proxy binary
+  tactic: registry
+  attack:
+  - T1547.001
+  - T1218
+  channel: Registry
+  event_ids:
+  - 10
+  prerequisites:
+  - SOFTWARE hive, and NTUSER.DAT of each profile for user autoruns
+  logic:
+    selection:
+      EventID: 10
+      Command|re: (cmd|powershell|pwsh|wscript|cscript|mshta|rundll32|regsvr32|certutil|bitsadmin|msbuild|installutil)(\.exe)?\b
+    condition: selection
+  forhunt:
+  - forhunt search <paths> -c Registry -e 10 --regex 'Command=(cmd|powershell|pwsh|wscript|cscript|mshta|rundll32|regsvr32|certutil|bitsadmin|msbuild|installutil)(\.exe)?\b' --format llm
+  pivots:
+  - Decode the arguments (-enc, URLs, scriptlets)
+  - Files they name, in $MFT and $J
+  false_positives:
+  - RunOnce cleanup commands left by OneDrive and Edge setup (`cmd /q /c del ...`)
+  severity: high
+  sources:
+  - https://attack.mitre.org/techniques/T1547/001/
+  - https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-050).
+- id: FH-REG-003
+  title: Winlogon Shell or Userinit changed from the default
+  tactic: registry
+  attack:
+  - T1547.004
+  channel: Registry
+  event_ids:
+  - 10
+  prerequisites:
+  - SOFTWARE hive
+  logic:
+    shell:
+      EventID: 10
+      Name: Shell
+    shell_default:
+      Command: explorer.exe
+    userinit:
+      EventID: 10
+      Name: Userinit
+    userinit_default:
+      Command|re: ^c:\\windows\\system32\\userinit\.exe,?$
+    condition: (shell and not shell_default) or (userinit and not userinit_default)
+  forhunt:
+  - forhunt search <paths> -c Registry -e 10 -f Name=Shell -f 'Command!=explorer.exe' --format llm
+  - forhunt search <paths> -c Registry -e 10 -f Name=Userinit -f 'Command!=C:\Windows\system32\userinit.exe,' -f 'Command!=C:\Windows\system32\userinit.exe' --format llm
+  pivots:
+  - 'Every program in the value runs at each logon: find them in $MFT'
+  - Key date gives the change window
+  false_positives:
+  - Kiosk or thin-client builds with a custom shell
+  severity: critical
+  sources:
+  - https://attack.mitre.org/techniques/T1547/004/
+  - https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/component-updates/winlogon-automatic-restart-sign-on--arso-
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-050).
+- id: FH-REG-004
+  title: Debugger set in Image File Execution Options
+  tactic: registry
+  attack:
+  - T1546.012
+  channel: Registry
+  event_ids:
+  - 10
+  prerequisites:
+  - SOFTWARE hive
+  logic:
+    selection:
+      EventID: 10
+      KeyPath|contains: Image File Execution Options
+    condition: selection
+  forhunt:
+  - forhunt search <paths> -c Registry -e 10 -f 'KeyPath~Image File Execution Options' --format llm
+  pivots:
+  - 'sethc.exe, utilman.exe, osk.exe, narrator.exe with cmd.exe as debugger is a logon-screen backdoor: check RDP logons'
+  - Other programs here silently start the debugger instead
+  false_positives:
+  - Developer machines, Process Explorer's replace-Task-Manager option
+  severity: high
+  sources:
+  - https://attack.mitre.org/techniques/T1546/012/
+  - https://learn.microsoft.com/en-us/previous-versions/windows/desktop/xperf/image-file-execution-options
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-050).
+- id: FH-REG-005
+  title: AppInit_DLLs, or the Load and Run values of the Windows key
+  tactic: registry
+  attack:
+  - T1546.010
+  - T1547.001
+  channel: Registry
+  event_ids:
+  - 10
+  prerequisites:
+  - SOFTWARE hive, and NTUSER.DAT of each profile for user autoruns
+  logic:
+    selection:
+      EventID: 10
+      Name|re: ^(AppInit_DLLs|Load|Run)$
+    condition: selection
+  forhunt:
+  - forhunt search <paths> -c Registry -e 10 --regex 'Name=^(AppInit_DLLs|Load|Run)$' --format llm
+  pivots:
+  - 'DLL path in $MFT: creation time and signature'
+  false_positives:
+  - Old security or graphics software
+  severity: high
+  sources:
+  - https://attack.mitre.org/techniques/T1546/010/
+  - https://learn.microsoft.com/en-us/windows/win32/dlls/secure-boot-and-appinit-dlls
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-050). Empty values are not reported by forhunt, so any row here has content.
+- id: FH-REG-006
+  title: BootExecute other than autocheck
+  tactic: registry
+  attack:
+  - T1547.001
+  channel: Registry
+  event_ids:
+  - 10
+  prerequisites:
+  - SYSTEM hive
+  logic:
+    selection:
+      EventID: 10
+      Name: BootExecute
+    default:
+      Command|re: ^autocheck autochk \*$
+    condition: selection and not default
+  forhunt:
+  - forhunt search <paths> -c Registry -e 10 -f Name=BootExecute -f 'Command!=autocheck autochk *' --format llm
+  pivots:
+  - Native executable it names, in System32
+  false_positives:
+  - Disk tools scheduling offline checks (autochk with extra arguments)
+  severity: high
+  sources:
+  - https://attack.mitre.org/techniques/T1547/001/
+  - https://learn.microsoft.com/en-us/windows-hardware/drivers/kernel/boot-options
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-050).
+- id: FH-REG-007
+  title: Service image in a user-writable folder
+  tactic: registry
+  attack:
+  - T1543.003
+  channel: Registry
+  event_ids:
+  - 11
+  prerequisites:
+  - SYSTEM hive of the current control set
+  logic:
+    selection:
+      EventID: 11
+      ImagePath|re: \\(users\\[^\\]+\\(appdata|downloads|desktop|documents|music|videos|pictures)|users\\public|windows\\temp|programdata|perflogs|\$recycle\.bin)\\
+    filter_vendors:
+      ImagePath|contains:
+      - \MICROSOFT\ONEDRIVE\
+      - \MICROSOFT\TEAMS\
+      - \MICROSOFT\EDGE
+      - \WINDOWS DEFENDER\
+      - \PACKAGE CACHE\
+    condition: selection and not filter_vendors
+  forhunt:
+  - forhunt search <paths> -c Registry -e 11 --regex 'ImagePath=\\(users\\[^\\]+\\(appdata|downloads|desktop|documents|music|videos|pictures)|users\\public|windows\\temp|programdata|perflogs|\$recycle\.bin)\\' --field 'ImagePath!~\MICROSOFT\ONEDRIVE\' --field 'ImagePath!~\MICROSOFT\TEAMS\' --field 'ImagePath!~\MICROSOFT\EDGE' --field 'ImagePath!~\WINDOWS DEFENDER\' --field 'ImagePath!~\PACKAGE CACHE\' --format llm
+  pivots:
+  - 7045 and 4697 around the key date
+  - File in $MFT/$J; run in prefetch
+  false_positives:
+  - Updaters and agents installed under ProgramData
+  severity: high
+  sources:
+  - https://attack.mitre.org/techniques/T1543/003/
+  - https://learn.microsoft.com/en-us/windows-hardware/drivers/install/hklm-system-currentcontrolset-services-registry-tree
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-050).
+- id: FH-REG-008
+  title: Service started through an interpreter or a signed proxy binary
+  tactic: registry
+  attack:
+  - T1543.003
+  - T1569.002
+  channel: Registry
+  event_ids:
+  - 11
+  prerequisites:
+  - SYSTEM hive of the current control set
+  logic:
+    selection:
+      EventID: 11
+      ImagePath|re: (cmd|powershell|pwsh|wscript|cscript|mshta|rundll32|regsvr32|certutil|bitsadmin|msbuild|installutil)(\.exe)?\b
+    filter_svchost:
+      ImagePath|contains: svchost.exe
+    condition: selection and not filter_svchost
+  forhunt:
+  - forhunt search <paths> -c Registry -e 11 --regex 'ImagePath=(cmd|powershell|pwsh|wscript|cscript|mshta|rundll32|regsvr32|certutil|bitsadmin|msbuild|installutil)(\.exe)?\b' --field 'ImagePath!~svchost.exe' --format llm
+  pivots:
+  - Decode the command; Impacket and Metasploit use `cmd /c` services with random names
+  - Lateral movement checks around the key date
+  false_positives:
+  - Rare legacy `cmd /c` services in vendor software
+  severity: critical
+  sources:
+  - https://attack.mitre.org/techniques/T1543/003/
+  - https://learn.microsoft.com/en-us/windows-hardware/drivers/install/hklm-system-currentcontrolset-services-registry-tree
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-050).
+- id: FH-REG-009
+  title: ServiceDll outside System32
+  tactic: registry
+  attack:
+  - T1543.003
+  - T1574
+  channel: Registry
+  event_ids:
+  - 11
+  prerequisites:
+  - SYSTEM hive of the current control set
+  logic:
+    selection:
+      EventID: 11
+      ServiceDll|re: .
+    default:
+      ServiceDll|contains: system32
+    condition: selection and not default
+  forhunt:
+  - forhunt search <paths> -c Registry -e 11 --regex 'ServiceDll=.' --field 'ServiceDll!~system32' --format llm
+  pivots:
+  - DLL in $MFT and Amcache; ServiceName against the Windows baseline
+  false_positives:
+  - Third-party services hosted by svchost
+  severity: high
+  sources:
+  - https://attack.mitre.org/techniques/T1543/003/
+  - https://learn.microsoft.com/en-us/windows-hardware/drivers/install/hklm-system-currentcontrolset-services-registry-tree
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-050). A DLL replaced inside System32 is not caught here.
+- id: FH-REG-010
+  title: Remote administration and attack tool services
+  tactic: registry
+  attack:
+  - T1569.002
+  - T1219
+  channel: Registry
+  event_ids:
+  - 11
+  prerequisites:
+  - SYSTEM hive of the current control set
+  logic:
+    selection:
+      EventID: 11
+      ServiceName|re: ^(psexesvc|paexesvc|remcomsvc|csexecsvc|winexesvc|anydesk|teamviewer|screenconnect|atera|splashtop|rustdesk|ngrok)
+    condition: selection
+  forhunt:
+  - forhunt search <paths> -c Registry -e 11 --regex 'ServiceName=^(psexesvc|paexesvc|remcomsvc|csexecsvc|winexesvc|anydesk|teamviewer|screenconnect|atera|splashtop|rustdesk|ngrok)' --format llm
+  pivots:
+  - ImagePath and key date; 7045 for the install time; network logons just before it
+  false_positives:
+  - Remote tools approved by IT
+  severity: high
+  sources:
+  - https://attack.mitre.org/techniques/T1569/002/
+  - https://attack.mitre.org/techniques/T1219/
+  verified: false
+  notes: 'Sources cited, not re-read in this session. Field names come from forhunt''s own parser (D-050). Name-based: a renamed service is only caught by FH-REG-007 or FH-REG-008.'
+- id: FH-REG-011
+  title: Kernel driver outside the drivers folder
+  tactic: registry
+  attack:
+  - T1543.003
+  - T1068
+  channel: Registry
+  event_ids:
+  - 11
+  prerequisites:
+  - SYSTEM hive of the current control set
+  logic:
+    selection:
+      EventID: 11
+      ServiceType:
+      - 1
+      - 2
+      ImagePath|re: .
+    default:
+      ImagePath|contains:
+      - \drivers\
+      - \DriverStore\
+    condition: selection and not default
+  forhunt:
+  - forhunt search <paths> -c Registry -e 11 --regex 'ServiceType=^[12]$' --regex 'ImagePath=.' --field 'ImagePath!~\drivers\' --field 'ImagePath!~\DriverStore\' --format llm
+  pivots:
+  - Driver hash in Amcache against known vulnerable drivers (BYOVD)
+  - 7045 with the Kernel Mode Driver type
+  false_positives:
+  - Antivirus and hardware agents that keep drivers in their own folder
+  severity: high
+  sources:
+  - https://attack.mitre.org/techniques/T1068/
+  - https://learn.microsoft.com/en-us/windows/win32/api/winsvc/nf-winsvc-createservicea
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-050).
+- id: FH-REG-012
+  title: Security services disabled
+  tactic: registry
+  attack:
+  - T1562.001
+  channel: Registry
+  event_ids:
+  - 11
+  prerequisites:
+  - SYSTEM hive of the current control set
+  logic:
+    selection:
+      EventID: 11
+      StartType: 4
+      ServiceName|re: ^(WinDefend|WdNisSvc|WdNisDrv|WdFilter|WdBoot|Sense|wscsvc|EventLog|mpssvc|Sysmon(64)?|SecurityHealthService)$
+    condition: selection
+  forhunt:
+  - forhunt search <paths> -c Registry -e 11 -f StartType=4 --regex 'ServiceName=^(WinDefend|WdNisSvc|WdNisDrv|WdFilter|WdBoot|Sense|wscsvc|EventLog|mpssvc|Sysmon(64)?|SecurityHealthService)$' --format llm
+  pivots:
+  - Key date against 7040 and the defense evasion checks
+  false_positives:
+  - Third-party antivirus turns Defender off through its own policy, normally without this Start value
+  severity: high
+  sources:
+  - https://attack.mitre.org/techniques/T1562/001/
+  - https://learn.microsoft.com/en-us/windows-hardware/drivers/install/hklm-system-currentcontrolset-services-registry-tree
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-050). Start=4 means disabled; Windows Defender services can legitimately be protected from this on recent builds.
+- id: FH-REG-013
+  title: Scheduled tasks outside the \Microsoft\ tree
+  tactic: registry
+  attack:
+  - T1053.005
+  channel: Registry
+  event_ids:
+  - 12
+  prerequisites:
+  - SOFTWARE hive
+  logic:
+    selection:
+      EventID: 12
+    filter_ms:
+      TaskPath|startswith: \Microsoft\
+    condition: selection and not filter_ms
+  forhunt:
+  - forhunt search <paths> -c Registry -e 12 --field 'TaskPath!~\Microsoft\' --format llm
+  pivots:
+  - Action in C:\Windows\System32\Tasks\<path> (forhunt does not read task actions)
+  - 4698 and 106 around the key date
+  false_positives:
+  - Browser updaters (GoogleUpdate, MicrosoftEdgeUpdate), OneDrive per-user tasks
+  severity: medium
+  sources:
+  - https://attack.mitre.org/techniques/T1053/005/
+  - https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-050). A task hidden by deleting its security descriptor or masquerading under \Microsoft\ is not caught.
+- id: FH-REG-014
+  title: 'BAM or DAM: program run from a user-writable folder'
+  tactic: registry
+  attack:
+  - T1204.002
+  channel: Registry
+  event_ids:
+  - 23
+  prerequisites:
+  - SYSTEM hive of the current control set, Windows 10 1709 or later
+  logic:
+    selection:
+      EventID: 23
+      ExePath|re: \\(users\\[^\\]+\\(appdata|downloads|desktop|documents|music|videos|pictures)|users\\public|windows\\temp|programdata|perflogs|\$recycle\.bin)\\
+    filter_vendors:
+      ExePath|contains:
+      - \MICROSOFT\ONEDRIVE\
+      - \MICROSOFT\TEAMS\
+      - \MICROSOFT\EDGE
+      - \WINDOWS DEFENDER\
+      - \PACKAGE CACHE\
+    condition: selection and not filter_vendors
+  forhunt:
+  - forhunt search <paths> -c Registry -e 23 --regex 'ExePath=\\(users\\[^\\]+\\(appdata|downloads|desktop|documents|music|videos|pictures)|users\\public|windows\\temp|programdata|perflogs|\$recycle\.bin)\\' --field 'ExePath!~\MICROSOFT\ONEDRIVE\' --field 'ExePath!~\MICROSOFT\TEAMS\' --field 'ExePath!~\MICROSOFT\EDGE' --field 'ExePath!~\WINDOWS DEFENDER\' --field 'ExePath!~\PACKAGE CACHE\' --format llm
+  pivots:
+  - 'UserSid names the account: resolve it with ProfileList or SAM (FH-REG-022)'
+  - 'Prefetch: forhunt search <paths> -c Prefetch -f ExePath~<name>'
+  false_positives:
+  - Installers and portable tools started by the user
+  severity: medium
+  sources:
+  - https://attack.mitre.org/techniques/T1204/002/
+  - https://www.mandiant.com/resources/blog/caching-out-the-val-of-appcompatcache
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-050). Entries age out after about a week [K]; the time is the last run.
+- id: FH-REG-015
+  title: 'Amcache: non-Microsoft program in a user-writable folder'
+  tactic: registry
+  attack:
+  - T1204.002
+  channel: Registry
+  event_ids:
+  - 21
+  prerequisites:
+  - Amcache.hve
+  logic:
+    selection:
+      EventID: 21
+      ExePath|re: \\(users\\[^\\]+\\(appdata|downloads|desktop|documents|music|videos|pictures)|users\\public|windows\\temp|programdata|perflogs|\$recycle\.bin)\\
+    filter_ms:
+      Publisher|contains: microsoft
+    filter_vendors:
+      ExePath|contains:
+      - \MICROSOFT\ONEDRIVE\
+      - \MICROSOFT\TEAMS\
+      - \MICROSOFT\EDGE
+      - \WINDOWS DEFENDER\
+      - \PACKAGE CACHE\
+    condition: selection and not filter_ms and not filter_vendors
+  forhunt:
+  - forhunt search <paths> -c Registry -e 21 --regex 'ExePath=\\(users\\[^\\]+\\(appdata|downloads|desktop|documents|music|videos|pictures)|users\\public|windows\\temp|programdata|perflogs|\$recycle\.bin)\\' --field 'Publisher!~microsoft' --field 'ExePath!~\MICROSOFT\ONEDRIVE\' --field 'ExePath!~\MICROSOFT\TEAMS\' --field 'ExePath!~\MICROSOFT\EDGE' --field 'ExePath!~\WINDOWS DEFENDER\' --field 'ExePath!~\PACKAGE CACHE\' --format llm
+  pivots:
+  - Sha1 against threat intelligence
+  - 'Never write executed from Amcache alone: confirm with BAM, prefetch or 4688'
+  false_positives:
+  - Installers and vendor updaters
+  severity: medium
+  sources:
+  - https://attack.mitre.org/techniques/T1204/002/
+  - https://www.mandiant.com/resources/blog/caching-out-the-val-of-appcompatcache
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-050). Publisher comes from the file's own version information, which an attacker controls.
+- id: FH-REG-016
+  title: 'ShimCache: program in a staging folder'
+  tactic: registry
+  attack:
+  - T1204.002
+  - T1074.001
+  channel: Registry
+  event_ids:
+  - 20
+  prerequisites:
+  - SYSTEM hive of the current control set, Windows 10 or 11 format
+  logic:
+    selection:
+      EventID: 20
+      ExePath|re: \\(users\\public|windows\\temp|perflogs|\$recycle\.bin)\\
+    condition: selection
+  forhunt:
+  - forhunt search <paths> -c Registry -e 20 --regex 'ExePath=\\(users\\public|windows\\temp|perflogs|\$recycle\.bin)\\' --format llm
+  pivots:
+  - Position gives the order of appearance; the date is the file's own modification time
+  - 'Confirm execution elsewhere: ShimCache alone only proves the file was seen'
+  false_positives:
+  - Installers unpacking into Windows\Temp (dismhost.exe, setup stubs)
+  severity: medium
+  sources:
+  - https://attack.mitre.org/techniques/T1204/002/
+  - https://www.mandiant.com/resources/blog/caching-out-the-val-of-appcompatcache
+  verified: false
+  notes: 'Sources cited, not re-read in this session. Field names come from forhunt''s own parser (D-050). Written at shutdown [K]: a live collection misses what appeared since boot.'
+- id: FH-REG-017
+  title: Known attack and remote tool names in any execution source
+  tactic: registry
+  attack:
+  - T1588.002
+  - T1219
+  channel: Registry
+  event_ids:
+  - 20
+  - 21
+  - 22
+  - 23
+  prerequisites:
+  - At least one of SYSTEM, Amcache.hve, NTUSER.DAT
+  logic:
+    selection:
+      EventID:
+      - 20
+      - 21
+      - 22
+      - 23
+      ExePath|re: \\(mimikatz|mimi\d*|psexec(64)?|psexesvc|paexec|procdump(64)?|rclone|winscp|filezilla|megasync|anydesk|teamviewer|screenconnect|ngrok|plink|chisel|nmap|masscan|advanced_ip_scanner|lazagne|rubeus|sharphound|bloodhound|adfind|wmiexec|cobaltstrike|beacon|nanodump|winpeas)[^\\]*\.exe$
+    condition: selection
+  forhunt:
+  - forhunt search <paths> -c Registry -e 20-23 --regex 'ExePath=\\(mimikatz|mimi\d*|psexec(64)?|psexesvc|paexec|procdump(64)?|rclone|winscp|filezilla|megasync|anydesk|teamviewer|screenconnect|ngrok|plink|chisel|nmap|masscan|advanced_ip_scanner|lazagne|rubeus|sharphound|bloodhound|adfind|wmiexec|cobaltstrike|beacon|nanodump|winpeas)[^\\]*\.exe$' --format llm
+  pivots:
+  - 'One program across sources: forhunt search <paths> -f ExePath~<name>'
+  - 'What it reached: logons, shares and transfers around its run time'
+  false_positives:
+  - Authorised admin or red team tools; WinSCP and FileZilla in plain IT use
+  severity: high
+  sources:
+  - https://attack.mitre.org/techniques/T1588/002/
+  - https://attack.mitre.org/techniques/T1219/
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-050). Name-based, so a renamed tool is missed. Amcache's Sha1 survives a rename.
+- id: FH-REG-018
+  title: 'UserAssist: console and admin tools started from the desktop'
+  tactic: registry
+  attack:
+  - T1059.003
+  - T1059.001
+  channel: Registry
+  event_ids:
+  - 22
+  prerequisites:
+  - NTUSER.DAT of each profile
+  logic:
+    selection:
+      EventID: 22
+      ExePath|re: \\(cmd|powershell|powershell_ise|regedit|mmc|taskmgr|wmic|mstsc|eventvwr|gpedit)\.(exe|msc)$
+    condition: selection
+  forhunt:
+  - forhunt search <paths> -c Registry -e 22 --regex 'ExePath=\\(cmd|powershell|powershell_ise|regedit|mmc|taskmgr|wmic|mstsc|eventvwr|gpedit)\.(exe|msc)$' --format llm
+  pivots:
+  - 'User and RunCount: is this account expected to use these?'
+  - Time of the last run against logons (type 2, 10)
+  false_positives:
+  - Administrators and helpdesk accounts
+  severity: low
+  sources:
+  - https://attack.mitre.org/techniques/T1059/
+  - https://www.nirsoft.net/utils/userassist_view.html
+  verified: false
+  notes: 'Sources cited, not re-read in this session. Field names come from forhunt''s own parser (D-050). Only GUI starts count: command-line runs never appear. Paths may hold a known-folder GUID instead of a drive.'
+- id: FH-REG-019
+  title: 'Run dialog: interpreters, URLs or network paths'
+  tactic: registry
+  attack:
+  - T1204.001
+  - T1059
+  channel: Registry
+  event_ids:
+  - 30
+  prerequisites:
+  - NTUSER.DAT of each profile
+  logic:
+    selection:
+      EventID: 30
+      Source: Run dialog
+      Command|re: (powershell|cmd|mshta|wscript|cscript|rundll32|regsvr32|certutil|bitsadmin|curl|https?:|\\\\)
+    condition: selection
+  forhunt:
+  - forhunt search <paths> -c Registry -e 30 -f 'Source=Run dialog' --regex 'Command=(powershell|cmd|mshta|wscript|cscript|rundll32|regsvr32|certutil|bitsadmin|curl|https?:|\\\\)' --format llm
+  pivots:
+  - 'Fake-captcha and helpdesk-call lures paste a command here: compare with browser and mail activity'
+  - Only the newest entry was typed at the key date
+  false_positives:
+  - Administrators' daily use
+  severity: high
+  sources:
+  - https://attack.mitre.org/techniques/T1204/004/
+  - https://attack.mitre.org/techniques/T1059/
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-050).
+- id: FH-REG-020
+  title: 'Explorer address bar: network paths and admin shares'
+  tactic: registry
+  attack:
+  - T1021.002
+  - T1039
+  channel: Registry
+  event_ids:
+  - 30
+  prerequisites:
+  - NTUSER.DAT of each profile
+  logic:
+    selection:
+      EventID: 30
+      Source: Explorer address bar
+      Command|startswith: \\
+    condition: selection
+  forhunt:
+  - forhunt search <paths> -c Registry -e 30 -f 'Source=Explorer address bar' --regex 'Command=^\\\\' --format llm
+  pivots:
+  - Target host and share in 5140 and 4624 type 3 on that host
+  false_positives:
+  - 'Normal file server use: look at the hosts and at C$, ADMIN$'
+  severity: medium
+  sources:
+  - https://attack.mitre.org/techniques/T1021/002/
+  - https://attack.mitre.org/techniques/T1039/
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-050).
+- id: FH-REG-021
+  title: USB storage devices ever connected
+  tactic: registry
+  attack:
+  - T1052.001
+  - T1091
+  channel: Registry
+  event_ids:
+  - 40
+  prerequisites:
+  - SYSTEM hive
+  logic:
+    selection:
+      EventID: 40
+    condition: selection
+  forhunt:
+  - forhunt search <paths> -c Registry -e 40 --format llm
+  pivots:
+  - Serial and date against file copies in $J and against the staging checks
+  false_positives:
+  - 'Every USB stick used on the host appears here: this is an inventory to review, not a detection'
+  severity: informational
+  sources:
+  - https://attack.mitre.org/techniques/T1052/001/
+  - https://learn.microsoft.com/en-us/windows-hardware/drivers/install/standard-usb-identifiers
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-050). The date is the key's, not necessarily the last connection.
+- id: FH-REG-022
+  title: Local accounts created by hand
+  tactic: registry
+  attack:
+  - T1136.001
+  channel: Registry
+  event_ids:
+  - 42
+  prerequisites:
+  - SAM hive
+  logic:
+    selection:
+      EventID: 42
+      Rid|gte: 1000
+    condition: selection
+  forhunt:
+  - forhunt search <paths> -c Registry -e 42 --regex 'Rid=^[1-9][0-9]{3,}$' --format llm
+  pivots:
+  - AccountCreated and PasswordSet against the intrusion window; 4720 and 4732 when Security survives
+  - 'Group membership is not read: check 4732 or the SAM by hand'
+  false_positives:
+  - Accounts made at install, such as the first user
+  severity: medium
+  sources:
+  - https://attack.mitre.org/techniques/T1136/001/
+  - https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/understand-security-identifiers
+  verified: false
+  notes: 'Sources cited, not re-read in this session. Field names come from forhunt''s own parser (D-050). Machine-local accounts only: domain accounts are never in the SAM.'
+- id: FH-REG-023
+  title: Built-in Administrator or Guest enabled and used
+  tactic: registry
+  attack:
+  - T1078.001
+  channel: Registry
+  event_ids:
+  - 42
+  prerequisites:
+  - SAM hive
+  logic:
+    selection:
+      EventID: 42
+      Rid:
+      - 500
+      - 501
+      LastLogon|re: .
+    disabled:
+      Disabled: true
+    condition: selection and not disabled
+  forhunt:
+  - forhunt search <paths> -c Registry -e 42 --regex 'Rid=^50[01]$' --regex 'LastLogon=.' --field 'Disabled!=true' --format llm
+  pivots:
+  - LastLogon against 4624 and RDP logs
+  - 'Failed logons on the same account: FailedCount, LastFailedLogon'
+  false_positives:
+  - Servers kept on the built-in Administrator by policy
+  severity: high
+  sources:
+  - https://attack.mitre.org/techniques/T1078/001/
+  - https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/understand-default-user-accounts
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-050).
+- id: FH-REG-024
+  title: Failed password attempts on local accounts
+  tactic: registry
+  attack:
+  - T1110.001
+  channel: Registry
+  event_ids:
+  - 42
+  prerequisites:
+  - SAM hive
+  logic:
+    selection:
+      EventID: 42
+      LastFailedLogon|re: .
+    condition: selection
+  forhunt:
+  - forhunt search <paths> -c Registry -e 42 --regex 'LastFailedLogon=.' --format llm
+  pivots:
+  - FailedCount is reset by a good logon [K]; compare LastFailedLogon with 4625 and 4740
+  false_positives:
+  - A user mistyping a password once
+  severity: low
+  sources:
+  - https://attack.mitre.org/techniques/T1110/001/
+  - https://learn.microsoft.com/en-us/windows/win32/secauthn/sam-remote-protocol
+  verified: false
+  notes: Sources cited, not re-read in this session. Field names come from forhunt's own parser (D-050).

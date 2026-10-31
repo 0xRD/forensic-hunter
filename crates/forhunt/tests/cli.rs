@@ -930,6 +930,130 @@ fn prefetch_damaged_inputs() {
     assert_eq!(o.status.code(), Some(4));
 }
 
+fn regx(name: &str) -> String {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/registry")
+        .join(name)
+        .display()
+        .to_string()
+}
+
+#[test]
+fn registry_known_keys() {
+    let v = lines(&ok(&["parse", "-q", &regx("WS-07"), "-F", "jsonl"]));
+    let of = |eid: u64| {
+        v.iter()
+            .filter(|e| e["event_id"] == eid)
+            .collect::<Vec<_>>()
+    };
+    // The SYSTEM hive names the host on every hive of the collection.
+    assert!(v.iter().all(|e| e["computer"] == "WS-07"), "{v:?}");
+    assert_eq!(of(2).len(), 2);
+    let svc = of(11);
+    assert_eq!(svc.len(), 1);
+    assert_eq!(svc[0]["data"]["ImagePath"], "%SystemRoot%\\PSEXESVC.exe");
+    assert_eq!(svc[0]["data"]["ServiceAccount"], "LocalSystem");
+    // ShimCache: a packaged app has no path and no file time.
+    let shim = of(20);
+    assert_eq!(shim.len(), 3);
+    assert_eq!(shim[0]["data"]["ExePath"], "C:\\Users\\Public\\updater.exe");
+    assert_eq!(shim[2]["data"]["Package"], "Contoso.Notes");
+    assert_eq!(shim[2]["data"]["NoFileTime"], true);
+    // BAM skips its bookkeeping values.
+    let bam = of(23);
+    assert_eq!(bam.len(), 1);
+    assert_eq!(bam[0]["data"]["UserSid"], "S-1-5-21-1-2-3-1104");
+    let am = of(21);
+    assert_eq!(am[0]["data"]["Sha1"], "ab12".repeat(10));
+    // UserAssist: ROT13 undone, known folder expanded, user from the path.
+    let ua = of(22);
+    assert_eq!(ua[0]["data"]["ExePath"], "%SYSTEM32%\\cmd.exe");
+    assert_eq!(ua[0]["data"]["RunCount"], 3);
+    assert_eq!(ua[0]["data"]["User"], "jdoe");
+    assert_eq!(of(30)[0]["data"]["Command"], "powershell -nop -w hidden");
+    assert_eq!(of(40)[0]["data"]["FriendlyName"], "Contoso USB Device");
+    let acc = of(42);
+    assert_eq!(acc[0]["data"]["User"], "jdoe");
+    assert_eq!(acc[0]["data"]["Rid"], 1104);
+    assert_eq!(acc[0]["data"]["LogonCount"], 7);
+    // Pivot on one program across artifacts.
+    let o = ok(&[
+        "search",
+        "-q",
+        &regx("WS-07"),
+        "-f",
+        "ExePath~updater.exe",
+        "-F",
+        "jsonl",
+    ]);
+    assert_eq!(lines(&o).len(), 3);
+}
+
+#[test]
+fn registry_replays_the_log_past_stale_entries() {
+    let config = regx("WS-07/C/Windows/System32/config");
+    let o = ok(&["search", "-q", &config, "-e", "10", "-F", "jsonl"]);
+    let names: Vec<_> = lines(&o)
+        .iter()
+        .map(|e| e["data"]["Name"].clone())
+        .collect();
+    assert_eq!(names, ["Updater", "Late"]);
+}
+
+#[test]
+fn registry_all_keys_is_opt_in() {
+    let hive = regx("WS-07/C/Windows/AppCompat/Programs/Amcache.hve");
+    assert!(
+        lines(&ok(&["parse", "-q", &hive, "-F", "jsonl"]))
+            .iter()
+            .all(|e| e["event_id"] != 1)
+    );
+    let v = lines(&ok(&[
+        "parse",
+        "-q",
+        &hive,
+        "-F",
+        "jsonl",
+        "--registry-keys",
+    ]));
+    let paths: Vec<_> = v.iter().filter(|e| e["event_id"] == 1).collect();
+    assert_eq!(paths.len(), 4);
+    assert_eq!(paths[3]["data"]["ValueCount"], 4);
+}
+
+/// Every check the normal scenario leaves quiet: a query that stops matching
+/// would otherwise report a clean NO_HIT.
+#[test]
+fn registry_checks_fire() {
+    let checks = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../skill/references/checklists/checklists.json");
+    let out = ok(&[
+        "checklist",
+        "-q",
+        "-k",
+        &checks.display().to_string(),
+        &regx("HUNT"),
+        "-F",
+        "json",
+    ]);
+    let v: Value = serde_json::from_str(&out).unwrap();
+    let rows = v.as_array().unwrap();
+    for n in [3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 20, 23, 24] {
+        let id = format!("FH-REG-{n:03}");
+        let row = rows.iter().find(|r| r["id"] == id.as_str()).unwrap();
+        assert_eq!(row["status"], "HIT?", "{id}");
+    }
+    let quiet = rows.iter().find(|r| r["id"] == "FH-REG-010").unwrap();
+    assert_eq!(quiet["status"], "NO_HIT");
+}
+
+#[test]
+fn registry_damage_is_counted() {
+    let o = forhunt(&["parse", "--strict", &regx("damaged/SYSTEM"), "-o", "-"]);
+    assert_eq!(o.status.code(), Some(4));
+    ok(&["parse", "-q", &regx("damaged/SYSTEM")]);
+}
+
 #[test]
 fn ntfs_damaged_inputs_and_determinism() {
     let o = forhunt(&["parse", "--strict", &nfx("corrupt.mft"), "-o", "-"]);

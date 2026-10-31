@@ -1,5 +1,5 @@
-//! The extension point for artifact types (EVTX, `$MFT`, `$UsnJrnl:$J` and
-//! prefetch today; registry, LNK, jump lists, shellbags, amcache later).
+//! The extension point for artifact types (EVTX, `$MFT`, `$UsnJrnl:$J`, prefetch
+//! and registry hives today; LNK, jump lists, shellbags later).
 //!
 //! An [`Artifact`] recognises a file and opens it as a [`Source`]. A source is
 //! split into independent *units* that the engine parses in parallel and
@@ -79,6 +79,8 @@ pub struct ParseOptions {
     /// Use this file key instead of the sampled one (set when two different
     /// files share a sampled key; see [`FileKey::of_file`]).
     pub key: Option<FileKey>,
+    /// Registry: one event per key of each hive, on top of the known keys.
+    pub registry_keys: bool,
 }
 
 pub trait Source: Send + Sync {
@@ -127,5 +129,6 @@ pub fn registry() -> Vec<Box<dyn Artifact>> {
         Box::new(crate::ntfs::MftArtifact),
         Box::new(crate::ntfs::UsnArtifact),
         Box::new(crate::prefetch::PrefetchArtifact),
+        Box::new(crate::registry::RegistryArtifact),
     ]
 }

@@ -1,7 +1,8 @@
 # Forensic Hunter
 
 **`forhunt`**: a very fast, single-binary Windows forensic toolkit for event
-logs (EVTX), NTFS metadata (`$MFT`, `$UsnJrnl:$J`) and prefetch, built to be driven by
+logs (EVTX), NTFS metadata (`$MFT`, `$UsnJrnl:$J`), prefetch and registry hives,
+built to be driven by
 an LLM with a limited context window, plus a
 **Claude skill** that turns Claude into a systematic, checklist-driven Windows
 forensic analyst.
@@ -28,8 +29,14 @@ for the picture.
 - **Prefetch**: `.pf` files of every format from XP to Windows 11, compressed
   or not, become one "Program executed" event per stored run time, with run
   count, program path, volumes, directories and loaded files.
-- **Extensible**: an `Artifact`/`Source` abstraction ready for registry, LNK,
-  jump lists, shellbags and amcache.
+- **Registry**: `SYSTEM`, `SOFTWARE`, `SAM`, `NTUSER.DAT`, `Amcache.hve` and
+  friends become events for what answers questions: services, autoruns,
+  scheduled tasks, ShimCache, Amcache, BAM, UserAssist, Run dialog history, USB
+  devices, networks and local accounts. Dirty hives are brought up to date from
+  their `.LOG1`/`.LOG2`, in memory. The `SYSTEM` hive also names the host on
+  prefetch and NTFS events of the same collection.
+- **Extensible**: an `Artifact`/`Source` abstraction ready for LNK, jump lists
+  and shellbags.
 
 ## Install
 
@@ -76,6 +83,8 @@ forhunt parse   ./evidence -F csv -O out/ --split host   # one file per host (or
 forhunt hayabusa hayabusa.jsonl -p ./evidence        # normalise Hayabusa detections
 forhunt search  ./evidence -c MFT -e 16 -f SiLtFn=true   # timestomped files ($MFT)
 forhunt search  ./evidence -c Prefetch -f 'ExePath~\USERS\'   # programs run from a profile
+forhunt search  ./evidence -f ExePath~winscp             # one program across prefetch, BAM, Amcache, ShimCache
+forhunt search  ./evidence -c Registry -e 11             # services
 forhunt search  ./evidence -c UsnJrnl -e 2               # file deletions ($J)
 ```
 
@@ -189,6 +198,7 @@ instruction-count regression gate on every push and pull request
 cargo test --workspace                     # unit + end-to-end tests
 cargo run -p evtx-gen -- fixtures          # regenerate fixtures/synthetic
 cargo run -p evtx-gen -- prefetch          # regenerate fixtures/prefetch
+cargo run -p evtx-gen -- registry          # regenerate fixtures/registry
 cargo deny check                           # licences and advisories
 python3 scripts/gen-checklist-index.py     # regenerate checklist index
 ```

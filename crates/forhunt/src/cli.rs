@@ -60,6 +60,9 @@ pub struct Common {
     /// Decode every record through the JSON path (testing only).
     #[arg(long, global = true, hide = true)]
     pub slow_decoder: bool,
+    /// Registry: also one event per key of each hive (channel Registry, id 1).
+    #[arg(long, global = true)]
+    pub registry_keys: bool,
     /// Extra field map (TOML, same format as the built-in map).
     #[arg(long, global = true, value_name = "FILE")]
     pub map: Option<PathBuf>,

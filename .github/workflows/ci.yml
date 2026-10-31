@@ -57,6 +57,10 @@ jobs:
           (cd fixtures/prefetch && find . -type f) | while IFS= read -r f; do
             cmp "fixtures/prefetch/$f" "target/prefetch-check/$f" || exit 1
           done
+          cargo run --release --locked -p evtx-gen -- registry --out target/registry-check
+          (cd fixtures/registry && find . -type f) | while IFS= read -r f; do
+            cmp "fixtures/registry/$f" "target/registry-check/$f" || exit 1
+          done
       - name: Benchmarks compile
         run: cargo bench --workspace --no-run --locked
 

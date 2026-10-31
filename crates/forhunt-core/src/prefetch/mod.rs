@@ -85,6 +85,7 @@ pub struct PrefetchSource {
     key: FileKey,
     len: u64,
     parsed: Option<Parsed>,
+    host: String,
     /// What could not be read (the file is damaged or of an unknown format).
     problems: Vec<String>,
 }
@@ -113,10 +114,11 @@ impl PrefetchSource {
         let body = body(bytes, &mut problems);
         let parsed = parse(&body, &mut problems);
         Ok(PrefetchSource {
-            path,
+            path: path.clone(),
             key,
             len: bytes.len() as u64,
             parsed,
+            host: crate::registry::computer_for(&path).unwrap_or_default(),
             problems,
         })
     }
@@ -166,6 +168,7 @@ impl PrefetchSource {
             event_id: EID_RUN,
             provider: Cow::Borrowed(PROVIDER),
             channel: Cow::Borrowed(CHANNEL),
+            computer: Cow::Borrowed(&self.host),
             event_record_id: index as u64,
             fields,
             ..EventView::default()
@@ -347,6 +350,9 @@ fn parse(b: &[u8], problems: &mut Vec<String>) -> Option<Parsed> {
         .checked_add(strings_size)
         .and_then(|end| b.get(strings..end));
     let mut files = Vec::new();
+    // Entries can all point at the same bytes: what is decoded is bounded
+    // by the file, not only the number of entries.
+    let mut budget = b.len().saturating_mul(2);
     // Counts come from the file: never loop further than it can hold.
     let fits = b.len().saturating_sub(metrics) / l.metric_size;
     let mut missing = n_metrics.saturating_sub(fits);
@@ -360,7 +366,7 @@ fn parse(b: &[u8], problems: &mut Vec<String>) -> Option<Parsed> {
             .zip(chars)
             .zip(names)
             .and_then(|((o, c), s)| s.get(o as usize..(o as usize).checked_add(c as usize * 2)?));
-        match name {
+        match name.filter(|n| spend(&mut budget, n.len())) {
             Some(n) => files.push(utf16(n)),
             None => missing += 1,
         }
@@ -380,7 +386,7 @@ fn parse(b: &[u8], problems: &mut Vec<String>) -> Option<Parsed> {
     let fits = area.map_or(0, |a| a.len() / l.volume_size);
     let mut bad_volumes = n_volumes.saturating_sub(fits);
     for i in 0..n_volumes.min(fits) {
-        let v = area.and_then(|a| volume(a, i * l.volume_size));
+        let v = area.and_then(|a| volume(a, i * l.volume_size, &mut budget));
         match v {
             Some(v) => {
                 vnames.push(v.name);
@@ -394,12 +400,22 @@ fn parse(b: &[u8], problems: &mut Vec<String>) -> Option<Parsed> {
     if bad_volumes > 0 {
         problems.push(format!("{bad_volumes} of {n_volumes} volumes unreadable"));
     }
+    if budget == 0 {
+        problems.push("file names repeat beyond the size of the file".into());
+    }
     p.volume_names = vnames.join(", ");
     p.volume_serials = serials.join(", ");
     p.volume_created = created.join(", ");
     p.directory_count = dirs.len();
     p.directories = dirs.join(", ");
     Some(p)
+}
+
+/// Takes `n` from the budget; once refused, the budget stays empty.
+fn spend(budget: &mut usize, n: usize) -> bool {
+    let left = budget.checked_sub(n);
+    *budget = left.unwrap_or(0);
+    left.is_some()
 }
 
 /// Files named like the program. The header keeps 29 characters of the name;
@@ -434,7 +450,7 @@ struct Volume {
 }
 
 /// One volume entry at `e` of the volumes area, whose offsets it is relative to.
-fn volume(a: &[u8], e: usize) -> Option<Volume> {
+fn volume(a: &[u8], e: usize, budget: &mut usize) -> Option<Volume> {
     let (name, chars) = (u32_at(a, e)? as usize, u32_at(a, e + 4)? as usize);
     let name = a.get(name..name.checked_add(chars.checked_mul(2)?)?)?;
     // Unset on removable media: a dash keeps the lists aligned.
@@ -448,6 +464,9 @@ fn volume(a: &[u8], e: usize) -> Option<Volume> {
         let Some(chars) = u16_at(a, pos) else { break };
         let end = pos + 2 + chars as usize * 2;
         let Some(d) = a.get(pos + 2..end) else { break };
+        if !spend(budget, d.len()) {
+            break;
+        }
         dirs.push(utf16(d));
         pos = end + 2;
     }
@@ -495,6 +514,25 @@ mod tests {
         let s = PrefetchSource::from_bytes("x.pf".into(), &v, &o).unwrap();
         assert!(s.open_warnings()[0].contains("version 99"));
         assert!(PrefetchSource::from_bytes("x.pf".into(), b"", &o).is_err());
+    }
+
+    #[test]
+    fn aliased_names_cannot_multiply_memory() {
+        // A body of 1 MiB whose metrics all name the same 512 KiB string.
+        let mut v = vec![0u8; 1 << 20];
+        v[0] = 30;
+        v[4..8].copy_from_slice(SIGNATURE);
+        let (metrics, n, strings, size) = (296u32, 16_000u32, 1u32 << 19, 1u32 << 19);
+        for (o, x) in [(84, metrics), (88, n), (100, strings), (104, size)] {
+            v[o..o + 4].copy_from_slice(&x.to_le_bytes());
+        }
+        for i in 0..n as usize {
+            let m = metrics as usize + i * 32;
+            v[m + 16..m + 20].copy_from_slice(&(size / 2).to_le_bytes());
+        }
+        let s = PrefetchSource::from_bytes("x.pf".into(), &v, &ParseOptions::default()).unwrap();
+        assert!(s.parsed.as_ref().unwrap().files.len() < 8 << 20);
+        assert!(s.open_warnings().iter().any(|w| w.contains("unreadable")));
     }
 
     #[test]

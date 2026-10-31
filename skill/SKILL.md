@@ -62,11 +62,15 @@ and keeps the computer name on each event. Scope a question to one host with
 `!SANS_Triage` / Velociraptor `Windows.KapeFiles.Targets` collect them): they
 show files created, renamed, deleted and timestomped when logs are missing or
 cleared (`references/forhunt.md`, NTFS section; how to hunt and read them:
-`references/ntfs-hunting.md`). They carry no host name, so
+`references/ntfs-hunting.md`). Without a `SYSTEM` hive they carry no host name, so
 scope them by the host's folder, never with `--computer`. Ask for
 `C:\Windows\Prefetch` too: `.pf` files prove execution when 4688 and Sysmon are
 missing (`references/prefetch-hunting.md`, checks in
-`references/checklists/prefetch.yaml`); they have no host name either.
+`references/checklists/prefetch.yaml`). Ask for the registry hives with their
+`.LOG1`/`.LOG2` (`references/registry-hunting.md`, checks in
+`references/checklists/registry.yaml`): services, autoruns and four
+more execution sources. A `SYSTEM` hive in the collection also gives prefetch
+and NTFS events their host name; without one they have none.
 If the analyst wants to browse in Timeline Explorer:
 `forhunt parse "$CASE/evidence" -F csv -O "$CASE/work/csv" --split host`.
 
