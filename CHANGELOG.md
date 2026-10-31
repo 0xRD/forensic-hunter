@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1 (2026-10-31)
+
+No change to the tool. Release archives carry the updated licence notice
+(copyright 0xRD).
+
 ## 0.3.0 (2026-10-25)
 
 Correctness release from a differential test against an independent parser

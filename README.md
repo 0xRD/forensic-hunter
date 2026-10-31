@@ -6,6 +6,11 @@ an LLM with a limited context window, plus a
 **Claude skill** that turns Claude into a systematic, checklist-driven Windows
 forensic analyst.
 
+![forhunt search on synthetic event logs: failed logons, an encoded PowerShell command and a cleared audit log](docs/demo.svg)
+
+Real output, on the synthetic logs in `fixtures/synthetic/`; long lines cut
+for the picture.
+
 - **Fast**: 64 KiB chunks read with positional I/O and processed in parallel across
   files and directories, purpose-built decoder, streaming output.
   See [benchmarks](#benchmarks).
