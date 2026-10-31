@@ -5,6 +5,7 @@
 //! evtx-gen corpus --out corpus --size 2G          # multi-GB benchmark corpus
 //! evtx-gen ntfs --out fixtures/ntfs               # $MFT + $J fixtures (same scenario)
 //! evtx-gen ntfs-corpus --out corpus/ntfs --records 1000000
+//! evtx-gen prefetch --out fixtures/prefetch       # .pf fixtures (same scenario)
 //! ```
 //!
 //! No real log data is involved: every value comes from a seeded generator
@@ -15,6 +16,7 @@
 
 mod events;
 mod ntfs;
+mod prefetch;
 mod writer;
 
 use std::fs::File;
@@ -59,6 +61,12 @@ enum Cmd {
     /// scenario, plus corrupt and truncated variants.
     Ntfs {
         #[arg(long, default_value = "fixtures/ntfs")]
+        out: PathBuf,
+    },
+    /// Prefetch files of WS-07 for the same scenario, one per on-disk
+    /// format, plus corrupt and truncated variants.
+    Prefetch {
+        #[arg(long, default_value = "fixtures/prefetch")]
         out: PathBuf,
     },
     /// A large `$MFT` and `$J` of background activity.
@@ -1210,10 +1218,153 @@ fn ntfs_corpus(out: &Path, records: u64, seed: u64) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn prefetch_fixtures(out: &Path) -> anyhow::Result<()> {
+    use prefetch::{Pf, compress};
+    let host = out.join("WS-07");
+    std::fs::create_dir_all(&host)?;
+    const VOL: &str = "\\VOLUME{01d9a1b2c3d4e5f6-5c1f7a2e}";
+    let t = |m: u64, s_: u64| BASE + (2 * 3600 + m * 60 + s_) * SEC + 1_234_567;
+    let path = |p: &str| format!("{VOL}\\{p}");
+    let sys32 = |exe: &str| {
+        vec![
+            path("WINDOWS\\SYSTEM32\\NTDLL.DLL"),
+            path(&format!("WINDOWS\\SYSTEM32\\{exe}")),
+            path("WINDOWS\\SYSTEM32\\KERNEL32.DLL"),
+        ]
+    };
+    let dirs = vec![path("WINDOWS"), path("WINDOWS\\SYSTEM32")];
+    let pf = |version, first, exe, hash, run_count, runs, files, dirs| Pf {
+        version,
+        first,
+        exe,
+        hash,
+        run_count,
+        runs,
+        files,
+        dirs,
+        volume: VOL,
+        serial: 0x5C1F_7A2E,
+        created: INSTALL,
+    };
+    let (r17, r23) = ([t(4, 1)], [t(3, 58)]);
+    let (r31, r30, r26) = ([t(15, 2)], [t(14, 9), t(12, 40), t(3, 5)], [t(16, 30)]);
+    let mut big = sys32("RUNDLL32.EXE");
+    big.extend((0..420).map(|i| {
+        path(&format!(
+            "USERS\\ADMINISTRATOR\\APPDATA\\LOCAL\\TEMP\\STAGE\\PAYLOAD-MODULE-{i:04}.DLL"
+        ))
+    }));
+    big.push(path("USERS\\PUBLIC\\UPDATER.DLL"));
+    let write = |name: &str, bytes: &[u8]| std::fs::write(host.join(name), bytes);
+    write(
+        "NET.EXE-DF44F913.pf",
+        &pf(
+            17,
+            152,
+            "NET.EXE",
+            0xDF44_F913,
+            2,
+            &r17,
+            sys32("NET.EXE"),
+            dirs.clone(),
+        )
+        .body(),
+    )?;
+    write(
+        "WHOAMI.EXE-9D378BFA.pf",
+        &pf(
+            23,
+            240,
+            "WHOAMI.EXE",
+            0x9D37_8BFA,
+            1,
+            &r23,
+            sys32("WHOAMI.EXE"),
+            dirs.clone(),
+        )
+        .body(),
+    )?;
+    write(
+        "PSEXESVC.EXE-AD70946C.pf",
+        &pf(
+            26,
+            304,
+            "PSEXESVC.EXE",
+            0xAD70_946C,
+            1,
+            &r26,
+            sys32("PSEXESVC.EXE"),
+            dirs.clone(),
+        )
+        .body(),
+    )?;
+    let cmd = pf(
+        30,
+        296,
+        "CMD.EXE",
+        0x0BD3_0981,
+        14,
+        &r30,
+        sys32("CMD.EXE"),
+        dirs.clone(),
+    )
+    .body();
+    write("CMD.EXE-0BD30981.pf", &compress(&cmd, false))?;
+    let schtasks = pf(
+        30,
+        304,
+        "SCHTASKS.EXE",
+        0x5D4E_3B1A,
+        1,
+        &r26,
+        sys32("SCHTASKS.EXE"),
+        dirs.clone(),
+    )
+    .body();
+    write("SCHTASKS.EXE-5D4E3B1A.pf", &compress(&schtasks, false))?;
+    let wmic = pf(
+        31,
+        296,
+        "WMIC.EXE",
+        0x1B2C_3D4E,
+        1,
+        &r31,
+        sys32("WMIC.EXE"),
+        dirs.clone(),
+    )
+    .body();
+    write("WMIC.EXE-1B2C3D4E.pf", &compress(&wmic, true))?;
+    let rundll = pf(
+        30,
+        296,
+        "RUNDLL32.EXE",
+        0x7A1F_00C3,
+        1,
+        &r31,
+        big,
+        dirs.clone(),
+    )
+    .body();
+    anyhow::ensure!(
+        rundll.len() > 64 * 1024,
+        "the second block must be exercised"
+    );
+    write("RUNDLL32.EXE-7A1F00C3.pf", &compress(&rundll, false))?;
+    // Damaged: cut inside the file names; a garbled block header.
+    let z = compress(&cmd, false);
+    std::fs::write(out.join("truncated.pf"), &z[..z.len() * 2 / 3])?;
+    let mut bad = z;
+    bad[8..264].fill(0xFF);
+    std::fs::write(out.join("corrupt.pf"), bad)?;
+    println!("{}: 7 prefetch files, 2 damaged", out.display());
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     match Cli::parse().cmd {
         Cmd::Fixtures { out } => fixtures(&out),
         Cmd::Ntfs { out } => ntfs_fixtures(&out),
+        Cmd::Prefetch { out } => prefetch_fixtures(&out),
         Cmd::NtfsCorpus { out, records, seed } => ntfs_corpus(&out, records, seed),
         Cmd::Corpus {
             out,

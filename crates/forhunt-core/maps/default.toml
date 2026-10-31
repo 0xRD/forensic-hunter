@@ -803,6 +803,14 @@ id = 48
 title = "File timestamps ($FN)"
 keep = ["MACB", "Path", "FileSize", "Deleted", "IsDirectory", "SiLtFn", "uSecZeros", "Copied", "AdsNames", "ZoneIdContents", "EntryNumber"]
 
+# Prefetch: one event per stored run time.
+
+[[event]]
+channel = "Prefetch"
+id = 1
+title = "Program executed"
+keep = ["ExecutableName", "ExePath", "RunCount", "RunIndex", "Hash", "FileCount", "NoRunTime"]
+
 # $UsnJrnl:$J: event id = action derived from the accumulated reasons.
 
 [[event]]

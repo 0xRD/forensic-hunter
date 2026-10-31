@@ -1,7 +1,7 @@
 # Forensic Hunter
 
 **`forhunt`**: a very fast, single-binary Windows forensic toolkit for event
-logs (EVTX) and NTFS metadata (`$MFT`, `$UsnJrnl:$J`), built to be driven by
+logs (EVTX), NTFS metadata (`$MFT`, `$UsnJrnl:$J`) and prefetch, built to be driven by
 an LLM with a limited context window, plus a
 **Claude skill** that turns Claude into a systematic, checklist-driven Windows
 forensic analyst.
@@ -25,8 +25,11 @@ for the picture.
   MACB flags, timestomp indicators, deleted records and download origin
   (Zone.Identifier); `$J` change-journal entries become create / rename /
   delete events. Both merge with event logs in one timeline.
-- **Extensible**: an `Artifact`/`Source` abstraction ready for registry,
-  prefetch, LNK, jump lists, shellbags and amcache.
+- **Prefetch**: `.pf` files of every format from XP to Windows 11, compressed
+  or not, become one "Program executed" event per stored run time, with run
+  count, program path, volumes, directories and loaded files.
+- **Extensible**: an `Artifact`/`Source` abstraction ready for registry, LNK,
+  jump lists, shellbags and amcache.
 
 ## Install
 
@@ -72,6 +75,7 @@ forhunt parse   ./evidence -F csv --computer WS-07 -o ws07.csv   # one host only
 forhunt parse   ./evidence -F csv -O out/ --split host   # one file per host (or --split file)
 forhunt hayabusa hayabusa.jsonl -p ./evidence        # normalise Hayabusa detections
 forhunt search  ./evidence -c MFT -e 16 -f SiLtFn=true   # timestomped files ($MFT)
+forhunt search  ./evidence -c Prefetch -f 'ExePath~\USERS\'   # programs run from a profile
 forhunt search  ./evidence -c UsnJrnl -e 2               # file deletions ($J)
 ```
 
@@ -184,6 +188,7 @@ instruction-count regression gate on every push and pull request
 ```bash
 cargo test --workspace                     # unit + end-to-end tests
 cargo run -p evtx-gen -- fixtures          # regenerate fixtures/synthetic
+cargo run -p evtx-gen -- prefetch          # regenerate fixtures/prefetch
 cargo deny check                           # licences and advisories
 python3 scripts/gen-checklist-index.py     # regenerate checklist index
 ```

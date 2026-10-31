@@ -238,7 +238,8 @@ pub struct ShowArgs {
     /// Where to look for the file (files, directories, globs).
     #[arg(long, short = 'p', value_name = "PATHS", default_value = ".")]
     pub path: Vec<String>,
-    /// `xml`: the record in its native form (EVTX XML; hex dump for $MFT and $J).
+    /// `xml`: the record in its native form (EVTX XML; hex dump for $MFT, $J and
+    /// decompressed prefetch).
     #[arg(long, short = 'F', value_enum, default_value_t = ShowFormat::Json)]
     pub format: ShowFormat,
     #[arg(long, short = 'o', default_value = "-")]

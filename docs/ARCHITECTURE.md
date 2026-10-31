@@ -1,15 +1,16 @@
 # Architecture
 
 ```
-crates/forhunt-core     event model (EventView), Artifact/Source traits, EVTX and
-                        NTFS ($MFT, $UsnJrnl:$J) sources, JSON scanner, filters,
+crates/forhunt-core     event model (EventView), Artifact/Source traits, EVTX,
+                        NTFS ($MFT, $UsnJrnl:$J) and prefetch sources, LZXPRESS
+                        Huffman decoder, JSON scanner, filters,
                         field maps (maps/default.toml), input expansion and
                         opening (input::open_all), order-preserving parallel engine
 crates/forhunt-output   writers: csv (EvtxECmd layout + ForhuntId), jsonl (full
                         fidelity), llm (compact); export::write_all for library users
 crates/forhunt          CLI binary `forhunt`: parse, stats, search, timeline, show,
                         hayabusa, checklist
-tools/evtx-gen          synthetic EVTX / NTFS generator (fixtures, multi-GB corpus)
+tools/evtx-gen          synthetic EVTX / NTFS / prefetch generator (fixtures, multi-GB corpus)
 skill/                  Claude skill: SKILL.md, install scripts, references,
                         detection checklists (YAML + generated JSON index)
 ```

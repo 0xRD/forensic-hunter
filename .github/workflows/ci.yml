@@ -53,6 +53,10 @@ jobs:
           (cd fixtures/ntfs && find . -type f) | while IFS= read -r f; do
             cmp "fixtures/ntfs/$f" "target/ntfs-check/$f" || exit 1
           done
+          cargo run --release --locked -p evtx-gen -- prefetch --out target/prefetch-check
+          (cd fixtures/prefetch && find . -type f) | while IFS= read -r f; do
+            cmp "fixtures/prefetch/$f" "target/prefetch-check/$f" || exit 1
+          done
       - name: Benchmarks compile
         run: cargo bench --workspace --no-run --locked
 

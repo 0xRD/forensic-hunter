@@ -118,6 +118,30 @@ forhunt search E -c MFT -e 48 -f ZoneIdContents~HostUrl                      # d
 forhunt timeline evidence/WS-07 --since 2024-03-11T10:10:00Z --until 2024-03-11T10:35:00Z
 ```
 
+## Prefetch
+
+`.pf` files (formats 17 to 31, compressed or not) are found in any folder.
+How to read them: `prefetch-hunting.md`.
+
+| Channel | Event id | Meaning |
+|---|---|---|
+| `Prefetch` | 1 | One stored run time of a program (up to 8 per file on Windows 8+) |
+
+Fields: `ExecutableName` (29 characters at most), `ExePath`, `Hash`, `RunCount`,
+`RunIndex` (1 = latest), `RunTimes`, `PrefetchVersion`, `VolumeNames`,
+`VolumeSerials`, `VolumeCreated`, `DirectoryCount`, `FileCount`, `Directories`,
+`FilesLoaded`, and `NoRunTime=true` on a file without any run time (timestamped
+1970). `llm` shows the short selection; `-f FilesLoaded~name` still searches the
+full lists, and `--all-fields` or `--fields` shows them. Paths look like
+`\VOLUME{...}\WINDOWS\SYSTEM32\CMD.EXE`. No host name, as for NTFS: scope by
+folder, never with `--computer`.
+
+```bash
+forhunt search E -c Prefetch -f 'ExePath~\USERS\'     # run from a profile
+forhunt search E -c Prefetch -f FilesLoaded~VAULTCLI  # what loaded this DLL
+forhunt timeline E -c Prefetch --since 2024-03-13T10:00:00Z
+```
+
 ## `llm` format
 
 One JSON object per line:

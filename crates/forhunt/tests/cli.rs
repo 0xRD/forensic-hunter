@@ -689,6 +689,14 @@ fn sampled_key_collision_keeps_both_files() {
     }
 }
 
+fn pfx(name: &str) -> String {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/prefetch")
+        .join(name)
+        .display()
+        .to_string()
+}
+
 fn nfx(name: &str) -> String {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/ntfs")
@@ -802,6 +810,124 @@ fn ntfs_timeline_merges_with_event_logs() {
         ch.contains("System") && ch.contains("MFT") && ch.contains("UsnJrnl"),
         "{ch:?}"
     );
+}
+
+#[test]
+fn prefetch_every_format() {
+    let v = lines(&ok(&["parse", "-q", &pfx("WS-07"), "-F", "jsonl"]));
+    // One event per stored run time, in every format.
+    assert_eq!(v.len(), 9, "{v:?}");
+    let runs = |exe: &str| {
+        v.iter()
+            .filter(|e| e["data"]["ExecutableName"] == exe)
+            .count()
+    };
+    assert_eq!(
+        [
+            "NET.EXE",
+            "WHOAMI.EXE",
+            "PSEXESVC.EXE",
+            "CMD.EXE",
+            "SCHTASKS.EXE",
+            "WMIC.EXE",
+            "RUNDLL32.EXE"
+        ]
+        .map(runs),
+        [1, 1, 1, 3, 1, 1, 1]
+    );
+    let vol = "\\VOLUME{01d9a1b2c3d4e5f6-5c1f7a2e}";
+    let cmd: Vec<_> = v
+        .iter()
+        .filter(|e| e["data"]["ExecutableName"] == "CMD.EXE")
+        .collect();
+    let d = &cmd[0]["data"];
+    assert_eq!(cmd[0]["channel"], "Prefetch");
+    assert_eq!(cmd[0]["event_id"], 1);
+    assert_eq!(d["RunCount"], 14);
+    assert_eq!(d["RunIndex"], 1);
+    assert_eq!(d["Hash"], "0BD30981");
+    assert_eq!(d["PrefetchVersion"], 30);
+    assert_eq!(
+        d["ExePath"].as_str().unwrap(),
+        format!("{vol}\\WINDOWS\\SYSTEM32\\CMD.EXE")
+    );
+    assert_eq!(d["VolumeSerials"], "5C1F7A2E");
+    assert_eq!(d["FileCount"], 3);
+    assert_eq!(d["DirectoryCount"], 2);
+    assert!(
+        d["Directories"]
+            .as_str()
+            .unwrap()
+            .ends_with("\\WINDOWS\\SYSTEM32")
+    );
+    assert_eq!(d["RunTimes"].as_str().unwrap().split(", ").count(), 3);
+    // Slot 1 is the latest run, and each run has its own time.
+    assert!(cmd[0]["timestamp"].as_str() > cmd[1]["timestamp"].as_str());
+    // Spans two compression blocks: the last file name is past 64 KiB.
+    let o = ok(&[
+        "search",
+        "-q",
+        &pfx("WS-07"),
+        "-c",
+        "Prefetch",
+        "-f",
+        "FilesLoaded~UPDATER.DLL",
+        "-F",
+        "jsonl",
+    ]);
+    let hit = lines(&o);
+    assert_eq!(hit.len(), 1);
+    assert_eq!(hit[0]["data"]["FileCount"], 424);
+}
+
+#[test]
+fn prefetch_formats_and_show() {
+    // llm keeps the short selection.
+    let o = ok(&[
+        "search",
+        &pfx("WS-07"),
+        "-c",
+        "Prefetch",
+        "-f",
+        "ExecutableName=WMIC.EXE",
+    ]);
+    assert!(o.contains("WMIC.EXE") && !o.contains("KERNEL32"), "{o}");
+    // CSV: the program is in ExecutableInfo.
+    let o = ok(&["parse", "-q", &pfx("WS-07"), "-F", "csv"]);
+    assert!(
+        o.lines()
+            .any(|l| l.contains("Program executed") && l.contains("WINDOWS\\SYSTEM32\\WMIC.EXE"))
+    );
+    // show finds a run by id; the raw form is the decompressed file.
+    let v = lines(&ok(&[
+        "parse",
+        "-q",
+        &pfx("WS-07/CMD.EXE-0BD30981.pf"),
+        "-F",
+        "jsonl",
+    ]));
+    let id = v[2]["id"].as_str().unwrap().to_string();
+    let o = ok(&["show", &id, "-p", &pfx("WS-07"), "-F", "xml", "-q"]);
+    assert!(o.contains("53 43 43 41"), "{o}");
+    let o = ok(&["show", &id, "-p", &pfx("WS-07"), "-q"]);
+    assert!(o.contains("CMD.EXE"), "{o}");
+    // Not folded with host facets, no log gaps.
+    ok(&["stats", "-q", &pfx("WS-07")]);
+}
+
+#[test]
+fn prefetch_damaged_inputs() {
+    // Cut inside the file names: the run still counts, the loss is loud.
+    let o = forhunt(&["parse", "--strict", &pfx("truncated.pf"), "-o", "-"]);
+    assert_eq!(o.status.code(), Some(4));
+    let v = lines(&ok(&["parse", "-q", &pfx("truncated.pf"), "-F", "jsonl"]));
+    assert_eq!(v.len(), 3);
+    assert_eq!(v[0]["data"]["ExecutableName"], "CMD.EXE");
+    let e = forhunt(&["parse", &pfx("truncated.pf"), "-F", "jsonl"]);
+    assert!(String::from_utf8_lossy(&e.stderr).contains("truncated"));
+    // Nothing readable: no event, bad unit.
+    let o = forhunt(&["parse", "--strict", &pfx("corrupt.pf"), "-o", "-"]);
+    assert_eq!(o.status.code(), Some(4));
 }
 
 #[test]

@@ -1,5 +1,5 @@
-//! The extension point for artifact types (EVTX, `$MFT` and `$UsnJrnl:$J`
-//! today; registry, prefetch, LNK, jump lists, shellbags, amcache later).
+//! The extension point for artifact types (EVTX, `$MFT`, `$UsnJrnl:$J` and
+//! prefetch today; registry, LNK, jump lists, shellbags, amcache later).
 //!
 //! An [`Artifact`] recognises a file and opens it as a [`Source`]. A source is
 //! split into independent *units* that the engine parses in parallel and
@@ -100,7 +100,7 @@ pub trait Source: Send + Sync {
     }
     /// True for event logs: record ids are sequential and activity is
     /// continuous, so id gaps and quiet periods mean something. False for
-    /// file system metadata ($MFT, $J).
+    /// file system metadata ($MFT, $J) and prefetch.
     fn is_log(&self) -> bool {
         true
     }
@@ -126,5 +126,6 @@ pub fn registry() -> Vec<Box<dyn Artifact>> {
         Box::new(crate::evtx::EvtxArtifact),
         Box::new(crate::ntfs::MftArtifact),
         Box::new(crate::ntfs::UsnArtifact),
+        Box::new(crate::prefetch::PrefetchArtifact),
     ]
 }

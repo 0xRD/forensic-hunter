@@ -3,8 +3,11 @@
 Open work, roughly by priority.
 
 ## Artifacts
-- Registry hives, prefetch, LNK, jump lists, shellbags, amcache (the
-  `Artifact`/`Source` traits are ready for them).
+- Registry hives, LNK, jump lists, shellbags, amcache (the `Artifact`/`Source`
+  traits are ready for them).
+- Prefetch: checklist entries (the `FH-FS` checks that mention prefetch read
+  `$J`, not the files), MFT references of loaded files, `.pf` host name from
+  the SYSTEM hive once registry support exists.
 - NTFS: MFTECmd-layout CSV option, `$I30` / `$LogFile`, hard links (one event
   set per name), attribute lists (names in extension records), host name from
   the SYSTEM hive once registry support exists.

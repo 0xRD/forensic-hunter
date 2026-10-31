@@ -63,7 +63,9 @@ and keeps the computer name on each event. Scope a question to one host with
 show files created, renamed, deleted and timestomped when logs are missing or
 cleared (`references/forhunt.md`, NTFS section; how to hunt and read them:
 `references/ntfs-hunting.md`). They carry no host name, so
-scope them by the host's folder, never with `--computer`.
+scope them by the host's folder, never with `--computer`. Ask for
+`C:\Windows\Prefetch` too: `.pf` files prove execution when 4688 and Sysmon are
+missing (`references/prefetch-hunting.md`); they have no host name either.
 If the analyst wants to browse in Timeline Explorer:
 `forhunt parse "$CASE/evidence" -F csv -O "$CASE/work/csv" --split host`.
 

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.0 (2026-10-31)
+
+Prefetch (`.pf`), the first execution artifact.
+
+- Formats 17, 23, 26, 30 (both layouts) and 31, plain or `MAM`-compressed
+  (LZXPRESS Huffman decoder written from MS-XCA, no new dependency).
+- One event per stored run time (`-c Prefetch -e 1`), each with `ExePath`,
+  `RunCount`, `RunTimes`, `Hash`, volumes, `Directories` and `FilesLoaded`;
+  they merge into `timeline` with event logs and NTFS.
+- A damaged file keeps what it can (run times, the files before the damage)
+  and counts as bad for `--strict`.
+- Compared field by field with libscca and dissect on 171 real Windows 10 files.
+
 ## 0.3.1 (2026-10-31)
 
 No change to the tool. Release archives carry the updated licence notice

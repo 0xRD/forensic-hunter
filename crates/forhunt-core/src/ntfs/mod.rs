@@ -3,7 +3,7 @@
 
 pub mod mft;
 mod paths;
-mod record;
+pub(crate) mod record;
 pub mod usn;
 
 pub use mft::{MftArtifact, MftSource};

@@ -3,7 +3,7 @@
 //!
 //! The design keeps a single hot path: an artifact [`Source`](artifact::Source)
 //! splits its input into independent units (EVTX chunks, runs of MFT
-//! records, journal blocks), the
+//! records, journal blocks, one prefetch file), the
 //! [`engine`] runs units on a rayon pool and hands each decoded
 //! [`EventView`](event::EventView) to a caller-supplied closure while it still
 //! borrows the decoder's buffer. Nothing is materialised unless the caller
@@ -19,6 +19,7 @@ pub mod input;
 pub(crate) mod io;
 pub mod normalize;
 pub mod ntfs;
+pub mod prefetch;
 pub mod time;
 
 pub use artifact::{Artifact, Source, UnitReport};
