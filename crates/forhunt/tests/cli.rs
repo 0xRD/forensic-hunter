@@ -1576,3 +1576,56 @@ fn checklist_queries_paste_safely_into_a_shell() {
         }
     }
 }
+
+#[test]
+fn output_inside_the_evidence_is_refused() {
+    // A private copy of the evidence, so a failure cannot touch the fixtures.
+    let d = tempfile::tempdir().unwrap();
+    let ev = d.path().join("ev");
+    std::fs::create_dir_all(&ev).unwrap();
+    for e in std::fs::read_dir(fixtures()).unwrap().flatten() {
+        if e.path().extension().is_some_and(|x| x == "evtx") {
+            std::fs::copy(e.path(), ev.join(e.file_name())).unwrap();
+        }
+    }
+    let evs = ev.display().to_string();
+    let inside = ev.join("out.txt").display().to_string();
+    let inside_dir = ev.join("split").display().to_string();
+    let tools = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../skill/references/checklists/checklists.json")
+        .display()
+        .to_string();
+    let hb = ev.join("hb.json");
+    std::fs::write(&hb, b"[]").unwrap();
+    let hb = hb.display().to_string();
+    let before_hb = dir_files(&ev);
+    let cases: Vec<Vec<&str>> = vec![
+        vec!["parse", "-q", &evs, "-o", &inside],
+        vec!["parse", "-q", &evs, "-O", &inside_dir],
+        vec!["search", "-q", &evs, "-o", &inside],
+        vec!["search", "-q", &evs, "-O", &inside_dir],
+        vec!["timeline", "-q", &evs, "-o", &inside],
+        vec!["stats", "-q", &evs, "-o", &inside],
+        vec!["checklist", "-q", &evs, "-k", &tools, "-o", &inside],
+        vec!["show", "-q", "00000000:1", "-p", &evs, "-o", &inside],
+        vec!["hayabusa", "-q", &hb, "-p", &evs, "-o", &inside],
+        // The input file itself.
+        vec!["hayabusa", "-q", &hb, "-o", &hb],
+    ];
+    for args in cases {
+        let o = forhunt(&args);
+        assert_eq!(o.status.code(), Some(2), "{args:?}");
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert!(err.contains("inside the evidence"), "{args:?}: {err}");
+    }
+    // Nothing was created or changed in the evidence.
+    assert_eq!(dir_files(&ev), before_hb);
+    assert_eq!(std::fs::read(&hb).unwrap(), b"[]");
+    // An output next to the evidence is fine, so is stdout.
+    let outside = d.path().join("out.jsonl");
+    ok(&["parse", "-q", &evs, "-o", &outside.display().to_string()]);
+    assert!(outside.metadata().unwrap().len() > 0);
+    let split = d.path().join("split");
+    ok(&["search", "-q", &evs, "-O", &split.display().to_string()]);
+    assert!(!dir_files(&split).is_empty());
+}

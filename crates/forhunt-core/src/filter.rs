@@ -18,6 +18,9 @@ pub enum FieldOp {
     /// `Name!~text`: no case-insensitive substring (also true when the
     /// field is absent).
     NotContains(String),
+    /// `Name>N`, `>=`, `<`, `<=` (decimal or `0x` hex). False when the field
+    /// is absent or not a number.
+    Cmp(&'static str, u64),
 }
 
 #[derive(Debug, Clone)]
@@ -27,11 +30,12 @@ pub struct FieldCond {
 }
 
 impl FieldCond {
-    /// Parses `Name=value`, `Name!=value` or `Name~substring`.
+    /// Parses `Name=value`, `Name!=value`, `Name~substring`, `Name!~substring`
+    /// or `Name>N`, `Name>=N`, `Name<N`, `Name<=N`.
     pub fn parse(s: &str) -> anyhow::Result<FieldCond> {
-        let idx = s.find(['=', '~', '!']).ok_or_else(|| {
+        let idx = s.find(['=', '~', '!', '<', '>']).ok_or_else(|| {
             anyhow::anyhow!(
-                "--field `{s}`: expected Name=value, Name!=value, Name~substring or Name!~substring"
+                "--field `{s}`: expected Name=value, Name!=value, Name~substring, Name!~substring or Name>N"
             )
         })?;
         let (name, rest) = s.split_at(idx);
@@ -39,7 +43,14 @@ impl FieldCond {
         if name.is_empty() {
             anyhow::bail!("--field `{s}`: empty field name");
         }
-        let op = if let Some(v) = rest.strip_prefix("!~") {
+        let cmp = [">=", "<=", ">", "<"]
+            .into_iter()
+            .find_map(|o| rest.strip_prefix(o).map(|v| (o, v)));
+        let op = if let Some((o, v)) = cmp {
+            let n = parse_num(v)
+                .ok_or_else(|| anyhow::anyhow!("--field `{s}`: `{v}` is not a number"))?;
+            FieldOp::Cmp(o, n)
+        } else if let Some(v) = rest.strip_prefix("!~") {
             FieldOp::NotContains(v.to_lowercase())
         } else if let Some(v) = rest.strip_prefix("!=") {
             FieldOp::Ne(v.to_string())
@@ -49,7 +60,7 @@ impl FieldCond {
             FieldOp::Contains(v.to_lowercase())
         } else {
             anyhow::bail!(
-                "--field `{s}`: expected Name=value, Name!=value, Name~substring or Name!~substring"
+                "--field `{s}`: expected Name=value, Name!=value, Name~substring, Name!~substring or Name>N"
             );
         };
         Ok(FieldCond {
@@ -69,6 +80,13 @@ impl FieldCond {
             (FieldOp::Contains(_), None) => false,
             (FieldOp::NotContains(n), Some(v)) => !value_contains(&v, n),
             (FieldOp::NotContains(_), None) => true,
+            (FieldOp::Cmp(o, n), Some(v)) => parse_num(&v).is_some_and(|x| match *o {
+                ">" => x > *n,
+                ">=" => x >= *n,
+                "<" => x < *n,
+                _ => x <= *n,
+            }),
+            (FieldOp::Cmp(..), None) => false,
         }
     }
 }
@@ -403,7 +421,9 @@ impl Filter {
     pub fn fields_present(&self, ev: &EventView<'_>) -> bool {
         self.fields.iter().all(|f| match &f.op {
             FieldOp::Eq(v) if v.is_empty() => true,
-            FieldOp::Eq(_) | FieldOp::Contains(_) => ev.get_ci(&f.name).is_some(),
+            FieldOp::Eq(_) | FieldOp::Contains(_) | FieldOp::Cmp(..) => {
+                ev.get_ci(&f.name).is_some()
+            }
             FieldOp::Ne(_) | FieldOp::NotContains(_) => true,
         }) && self
             .regexes
@@ -476,6 +496,7 @@ impl Filter {
                 FieldOp::Ne(v) => format!("{}!={v}", f.name),
                 FieldOp::Contains(v) => format!("{}~{v}", f.name),
                 FieldOp::NotContains(v) => format!("{}!~{v}", f.name),
+                FieldOp::Cmp(o, n) => format!("{}{o}{n}", f.name),
             };
             out.push(format!("--field {s}"));
         }
@@ -584,6 +605,12 @@ mod tests {
         assert!(f("Computer~corp").matches(&e));
         assert!(f("LogonType=0x3").matches(&e));
         assert!(!f("LogonType=03").matches(&e));
+        assert!(f("LogonType>2").matches(&e) && f("LogonType>=3").matches(&e));
+        assert!(!f("LogonType>3").matches(&e) && !f("LogonType<3").matches(&e));
+        assert!(f("LogonType<=0x3").matches(&e) && f("LogonType<4").matches(&e));
+        assert!(!f("CommandLine>1").matches(&e) && !f("Missing<1").matches(&e));
+        assert!(!f("Missing>1").fields_present(&e));
+        assert!(FieldCond::parse("LogonType>x").is_err());
         let r = |s: &str| Filter::new().regexes(vec![RegexCond::parse(s).unwrap()]);
         assert!(r("CommandLine=-enc\\s+[A-Za-z0-9+/=]{8}").matches(&e));
         assert!(r("POWERSHELL").matches(&e));

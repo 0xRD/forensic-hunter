@@ -115,6 +115,13 @@ pub fn run(a: ShowArgs) -> anyhow::Result<()> {
         }
         inputs.sources.extend(extra);
     }
+    {
+        // `--path` defaults to `.`; then only the files found count, or any
+        // `-o` in the working directory would be refused.
+        let tree: &[String] = if a.path == ["."] { &[] } else { &a.path };
+        let files: Vec<&std::path::Path> = inputs.sources.iter().map(|s| s.path()).collect();
+        common::guard_output(std::path::Path::new(&a.output), tree, &files)?;
+    }
     let mut out = common::output(&a.output)?;
     let mut totals = Totals::default();
     let mut missing = Vec::new();

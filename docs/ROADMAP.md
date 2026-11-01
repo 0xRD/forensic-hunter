@@ -17,10 +17,8 @@ Open work, roughly by priority.
 ## Commands
 - `stats`: `$J` first/last time and USN discontinuities (journal reset,
   FH-FS-031); time bucketing for burst detection.
-- Numeric comparisons in filters (`FileSize>N`); per-file grouping
-  (`EntryNumber` + `SequenceNumber`).
-- Option-value errors exit 1 where the docs say 2; refuse `-o` inside the
-  evidence tree.
+- Per-file grouping (`EntryNumber` + `SequenceNumber`).
+- Option-value errors exit 1 where the docs say 2.
 
 ## Checklists
 - Re-verify the checks against Microsoft Learn and other sources that were

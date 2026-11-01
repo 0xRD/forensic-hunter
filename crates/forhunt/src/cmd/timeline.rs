@@ -259,6 +259,11 @@ pub fn run(a: TimelineArgs) -> anyhow::Result<()> {
     let filter = ctx.filter(&a.filter)?;
     let started = Instant::now();
     let inputs = ctx.open(&a.paths)?;
+    common::guard_output(
+        std::path::Path::new(&a.out.output),
+        &a.paths,
+        &inputs.sources.iter().map(|s| s.path()).collect::<Vec<_>>(),
+    )?;
     let writer = ctx.writer(a.format, &a.out);
     let llm = a.format == OutFormat::Llm;
     let limit = match a.limit {

@@ -309,6 +309,11 @@ fn run(
 ) -> anyhow::Result<()> {
     let started = Instant::now();
     let inputs = ctx.open(paths)?;
+    let files: Vec<&Path> = inputs.sources.iter().map(|s| s.path()).collect();
+    match &out_args.output_dir {
+        Some(dir) => common::guard_output(dir, paths, &files)?,
+        None => common::guard_output(Path::new(&out_args.output), paths, &files)?,
+    }
     let writer = ctx.writer(format, out_args);
     let by_host = out_args.output_dir.is_some() && out_args.split == Split::Host;
     let mut split = match &out_args.output_dir {

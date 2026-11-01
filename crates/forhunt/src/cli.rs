@@ -132,7 +132,7 @@ pub struct FilterArgs {
     #[arg(long, value_name = "TIME")]
     pub until: Option<String>,
     /// Field condition: `Name=value` (case-insensitive, hex-aware), `Name!=value`,
-    /// `Name~substring`, `Name!~substring` (does not contain). System fields (Computer, Channel, Provider) work too. Repeatable, ANDed.
+    /// `Name~substring`, `Name!~substring` (does not contain), `Name>N`, `Name>=N`, `Name<N`, `Name<=N` (decimal or 0x number). System fields (Computer, Channel, Provider) work too. Repeatable, ANDed.
     #[arg(long, short = 'f', value_name = "COND")]
     pub field: Vec<String>,
     /// Case-insensitive regex on any value, or on one field with `Name=REGEX`. Repeatable, ANDed.

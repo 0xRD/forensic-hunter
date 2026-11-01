@@ -279,7 +279,20 @@ pub fn run(a: HayabusaArgs) -> anyhow::Result<()> {
         );
     }
     let values = read_input(&a.input)?;
+    common::guard_output(
+        std::path::Path::new(&a.output),
+        &a.evtx,
+        &[std::path::Path::new(&a.input)],
+    )?;
     let mut resolver = KeyResolver::new(&ctx, &a.evtx)?;
+    {
+        let files: Vec<&std::path::Path> = resolver
+            .by_suffix
+            .iter()
+            .map(|(_, _, p)| p.as_path())
+            .collect();
+        common::guard_output(std::path::Path::new(&a.output), &a.evtx, &files)?;
+    }
     let mut dets: Vec<Det> = Vec::new();
     let mut skipped = 0u64;
     let mut below = 0u64;

@@ -26,6 +26,7 @@ read-only, positional reads).
 | `-f Name!=value` | not equal (also true when the field is absent) |
 | `-f Name~text` | case-insensitive substring (a GUID value also contains its braces) |
 | `-f Name!~text` | does not contain (also true when the field is absent); repeat to drop noise, e.g. `-f Image!~\\MsMpEng.exe` |
+| `-f 'Name>N'` | numeric, also `>=`, `<`, `<=` (decimal or `0x`); false when the field is absent or not a number. Quote it: the shell reads `>` as a redirect |
 | Field names | always the full name (`TargetFilename`, `Image`); the short names of `llm` output (`file`, `img`) only work in `--fields`. A short name in a filter gives a warning, and `!=` or `!~` on it matches everything |
 | `-r, --regex [Name=]REGEX` | case-insensitive regex on one field, or on every value |
 | `--computer HOST` | exact host, or short name of an FQDN; an FQDN also keeps events logged under its short name; comma list, repeatable |

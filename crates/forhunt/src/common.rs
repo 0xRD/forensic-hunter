@@ -19,6 +19,7 @@ use crate::cli::{Common, FilterArgs};
 /// Exit codes (see `forhunt --help`).
 pub mod exit {
     pub const ERROR: i32 = 1;
+    pub const USAGE: i32 = 2;
     pub const NO_INPUT: i32 = 3;
     pub const CORRUPT: i32 = 4;
 }
@@ -283,6 +284,91 @@ impl Totals {
     }
 }
 
+/// Resolves `p` to an absolute path with symlinks followed as far as the
+/// path exists; the part that does not exist yet is appended as is, so the
+/// answer is right for a file or directory about to be created.
+fn resolve_future(p: &Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let abs = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(p)
+    };
+    let mut out = std::path::PathBuf::new();
+    for c in abs.components() {
+        match c {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            c => {
+                out.push(c);
+                if let Ok(real) = out.canonicalize() {
+                    out = real;
+                }
+            }
+        }
+    }
+    out
+}
+
+#[cfg(unix)]
+fn same_file(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::metadata(a), std::fs::metadata(b)) {
+        (Ok(x), Ok(y)) => x.dev() == y.dev() && x.ino() == y.ino(),
+        _ => false,
+    }
+}
+
+#[cfg(not(unix))]
+fn same_file(_: &Path, _: &Path) -> bool {
+    false
+}
+
+/// Refuses an output (`-o` file or `--output-dir`) that lies inside the
+/// evidence, so that a run can never alter or add to what it reads.
+///
+/// The evidence is every file or directory named in `evidence` (a directory
+/// counts with everything under it) and every file in `files` (the inputs
+/// that were actually opened, which also covers globs and links met during
+/// a walk). Paths are compared after resolving symlinks, and an output that
+/// is a hard link to an input is refused too. `-` (stdout) is always fine.
+pub fn guard_output(output: &Path, evidence: &[String], files: &[&Path]) -> anyhow::Result<()> {
+    if output.as_os_str() == "-" {
+        return Ok(());
+    }
+    let out = resolve_future(output);
+    let mut roots: Vec<std::path::PathBuf> = evidence
+        .iter()
+        .map(Path::new)
+        .filter(|p| p.is_dir() || p.is_file())
+        .map(resolve_future)
+        .collect();
+    roots.extend(files.iter().map(|p| resolve_future(p)));
+    let hit = roots
+        .iter()
+        .find(|r| out.starts_with(r))
+        .cloned()
+        .or_else(|| {
+            files
+                .iter()
+                .find(|f| same_file(output, f))
+                .map(|f| f.to_path_buf())
+        });
+    match hit {
+        Some(r) => Err(fail(
+            exit::USAGE,
+            format!(
+                "refusing to write {} inside the evidence ({}); choose an output outside it",
+                output.display(),
+                r.display()
+            ),
+        )),
+        None => Ok(()),
+    }
+}
+
 /// Opens the output: a file or stdout, with a large buffer.
 pub fn output(path: &str) -> anyhow::Result<Box<dyn Write>> {
     const BUF: usize = 1 << 20;
@@ -469,5 +555,36 @@ mod host_tests {
         merge_host_aliases(&mut h);
         assert_eq!(h.len(), 50_000);
         assert!(t.elapsed().as_secs() < 5);
+    }
+}
+
+#[cfg(test)]
+mod guard_tests {
+    use super::guard_output;
+
+    #[test]
+    fn refuses_outputs_inside_the_evidence() {
+        let d = tempfile::tempdir().unwrap();
+        let ev = d.path().join("ev");
+        std::fs::create_dir_all(ev.join("sub")).unwrap();
+        let f = ev.join("sub/a.evtx");
+        std::fs::write(&f, b"x").unwrap();
+        let evs = vec![ev.to_string_lossy().into_owned()];
+        let refused = |o: &std::path::Path| guard_output(o, &evs, &[f.as_path()]).is_err();
+        assert!(refused(&ev.join("out.jsonl")));
+        assert!(refused(&ev.join("new/deeper/out.jsonl")));
+        assert!(refused(&ev.join("sub/../out.jsonl")));
+        assert!(refused(&f));
+        assert!(refused(&ev));
+        assert!(!refused(&d.path().join("out.jsonl")));
+        assert!(!refused(&d.path().join("ev2/out.jsonl")));
+        assert!(!refused(std::path::Path::new("-")));
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&ev, d.path().join("link")).unwrap();
+            assert!(refused(&d.path().join("link/out.jsonl")));
+            std::fs::hard_link(&f, d.path().join("hard")).unwrap();
+            assert!(refused(&d.path().join("hard")));
+        }
     }
 }

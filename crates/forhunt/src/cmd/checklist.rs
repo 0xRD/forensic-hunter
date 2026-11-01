@@ -330,6 +330,11 @@ pub fn run(a: ChecklistArgs) -> anyhow::Result<()> {
         ..Default::default()
     })?;
     let inputs = ctx.open(&a.paths)?;
+    {
+        let mut files: Vec<&std::path::Path> = inputs.sources.iter().map(|s| s.path()).collect();
+        files.push(&a.checks);
+        common::guard_output(std::path::Path::new(&a.output), &a.paths, &files)?;
+    }
     let progress = common::Progress::new(ctx.progress, inputs.bytes);
     let empty = || Part {
         counts: queries

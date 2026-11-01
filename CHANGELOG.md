@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+`--field 'FileSize>1000'`: numeric comparisons `>`, `>=`, `<`, `<=` (decimal or `0x`).
+
+Every command that writes files (`-o`, `--output-dir`) now refuses, with exit code 2,
+an output inside the evidence (a named directory and everything under it, or any
+input file, also through symlinks and hard links), before anything is created.
+
 ## 0.6.1 (2026-10-31)
 
 Fixes: a crafted mailbox could spend time and memory far beyond its size through

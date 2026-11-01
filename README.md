@@ -102,7 +102,7 @@ Filters:
   the event's `TimeCreated`.
 - `-f Name=value` (case-insensitive; `0x3e7` equals `999`; GUIDs with or
   without braces; Windows' 7-digit times), `Name!=value`, `Name~substring`,
-  `Name!~substring`, and `-r [Name=]REGEX`. Different `-f`/`-r` conditions
+  `Name!~substring`, `Name>N`/`>=`/`<`/`<=` (numbers, decimal or `0x`), and `-r [Name=]REGEX`. Different `-f`/`-r` conditions
   are ANDed. Values match the way they are displayed: multi-line text as
   one line.
 - `--limit N` (the `llm` format stops at 200 by default; `0` = all).
