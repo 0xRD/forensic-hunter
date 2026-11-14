@@ -33,6 +33,9 @@ param(
   [switch]$Force
 )
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell 5.1 redraws a progress bar for every chunk downloaded or
+# extracted, which makes both many times slower.
+$ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $Repo = '0xRD/forensic-hunter'
 # Oldest forhunt this skill's checklists and references work with (kept equal

@@ -28,7 +28,8 @@ Install and update (`skill/scripts/install.sh`, `install.ps1`):
 - A note when another, different `forhunt` comes first in `PATH`.
 - Apple Silicon is detected from a Rosetta shell; `--no-forhunt` works on Intel
   Macs; an option without its value gives a usage error; `hayabusa.cmd` returns
-  Hayabusa's exit code.
+  Hayabusa's exit code; no progress bar in Windows PowerShell 5.1, which slowed
+  downloads and extraction many times over.
 
 `--field 'FileSize>1000'`: numeric comparisons `>`, `>=`, `<`, `<=` (decimal or `0x`).
 

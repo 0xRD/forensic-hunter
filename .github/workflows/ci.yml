@@ -100,10 +100,11 @@ jobs:
           mkdir "$p/hayabusa-0.0.1"
           i
           [ ! -e "$p/hayabusa-0.0.1" ]
-          i | grep -q "already installed"
-          i --check | grep -qx ready
+          # Captured, not piped into `grep -q`: that closes the pipe early.
+          again="$(i)"; grep -q "already installed" <<< "$again"
+          state="$(i --check)"; grep -qx ready <<< "$state"
           (cd / && "$p/bin/hayabusa" help >/dev/null)
-          ! ls -A "$p" | grep -q staging
+          [ -z "$(find "$p" -maxdepth 1 -name '.staging*')" ]
       - name: Install an older release, update it, check (Windows)
         if: runner.os == 'Windows'
         shell: powershell
