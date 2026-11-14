@@ -18,9 +18,12 @@ impl Ts {
         Ts((t.as_nanosecond() / 100) as i64)
     }
 
+    /// The same instant for jiff, clamped to the years jiff can hold
+    /// (-9999 to 9999): a FILETIME read from evidence can be anything.
     pub fn to_jiff(self) -> jiff::Timestamp {
-        jiff::Timestamp::from_nanosecond(self.0 as i128 * 100)
-            .unwrap_or(jiff::Timestamp::UNIX_EPOCH)
+        let (min, max) = (jiff::Timestamp::MIN, jiff::Timestamp::MAX);
+        let ns = (self.0 as i128 * 100).clamp(min.as_nanosecond(), max.as_nanosecond());
+        jiff::Timestamp::from_nanosecond(ns).unwrap_or(jiff::Timestamp::UNIX_EPOCH)
     }
 
     pub fn secs(self) -> i64 {
@@ -42,8 +45,19 @@ impl Ts {
         let (y, m, d) = civil_from_days(days);
         let mut buf = [0u8; 27];
         if !(0..=9999).contains(&y) {
-            // Out of range for the fixed layout: let jiff deal with it.
-            out.extend_from_slice(self.to_jiff().to_string().as_bytes());
+            // Out of range for the fixed layout (a garbage FILETIME, or the
+            // "never" value 0x7FFFFFFFFFFFFFFF): ISO 8601 expanded year.
+            // Never through jiff, which stops at year 9999.
+            let sign = if y < 0 { '-' } else { '+' };
+            let s = format!(
+                "{sign}{:05}-{m:02}-{d:02}T{:02}:{:02}:{:02}.{:06}Z",
+                y.unsigned_abs(),
+                sod / 3600,
+                (sod / 60) % 60,
+                sod % 60,
+                ticks / 10
+            );
+            out.extend_from_slice(s.as_bytes());
             return;
         }
         put4(&mut buf[0..4], y as u32);
@@ -213,6 +227,19 @@ mod tests {
         assert_eq!(t.iso(), "2016-07-08T18:12:51.681640Z");
         let j: jiff::Timestamp = "2016-07-08T18:12:51.68164Z".parse().unwrap();
         assert_eq!(t, Ts::from_jiff(j));
+    }
+
+    #[test]
+    fn years_outside_the_calendar_do_not_panic() {
+        // FILETIME 0x7FFFFFFFFFFFFFFF ("never"), as an event value.
+        let never = Ts((i64::MAX - 116_444_736_000_000_000) / 10 * 10);
+        assert_eq!(never.iso(), "+30828-09-14T02:48:05.477580Z");
+        for t in [Ts::MIN, Ts::MAX, never, Ts(-1_000_000_000_000_000_000)] {
+            assert!(t.iso().ends_with('Z'));
+            let mut v = Vec::new();
+            t.write_in_tz(&jiff::tz::TimeZone::UTC, &mut v);
+            assert!(!v.is_empty());
+        }
     }
 
     #[test]

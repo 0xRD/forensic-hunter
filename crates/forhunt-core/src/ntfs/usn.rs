@@ -242,7 +242,9 @@ impl UsnSource {
                         Some(p) => off += p & !7,
                         None => break,
                     }
-                    if raw[off..off + 8] == [0; 8] {
+                    // `get`: the last non-zero bytes may sit less than 8
+                    // bytes before the end of the read.
+                    if raw.get(off..off + 8).is_none_or(|w| w == [0; 8]) {
                         off += 8;
                     }
                     continue;

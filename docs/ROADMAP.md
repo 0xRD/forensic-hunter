@@ -33,6 +33,10 @@ Open work, roughly by priority.
   `forhunt checklist` does not read id 1 events.
 
 ## Packaging and benchmarks
+- Move to `evtx` 0.15 (D-057): read GUID values in the JSON path so both paths
+  still write them the same way.
+- Continuous fuzzing (`cargo fuzz` targets per parser); 0.7.0 was fuzzed by hand
+  with mutated fixtures.
 - Notarized macOS binaries (needs an Apple Developer account).
 - forhunt checksums are served by the same release as the archives; publish
   them somewhere independent.

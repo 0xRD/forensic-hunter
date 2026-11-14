@@ -19,6 +19,13 @@ INDEX = CL / "INDEX.md"
 TEMPLATE = ROOT / "skill/references/checklist-status-template.md"
 JSON = CL / "checklists.json"
 
+# Oldest forhunt release that understands every query and channel used by the
+# checklists (0.6.0: the Mail channel). `forhunt checklist` refuses to run
+# them when it is older, and the skill's install scripts update forhunt below
+# it. Raise it when a check starts to rely on something newer.
+MIN_FORHUNT = "0.6.0"
+INSTALLERS = [ROOT / "skill/scripts/install.sh", ROOT / "skill/scripts/install.ps1"]
+
 # Walk order: roughly the attack lifecycle, AD and remote access after the
 # tactics they feed.
 ORDER = [
@@ -193,7 +200,7 @@ def gen(files):
     t += ["## Summary", "", "| Tactic | HIT | NO_HIT | NOT_APPLICABLE | LOG_SOURCE_MISSING |", "|---|---|---|---|---|"]
     t += [f"| {tac} |  |  |  |  |" for tac in ORDER if tac in files]
     import json
-    machine = {"version": 1, "checks": []}
+    machine = {"version": 1, "min_forhunt": MIN_FORHUNT, "checks": []}
     for tac in ORDER:
         if tac not in files:
             continue
@@ -218,6 +225,11 @@ def main():
     for p in problems:
         print("checklist:", p, file=sys.stderr)
     index, template, machine = gen(files)
+    # The install scripts carry the same minimum (they cannot read JSON portably).
+    for inst in INSTALLERS:
+        m = re.search(r"""^\$?FORHUNT_MIN\s*=\s*["']([0-9.]+)["']""", inst.read_text(), re.M | re.I)
+        if not m or m.group(1) != MIN_FORHUNT:
+            problems.append(f"{inst.relative_to(ROOT)}: FORHUNT_MIN must be \"{MIN_FORHUNT}\" (MIN_FORHUNT in scripts/gen-checklist-index.py)")
     if check:
         stale = [p for p, s in ((INDEX, index), (TEMPLATE, template), (JSON, machine)) if not p.exists() or p.read_text() != s]
         for p in stale:

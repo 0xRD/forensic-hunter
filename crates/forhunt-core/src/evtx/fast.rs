@@ -857,7 +857,7 @@ fn decode_value(chunk: &[u8], ty: u8, a: usize, b: usize, text: &mut Vec<u8>) ->
         }
         0x11 => {
             let ft = le(8) as i64;
-            let t = Ts((ft - EPOCH_TICKS) / 10 * 10);
+            let t = Ts(ft.wrapping_sub(EPOCH_TICKS) / 10 * 10);
             t.write_iso(text);
         }
         0x13 => {
@@ -893,7 +893,7 @@ fn filetime_sub(time: &Option<Src>, values: &[(u8, usize, usize)], chunk: &[u8])
         Some(Src::Sub(i)) => match values.get(*i as usize) {
             Some(&(0x11, a, b)) if b - a == 8 => {
                 let ft = u64::from_le_bytes(chunk[a..b].try_into().ok()?) as i64;
-                Some(Ts((ft - EPOCH_TICKS) / 10 * 10))
+                Some(Ts(ft.wrapping_sub(EPOCH_TICKS) / 10 * 10))
             }
             _ => None,
         },
@@ -922,7 +922,7 @@ pub(crate) fn decode_chunk(
     let mut spare: Vec<Field<'static>> = Vec::new();
     for r in &recs {
         *records += 1;
-        let header_ts = Ts(r.filetime as i64 - EPOCH_TICKS);
+        let header_ts = Ts((r.filetime as i64).wrapping_sub(EPOCH_TICKS));
         // Time pre-check on TimeCreated itself when it is a FILETIME
         // substitution (cheap to read), never on the header (write) time.
         if let Some(t) = filetime_sub(&r.plan.sys.time, &r.values, chunk)
@@ -974,7 +974,7 @@ pub(crate) fn decode_chunk(
             Some(Src::Sub(i)) => match r.values.get(*i as usize) {
                 Some(&(0x11, a, b)) if b - a == 8 => {
                     let ft = u64::from_le_bytes(chunk[a..b].try_into().unwrap()) as i64;
-                    Ts((ft - EPOCH_TICKS) / 10 * 10)
+                    Ts(ft.wrapping_sub(EPOCH_TICKS) / 10 * 10)
                 }
                 _ => Ts::parse(&s(&sp.time)).unwrap_or(Ts(header_ts.0 / 10 * 10)),
             },

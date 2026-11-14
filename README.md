@@ -55,6 +55,20 @@ bash skill/scripts/install.sh            # Windows: skill/scripts/install.ps1
 cargo install --git https://github.com/0xRD/forensic-hunter forhunt
 ```
 
+Update with the same tool that installed it:
+
+```bash
+brew update && brew upgrade 0xrd/tap/forhunt   # Homebrew
+bash skill/scripts/install.sh                  # skill installer: run it again
+bash skill/scripts/install.sh --check          # which forhunt runs, and is it recent enough?
+```
+
+The skill installer leaves what is already current alone, replaces files only
+after the download is verified and runs, and says when another `forhunt` earlier
+in `PATH` would still be used. The checklists name the oldest forhunt they work
+with: `forhunt checklist` refuses to run checklists newer than itself rather than
+skip their queries.
+
 Release archives with SHA-256 checksums: [Releases](https://github.com/0xRD/forensic-hunter/releases)
 (x86_64/aarch64 Linux musl, Apple Silicon macOS, x86_64 Windows). Intel Macs:
 build from source with `cargo install`.

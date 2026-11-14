@@ -12,6 +12,13 @@ ignore = [
     # has no known vulnerability; it is a dependency of the `evtx` crate. Revisit
     # when evtx moves to encoding_rs (see docs/DECISIONS.md D-016).
     { id = "RUSTSEC-2021-0153", reason = "transitive via evtx; unmaintained, no vulnerability" },
+    # Unbounded allocation in evtx's `.wevtcache` reader. That reader is behind
+    # the `wevt_templates` feature (`#[cfg(feature = "wevt_templates")]` in
+    # evtx/src/lib.rs), which forhunt does not enable: `default-features =
+    # false`, no feature named (check: `cargo tree -e features -i evtx`). The
+    # code is not in the binary. The fix is in evtx 0.15.1, which also changes
+    # how GUIDs are written; moving to it is in docs/ROADMAP.md (D-057).
+    { id = "RUSTSEC-2026-0431", reason = "in evtx's wevt_templates feature, which is not compiled in" },
 ]
 
 [licenses]

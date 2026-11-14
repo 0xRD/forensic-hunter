@@ -27,6 +27,9 @@ use crate::common::{self, Ctx, Totals};
 
 #[derive(Deserialize)]
 struct File {
+    /// Oldest forhunt release these checklists work with.
+    #[serde(default)]
+    min_forhunt: Option<String>,
     checks: Vec<Check>,
 }
 
@@ -107,9 +110,21 @@ fn shell_split(s: &str) -> Vec<String> {
     out
 }
 
+/// What a query line of a check is to the sweep.
+enum Compiled {
+    /// A `forhunt search` the sweep evaluates.
+    Search(Filter),
+    /// Left to the analyst: `stats` / `timeline`, or a pivot with example
+    /// values to replace.
+    Manual,
+    /// A `forhunt search` this forhunt cannot parse: checklists written for
+    /// a later release, or a mistake in the checklist.
+    Invalid(String),
+}
+
 /// Compiles a `forhunt search ...` line into a filter; other commands
 /// (stats, timeline) are left to the analyst.
-fn compile(ctx: &Ctx, text: &str) -> Option<Filter> {
+fn compile(ctx: &Ctx, text: &str) -> Compiled {
     let mut argv = shell_split(text);
     // Drop pipes and redirections.
     if let Some(i) = argv.iter().position(|a| a == "|" || a == ">") {
@@ -118,20 +133,62 @@ fn compile(ctx: &Ctx, text: &str) -> Option<Filter> {
     if argv.first().map(String::as_str) != Some("forhunt")
         || argv.get(1).map(String::as_str) != Some("search")
     {
-        return None;
+        return Compiled::Manual;
     }
     if argv.iter().any(|a| is_placeholder(a)) {
-        return None;
+        return Compiled::Manual;
     }
     for a in argv.iter_mut().skip(2) {
         if a.starts_with('<') && a.ends_with('>') {
             *a = ".".into();
         }
     }
-    match Cli::try_parse_from(&argv).ok()?.cmd {
-        Cmd::Search(s) => ctx.filter(&s.filter).ok(),
-        _ => None,
+    let first_line = |e: String| e.lines().next().unwrap_or_default().to_string();
+    match Cli::try_parse_from(&argv) {
+        Ok(Cli {
+            cmd: Cmd::Search(s),
+        }) => match ctx.filter(&s.filter) {
+            Ok(f) => Compiled::Search(f),
+            Err(e) => Compiled::Invalid(first_line(format!("{e:#}"))),
+        },
+        Ok(_) => Compiled::Manual,
+        Err(e) => Compiled::Invalid(first_line(e.to_string())),
     }
+}
+
+/// `a.b.c` as numbers; a pre-release suffix (`-rc1`) is ignored.
+fn version_triple(v: &str) -> Option<[u64; 3]> {
+    let core = v.trim().trim_start_matches('v');
+    let core = core.split(['-', '+']).next()?;
+    let mut it = core.split('.').map(|p| p.parse::<u64>().ok());
+    let t = [it.next()??, it.next()??, it.next()??];
+    it.next().is_none().then_some(t)
+}
+
+/// Checklists name the oldest forhunt that understands all their queries.
+/// An older one would leave the newer queries out without a word, and a
+/// check that was never run would read as `REVIEW` or `NO_HIT`.
+fn require_version(min: Option<&str>, own: &str) -> anyhow::Result<()> {
+    let Some(min) = min else {
+        return Ok(());
+    };
+    let need = version_triple(min).ok_or_else(|| {
+        common::fail(
+            common::exit::USAGE,
+            format!("checklists: min_forhunt `{min}` is not a version"),
+        )
+    })?;
+    if version_triple(own).is_some_and(|have| have < need) {
+        return Err(common::fail(
+            common::exit::USAGE,
+            format!(
+                "these checklists need forhunt {min} or later, this is forhunt {own}: update \
+                 forhunt (`brew upgrade 0xrd/tap/forhunt`, or the skill's scripts/install.sh) \
+                 or use the checklists released with {own}"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// A query's own `--channel` / `--event-id` win; what it leaves out comes
@@ -278,6 +335,7 @@ pub fn run(a: ChecklistArgs) -> anyhow::Result<()> {
         .with_context(|| format!("cannot read {}", a.checks.display()))?;
     let file: File = serde_json::from_str(&text)
         .with_context(|| format!("invalid checklists file {}", a.checks.display()))?;
+    require_version(file.min_forhunt.as_deref(), env!("CARGO_PKG_VERSION"))?;
     let checks: Vec<Check> = file
         .checks
         .into_iter()
@@ -285,6 +343,8 @@ pub fn run(a: ChecklistArgs) -> anyhow::Result<()> {
             a.tactic.is_empty() || a.tactic.iter().any(|t| t.eq_ignore_ascii_case(&c.tactic))
         })
         .collect();
+    // A query that does not parse is never silently skipped.
+    let mut invalid: Vec<String> = Vec::new();
     let queries: Vec<Vec<Query>> = checks
         .iter()
         .map(|c| {
@@ -292,11 +352,32 @@ pub fn run(a: ChecklistArgs) -> anyhow::Result<()> {
                 .iter()
                 .map(|t| Query {
                     text: t.clone(),
-                    filter: compile(&ctx, t).map(|f| scope(f, c)),
+                    filter: match compile(&ctx, t) {
+                        Compiled::Search(f) => Some(scope(f, c)),
+                        Compiled::Manual => None,
+                        Compiled::Invalid(why) => {
+                            invalid.push(format!("{}: `{t}`: {why}", c.id));
+                            None
+                        }
+                    },
                 })
                 .collect()
         })
         .collect();
+    for (i, msg) in invalid.iter().enumerate() {
+        if i == 5 {
+            ctx.warn(&format!("... and {} more", invalid.len() - 5));
+            break;
+        }
+        ctx.warn(&format!("query not understood, left for review: {msg}"));
+    }
+    if !invalid.is_empty() {
+        ctx.warn(&format!(
+            "{} checklist queries were not run: this forhunt ({}) may be older than the checklists",
+            invalid.len(),
+            env!("CARGO_PKG_VERSION")
+        ));
+    }
     let mut by_eid: HashMap<u32, Vec<usize>> = HashMap::new();
     for (i, c) in checks.iter().enumerate() {
         for e in &c.event_ids {
@@ -569,7 +650,19 @@ fn markdown(results: &[CheckResult], paths: &[String], actionable: bool) -> Stri
 
 #[cfg(test)]
 mod tests {
-    use super::shell_split;
+    use super::{require_version, shell_split, version_triple};
+
+    #[test]
+    fn checklists_refuse_an_older_forhunt() {
+        assert_eq!(version_triple("v0.7.0-rc1"), Some([0, 7, 0]));
+        assert_eq!(version_triple("0.7"), None);
+        assert!(require_version(None, "0.1.0").is_ok());
+        assert!(require_version(Some("0.7.0"), "0.7.0").is_ok());
+        assert!(require_version(Some("0.7.0"), "0.10.2").is_ok());
+        let e = require_version(Some("0.7.0"), "0.6.1").unwrap_err();
+        assert!(e.to_string().contains("need forhunt 0.7.0 or later"), "{e}");
+        assert!(require_version(Some("soon"), "0.6.1").is_err());
+    }
 
     #[test]
     fn splits_like_a_shell() {
