@@ -79,6 +79,49 @@ jobs:
       - name: Install scripts parse
         run: bash -n skill/scripts/install.sh && bash -n skill/scripts/fetch-samples.sh
 
+  installer:
+    name: skill installer (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install an older release, update it, check (Linux, macOS)
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          p="$RUNNER_TEMP/fh"
+          i() { bash skill/scripts/install.sh --prefix "$p" "$@"; }
+          if i --check; then echo "check passed on an empty prefix"; exit 1; fi
+          i --forhunt-version v0.5.1 --no-hayabusa
+          if i --check; then echo "check passed on a too old forhunt"; exit 1; fi
+          mkdir "$p/hayabusa-0.0.1"
+          i
+          [ ! -e "$p/hayabusa-0.0.1" ]
+          i | grep -q "already installed"
+          i --check | grep -qx ready
+          (cd / && "$p/bin/hayabusa" help >/dev/null)
+          ! ls -A "$p" | grep -q staging
+      - name: Install an older release, update it, check (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $p = Join-Path $env:RUNNER_TEMP 'fh'
+          function I { powershell -NoProfile -ExecutionPolicy Bypass -File skill\scripts\install.ps1 -Prefix $p @args }
+          I -Check; if ($LASTEXITCODE -eq 0) { throw 'check passed on an empty prefix' }
+          I -ForhuntVersion v0.5.1 -NoHayabusa; if ($LASTEXITCODE -ne 0) { throw 'install failed' }
+          I -Check; if ($LASTEXITCODE -eq 0) { throw 'check passed on a too old forhunt' }
+          New-Item -ItemType Directory (Join-Path $p 'hayabusa-0.0.1') | Out-Null
+          I; if ($LASTEXITCODE -ne 0) { throw 'update failed' }
+          if (Test-Path (Join-Path $p 'hayabusa-0.0.1')) { throw 'old Hayabusa folder kept' }
+          $again = I | Out-String; if ($again -notmatch 'already installed') { throw "not idempotent: $again" }
+          $out = I -Check | Out-String; if ($LASTEXITCODE -ne 0 -or $out -notmatch 'ready') { throw "not ready: $out" }
+          & (Join-Path $p 'bin\forhunt.exe') --version
+          & (Join-Path $p 'bin\hayabusa.cmd') help | Select-Object -First 2
+
   deny:
     name: cargo deny
     runs-on: ubuntu-latest

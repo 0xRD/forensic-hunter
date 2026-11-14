@@ -1629,3 +1629,97 @@ fn output_inside_the_evidence_is_refused() {
     ok(&["search", "-q", &evs, "-O", &split.display().to_string()]);
     assert!(!dir_files(&split).is_empty());
 }
+
+/// A FILETIME outside the years 0 to 9999 (the "never" value, or garbage)
+/// used to panic the decoder: every event of the chunk was dropped.
+#[test]
+fn a_time_beyond_year_9999_keeps_its_chunk() {
+    let mut log = std::fs::read(fx("Security.evtx")).unwrap();
+    // High byte of one record's TimeCreated.
+    assert_eq!(
+        log[852_592..852_600],
+        [0x10, 0x6a, 0x9b, 0x06, 0x99, 0x73, 0xda, 0x01]
+    );
+    log[852_599] = 0x7f;
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("never.evtx");
+    std::fs::write(&p, log).unwrap();
+    let p = p.display().to_string();
+    for extra in [&[][..], &["--tz", "Europe/Paris"], &["-F", "csv"]] {
+        let mut args = vec!["parse", "--no-progress", &p];
+        args.extend_from_slice(extra);
+        let o = forhunt(&args);
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert!(o.status.success(), "{err}");
+        assert!(!err.contains("panicked"), "{err}");
+        assert!(
+            err.contains("2548 events, 2548 written, 0 bad chunks"),
+            "{err}"
+        );
+    }
+    let out = ok(&["parse", "-q", &p]);
+    assert!(out.contains("\"timestamp\":\"+30795-03-19T12:54:41.780993Z\""));
+}
+
+/// Non-zero bytes less than 8 bytes before the end of a `$J` block used to
+/// index past it.
+#[test]
+fn usn_journal_ending_in_a_few_stray_bytes() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("$J");
+    let mut j = vec![0u8; 4096];
+    j.extend_from_slice(&[1, 2, 3]);
+    std::fs::write(&p, j).unwrap();
+    let o = forhunt(&["parse", "--no-progress", &p.display().to_string()]);
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(!err.contains("panicked"), "{err}");
+    assert!(err.contains("0 bad chunks"), "{err}");
+}
+
+/// Checklists newer than the binary are refused, not half run; a query the
+/// binary cannot parse is named.
+#[test]
+fn checklists_state_the_forhunt_they_need() {
+    let d = tempfile::tempdir().unwrap();
+    let check = |min: &str, query: &str| {
+        let p = d.path().join("c.json");
+        let body = serde_json::json!({"version": 1, "min_forhunt": min, "checks": [{
+            "id": "T-1", "title": "t", "tactic": "impact", "channels": ["Security"],
+            "event_ids": [4624], "forhunt": [query]}]});
+        std::fs::write(&p, body.to_string()).unwrap();
+        forhunt(&[
+            "checklist",
+            "--no-progress",
+            "-k",
+            &p.display().to_string(),
+            &fx("Security.evtx"),
+            "-F",
+            "json",
+        ])
+    };
+    let good = "forhunt search <paths> --channel Security --event-id 4624 --format llm";
+    let o = check("99.0.0", good);
+    assert_eq!(o.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains("need forhunt 99.0.0 or later"), "{err}");
+    let o = check("0.6.0", good);
+    assert!(o.status.success());
+    assert!(!String::from_utf8_lossy(&o.stderr).contains("not understood"));
+    let o = check(
+        "0.6.0",
+        "forhunt search <paths> --event-id 4624 --no-such-option x",
+    );
+    assert!(o.status.success());
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        err.contains("query not understood, left for review: T-1"),
+        "{err}"
+    );
+    let v: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(v[0]["status"], "REVIEW");
+    // The released checklists name a version this build satisfies.
+    let shipped = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../skill/references/checklists/checklists.json");
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(shipped).unwrap()).unwrap();
+    assert!(v["min_forhunt"].is_string());
+}

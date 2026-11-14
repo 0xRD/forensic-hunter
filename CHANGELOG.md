@@ -1,6 +1,34 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 (2026-11-14)
+
+Audit: parsers fuzzed with 150,000 damaged copies of the fixtures, install and
+update path reviewed.
+
+Fixes:
+- EVTX: one FILETIME value outside the years 0 to 9999 in any field (the "never"
+  value `0x7FFFFFFFFFFFFFFF`, or garbage) made the decoder panic and dropped every
+  event of its chunk, up to a hundred neighbours. Such times are now written with
+  an expanded year (`+30828-09-14T02:48:05.477580Z`) and the chunk is kept.
+- `$J`: non-zero bytes in the last 8 bytes of a block made the block's parser
+  panic and dropped its records.
+- An outdated forhunt passed the skill's set-up check, then ran newer checklists
+  with the queries it did not understand left out without a word. The checklists
+  now carry `min_forhunt`, `forhunt checklist` exits 2 when it is older, and any
+  `forhunt search` query it cannot parse is named in a warning.
+
+Install and update (`skill/scripts/install.sh`, `install.ps1`):
+- `--check` / `-Check`: which forhunt and Hayabusa would run, whether forhunt is
+  recent enough for the skill, and the command that updates it (Homebrew or the
+  script). The skill's set-up step uses it.
+- Running the script again updates: a tool already at the wanted version is left
+  alone (`--force`), the new forhunt must verify and run before it replaces the
+  old one (rename, so an interrupted update leaves a working binary; on Windows a
+  running `forhunt.exe` no longer blocks it), older Hayabusa folders are removed.
+- A note when another, different `forhunt` comes first in `PATH`.
+- Apple Silicon is detected from a Rosetta shell; `--no-forhunt` works on Intel
+  Macs; an option without its value gives a usage error; `hayabusa.cmd` returns
+  Hayabusa's exit code.
 
 `--field 'FileSize>1000'`: numeric comparisons `>`, `>=`, `<`, `<=` (decimal or `0x`).
 

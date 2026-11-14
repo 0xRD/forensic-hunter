@@ -1,5 +1,6 @@
 {
  "version": 1,
+ "min_forhunt": "0.6.0",
  "checks": [
   {
    "id": "FH-INIT-001",
