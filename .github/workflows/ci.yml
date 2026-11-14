@@ -120,8 +120,11 @@ jobs:
           if (Test-Path (Join-Path $p 'hayabusa-0.0.1')) { throw 'old Hayabusa folder kept' }
           $again = I | Out-String; if ($again -notmatch 'already installed') { throw "not idempotent: $again" }
           $out = I -Check | Out-String; if ($LASTEXITCODE -ne 0 -or $out -notmatch 'ready') { throw "not ready: $out" }
-          & (Join-Path $p 'bin\forhunt.exe') --version
-          & (Join-Path $p 'bin\hayabusa.cmd') help | Select-Object -First 2
+          & (Join-Path $p 'bin\forhunt.exe') --version; if ($LASTEXITCODE -ne 0) { throw 'forhunt does not run' }
+          # Whole output taken: cutting the pipe short would set the exit code.
+          $help = & (Join-Path $p 'bin\hayabusa.cmd') help | Out-String
+          if ($LASTEXITCODE -ne 0 -or $help -notmatch 'Hayabusa') { throw "hayabusa wrapper failed ($LASTEXITCODE)" }
+          exit 0
 
   deny:
     name: cargo deny
