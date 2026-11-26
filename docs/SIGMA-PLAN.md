@@ -1,7 +1,8 @@
 # Sigma detection in forhunt and forhunt-viewer: plan
 
-Status: in progress (2026-11-26). Replaces the external Hayabusa binary with a
-built-in Sigma engine shared by `forhunt` and `forhunt-viewer`.
+Status: done (2026-11-26), forhunt 0.8.0 and forhunt-viewer 0.9.0, both
+unreleased. Replaces the external Hayabusa binary with a built-in Sigma engine
+shared by `forhunt` and `forhunt-viewer`. Outcome and measurements: section 7.
 
 ## 1. Can we use the Hayabusa rules?
 
@@ -118,3 +119,27 @@ forhunt (field names per artifact, supported modifiers, test loop).
 - The same rules on the same evidence give the same detections in `forhunt
   sigma` and in the viewer (one engine, two event sources).
 - Throughput measured with `scripts/bench.sh`-style runs and recorded in PERF.md.
+
+## 7. Outcome
+
+- Engine: 4,686 of the 5,020 rule files load (the rest skipped by design and
+  counted: deprecated, unsupported, excluded, noisy, correlation, `expand`
+  without values; 1 file has no condition). 98 of 99 loadable rules match the
+  sample event they embed (the 99th sample is empty in its rule file).
+- Speed: Hayabusa's 599 sample logs (47,685 events) against 4,686 rules,
+  `forhunt sigma`: 0.83 s on 4 cores including 0.2 s of rule loading; one
+  thread, matching only: 19 s naive -> 0.53 s (literal gates, D-064). Gated
+  and ungated matching agree on every event.
+- Viewer: same 17,920 (event, rule) pairs as the CLI on the same logs;
+  1.65 M rows (1 GB) in 4.9 s on 4 cores.
+- Changed from the plan: the toolbar button is *Detect* (no symbol: the bundled
+  fonts lack it); without rules it opens Settings at the rules section; the
+  Detections panel is on the left (the detail pane is on the right); the
+  viewer downloads the newest rules (HTTPS), the skill installer a pinned
+  commit with a content digest.
+- Not done yet: correlation rules and `| count()`; Sigma `logsource` mapping
+  for upstream SigmaHQ rules that name neither channel nor event id;
+  detections in viewer sessions. The skill installer's PowerShell path is
+  written but untested here (no PowerShell in this environment), and the
+  viewer's real download from GitHub could not be exercised from this sandbox
+  (its proxy refuses GitHub archives); the unpack/install path is tested.
