@@ -587,7 +587,13 @@ fn compile_detection(
             .and_then(|d| d.get("timeframe"))
             .or_else(|| doc.get("timeframe"))
             .and_then(Node::as_str);
-        let base = format!("{id}:base");
+        // The hidden base rule is linked by this id: unique even when the
+        // rule has none.
+        let base = if id.is_empty() {
+            format!("{}#{}:base", path.display(), r.title)
+        } else {
+            format!("{id}:base")
+        };
         return match super::corr::parse_aggregation(&agg, timeframe, &base) {
             Ok(c) => {
                 let mut corr = meta(doc, path, id, level, r.status.clone());
@@ -602,8 +608,6 @@ fn compile_detection(
     Outcome::Rule(Box::new(r))
 }
 
-/// Quotes plain scalars that start with `*` (`- *\\evil.exe`,
-/// `Image: *\\x.exe`): wildcards, not aliases.
 /// YAML, read again with `*values` quoted when they were taken as aliases
 /// (a common slip: a wildcard meant).
 fn parse_lenient(text: &str) -> Result<Vec<Node>, String> {
@@ -616,6 +620,8 @@ fn parse_lenient(text: &str) -> Result<Vec<Node>, String> {
     })
 }
 
+/// Quotes plain scalars that start with `*` (`- *\\evil.exe`,
+/// `Image: *\\x.exe`): wildcards, not aliases.
 fn quote_star_values(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 64);
     for line in text.lines() {
@@ -658,8 +664,6 @@ fn compile_file(path: &Path, cfg: &Config, opts: &LoadOptions) -> Vec<Outcome> {
     }
 }
 
-/// Loads every `.yml` / `.yaml` rule under `paths` (files or folders).
-/// Rules with the same `id` are loaded once (the first path wins).
 /// The paths, plus every hayabusa-rules checkout directly inside a folder
 /// (`rules/hayabusa-rules` next to `rules/custom`): each checkout brings its
 /// own `config/`.
@@ -685,6 +689,8 @@ fn expand_roots(paths: &[PathBuf]) -> Vec<PathBuf> {
     out
 }
 
+/// Loads every `.yml` / `.yaml` rule under `paths` (files or folders).
+/// Rules with the same `id` are loaded once (the first path wins).
 pub fn load(paths: &[PathBuf], opts: &LoadOptions) -> (RuleSet, LoadReport) {
     let mut report = LoadReport::default();
     let mut cfg = Config::default();
@@ -717,7 +723,7 @@ pub fn load(paths: &[PathBuf], opts: &LoadOptions) -> (RuleSet, LoadReport) {
                     rules.push(*r);
                 }
                 Outcome::Pair(base, corr) => {
-                    if !ids.insert(corr.id.to_ascii_lowercase()) {
+                    if !corr.id.is_empty() && !ids.insert(corr.id.to_ascii_lowercase()) {
                         *report.skipped.entry("duplicate id".into()).or_default() += 1;
                         continue;
                     }
@@ -778,16 +784,6 @@ fn finalize(rules: Vec<Rule>, opts: &LoadOptions, report: &mut LoadReport) -> Ve
             }
         }
     }
-    // A rule whose converted copy is loaded too (hayabusa-rules keeps the
-    // SigmaHQ id in `related: derived`): the copy runs, not both.
-    let derived: HashSet<String> = rules
-        .iter()
-        .flat_map(|r| r.derived_from.iter().cloned())
-        .collect();
-    let superseded: Vec<bool> = rules
-        .iter()
-        .map(|r| derived.contains(&r.id.to_ascii_lowercase()))
-        .collect();
     // A correlation without a level takes its rules' highest.
     let mut rules = rules;
     for i in 0..rules.len() {
@@ -835,15 +831,40 @@ fn finalize(rules: Vec<Rule>, opts: &LoadOptions, report: &mut LoadReport) -> Ve
     }
     for (i, r) in rules.iter().enumerate() {
         let ok = r.corr.is_none() || links[i].is_some();
-        keep[i] = ok && !superseded[i] && r.level >= opts.min_level && selected(r);
+        keep[i] = ok && r.level >= opts.min_level && selected(r);
     }
-    // Rules a kept correlation uses: kept, hidden unless `generate` (or
-    // reported in their own right).
+    // A rule whose converted copy runs too (hayabusa-rules keeps the
+    // SigmaHQ id in `related: derived`): the copy runs, not both. Only a
+    // copy that is kept counts (`--rule-id <sigma id>`, a copy whose level
+    // was tuned down), and a `| count()` rule's base goes with it.
+    let derived: HashSet<String> = rules
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| keep[i])
+        .flat_map(|(_, r)| r.derived_from.iter().cloned())
+        .collect();
+    let superseded: Vec<bool> = rules
+        .iter()
+        .map(|r| {
+            let id = r.id.to_ascii_lowercase();
+            derived.contains(&id)
+                || id
+                    .strip_suffix(":base")
+                    .is_some_and(|b| derived.contains(b))
+        })
+        .collect();
+    for i in 0..rules.len() {
+        keep[i] &= !superseded[i];
+    }
+    // Rules a kept correlation uses: kept, and hidden unless it has
+    // `generate: true` (Sigma: its rules alert only through it) or they
+    // were not kept on their own.
+    let own = keep.clone();
     for (i, r) in rules.iter().enumerate() {
         if let (true, Some(v), Some(c)) = (keep[i], &links[i], &r.corr) {
             for &b in v {
-                if !keep[b] || !c.generate {
-                    hidden[b] = hidden[b] || !keep[b] || !c.generate;
+                if !own[b] || !c.generate {
+                    hidden[b] = true;
                 }
                 keep[b] = true;
             }

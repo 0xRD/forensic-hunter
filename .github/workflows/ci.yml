@@ -131,6 +131,8 @@ jobs:
           # No terminal and no --rules: the rules are never downloaded.
           i --forhunt-version "$FH_VER" < /dev/null
           [ ! -e "$p/rules/hayabusa-rules" ]
+          # The rules are optional: ready without them.
+          state="$(i --check)"; grep -qx ready <<< "$state"; grep -q '^rules: not installed' <<< "$state"
           i --forhunt-version "$FH_VER" --rules
           # Rules pinned by content digest, with a folder for your own.
           grep -q '^commit=' "$p/rules/hayabusa-rules/.forhunt-rules"
@@ -155,6 +157,7 @@ jobs:
           $env:FORHUNT_BASE_URL = 'http://127.0.0.1:8765'
           I -ForhuntVersion $env:FH_VER -NoRules; if ($LASTEXITCODE -ne 0) { throw 'update failed' }
           if (Test-Path (Join-Path $p 'rules\hayabusa-rules')) { throw 'rules downloaded without a yes' }
+          $out = I -Check | Out-String; if ($LASTEXITCODE -ne 0 -or $out -notmatch 'ready') { throw "not ready without the optional rules: $out" }
           I -ForhuntVersion $env:FH_VER -Rules; if ($LASTEXITCODE -ne 0) { throw 'rules install failed' }
           if (-not (Test-Path (Join-Path $p 'rules\hayabusa-rules\.forhunt-rules'))) { throw 'rules not installed' }
           if (-not (Test-Path (Join-Path $p 'rules\custom'))) { throw 'no custom rules folder' }

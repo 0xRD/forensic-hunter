@@ -49,7 +49,7 @@ pub enum CmpOp {
 }
 
 impl CmpOp {
-    fn holds(self, x: f64, n: f64) -> bool {
+    pub(crate) fn holds(self, x: f64, n: f64) -> bool {
         match self {
             CmpOp::Gt => x > n,
             CmpOp::Ge => x >= n,
@@ -94,7 +94,7 @@ pub fn timespan(s: &str) -> Option<i64> {
         "w" => 7 * 86_400,
         _ => return None,
     };
-    Some(n * secs * 10_000_000)
+    n.checked_mul(secs)?.checked_mul(10_000_000)
 }
 
 fn op_of(k: &str) -> Option<CmpOp> {
@@ -259,8 +259,11 @@ pub struct Obs {
     /// Position of the base rule in the correlation's `rules`.
     pub base: u16,
     pub ts: Ts,
-    /// Group-by values, joined.
+    /// Group-by values, joined and lowercased (the grouping key).
     pub group: Box<str>,
+    /// The same values as written in the event, when the case differs
+    /// (what is reported).
+    pub shown: Option<Box<str>>,
     pub value: Option<Box<str>>,
 }
 
@@ -392,7 +395,7 @@ fn run_group<H: Clone>(c: &Corr, ev: &[(Obs, H)], out: &mut Vec<Burst<H>>) {
                 }
                 cur = Some(Burst {
                     rule: o.corr,
-                    group: o.group.clone(),
+                    group: o.shown.clone().unwrap_or_else(|| o.group.clone()),
                     first: o.ts,
                     last: o.ts,
                     members: vec![h.clone()],
@@ -429,6 +432,7 @@ mod tests {
                 base,
                 ts: Ts(min * 60 * 10_000_000),
                 group: "g".into(),
+                shown: None,
                 value: Some(value.into()),
             },
             min,
@@ -485,5 +489,7 @@ mod tests {
         assert_eq!(a.group_by, ["Computer", "User"]);
         assert!(parse_aggregation("max(x) > 3", None, "b").is_err());
         assert_eq!(timespan("90s"), Some(900_000_000));
+        // Untrusted input: an overflowing span is refused, not wrapped.
+        assert_eq!(timespan("9999999999999d"), None);
     }
 }

@@ -544,3 +544,164 @@ fn all_with_windash_and_lenient_yaml() {
     assert_eq!(s.len(), 1, "{r:?}");
     assert!(hit(&s, &ev("X", 1, &[("Image", "C:\\evil.exe")])));
 }
+
+#[test]
+fn non_ascii_names_and_values() {
+    // An event field name with a multibyte char where the rule's name ends:
+    // no match, no panic.
+    let s = rule("  sel:\n    Datas: x\n  condition: sel\n");
+    assert!(!hit(&s, &ev(PROC, 1, &[("Données", "x")])));
+    // A word-final Σ in the needle still matches inside a word.
+    let s = rule("  sel:\n    CommandLine|contains: 'ΟΔΟΣ'\n  condition: sel\n");
+    assert!(hit(&s, &ev(PROC, 1, &[("CommandLine", "xΟΔΟΣΑ")])));
+}
+
+/// hayabusa-rules copies of SigmaHQ rules (`related: derived`).
+const ORIG: &str = "title: Orig\nid: aaaa\nlevel: high\nlogsource:\n  product: windows\ndetection:\n  sel:\n    EventID: 4625\n  condition: sel\n";
+const COPY: &str = "title: Copy\nid: bbbb\nlevel: high\nrelated:\n  - id: aaaa\n    type: derived\nlogsource:\n  product: windows\ndetection:\n  sel:\n    EventID: 4625\n  condition: sel\n";
+
+#[test]
+fn converted_copies_supersede_their_rule() {
+    let ids = |s: &RuleSet| s.rules().iter().map(|r| r.id.clone()).collect::<Vec<_>>();
+    let both = format!("{ORIG}---\n{COPY}");
+    let (s, r) = load_str(&both, &LoadOptions::default());
+    assert_eq!(ids(&s), ["bbbb"]);
+    assert_eq!(r.skipped.values().sum::<usize>(), 1);
+    // Selecting the original by id: it runs (its copy is not selected).
+    let opts = LoadOptions {
+        ids: vec!["aaaa".into()],
+        ..Default::default()
+    };
+    assert_eq!(ids(&load_str(&both, &opts).0), ["aaaa"]);
+    // A copy below the minimum level does not take the original away.
+    let low = both.replacen("level: high\nrelated", "level: low\nrelated", 1);
+    let opts = LoadOptions {
+        min_level: 4,
+        ..Default::default()
+    };
+    assert_eq!(ids(&load_str(&low, &opts).0), ["aaaa"]);
+    // A superseded `| count()` rule takes its hidden base rule with it.
+    let count = ORIG.replace("condition: sel", "condition: sel | count() > 3");
+    let (s, _) = load_str(&format!("{count}---\n{COPY}"), &LoadOptions::default());
+    assert_eq!(ids(&s), ["bbbb"]);
+}
+
+#[test]
+fn count_rules_without_id_keep_their_own_base() {
+    let a = "title: A\nlevel: high\ndetection:\n  sel:\n    EventID: 1\n  condition: sel | count() > 3\n";
+    let b = a
+        .replace("title: A", "title: B")
+        .replace("EventID: 1", "EventID: 2");
+    let (s, r) = load_str(&format!("{a}---\n{b}"), &LoadOptions::default());
+    assert!(r.errors.is_empty(), "{r:?}");
+    assert_eq!(r.loaded, 2);
+    let rules = s.rules();
+    assert!(rules.iter().filter(|x| x.corr.is_none()).all(|x| x.hidden));
+    // Each correlation counts its own base rule.
+    for c in rules
+        .iter()
+        .filter_map(|x| x.corr.as_deref().map(|c| (x, c)))
+    {
+        let base = &rules[c.1.rules[0] as usize];
+        assert!(
+            base.id.contains(&format!("#{}:base", c.0.title)),
+            "{}",
+            base.id
+        );
+    }
+}
+
+#[test]
+fn group_values_are_reported_as_written() {
+    let text = "title: Failed\nname: failed\nid: f\nlevel: low\nlogsource:\n  product: windows\n  service: security\ndetection:\n  sel:\n    EventID: 4625\n  condition: sel\n---\ntitle: Burst\nid: b\nlevel: high\ncorrelation:\n  type: event_count\n  rules: [failed]\n  group-by: [TargetUserName]\n  timespan: 10m\n  condition:\n    gte: 2\n";
+    let (s, _) = load_str(text, &LoadOptions::default());
+    let evs = [
+        at(
+            0,
+            ev("Security", 4625, &[("TargetUserName", "Administrator")]),
+        ),
+        at(
+            1,
+            ev("Security", 4625, &[("TargetUserName", "ADMINISTRATOR")]),
+        ),
+    ];
+    let mut m = s.matcher();
+    let mut obs = Vec::new();
+    for (i, e) in evs.iter().enumerate() {
+        let mut hits = Vec::new();
+        m.matches(e, &mut hits);
+        let mut o = Vec::new();
+        s.observe(e, &hits, &mut o);
+        obs.extend(o.into_iter().map(|x| (x, i)));
+    }
+    // One group (case-insensitive), named as the first event wrote it.
+    let b = s.correlate(obs);
+    assert_eq!(b.len(), 1);
+    assert_eq!(&*b[0].group, "Administrator");
+    assert_eq!(b[0].members, [0, 1]);
+}
+
+/// The literal gate never changes which rules match.
+#[test]
+fn gated_and_ungated_agree() {
+    let text = [
+        "detection:\n  sel:\n    CommandLine|contains|all: [' -enc', 'hidden']\n  condition: sel",
+        "detection:\n  sel:\n    Image|endswith: ['\\\\cmd.exe', '\\\\powershell.exe']\n  filter:\n    User: SYSTEM\n  condition: sel and not filter",
+        "detection:\n  a:\n    CommandLine|contains: whoami\n  b:\n    ParentImage|endswith: '\\\\w3wp.exe'\n  condition: a or b",
+        "detection:\n  sel:\n    CommandLine|re: '(?i)invoke-\\w+'\n  condition: sel",
+        "detection:\n  kw:\n    - mimikatz\n  condition: kw",
+        "detection:\n  sel:\n    EventID: 1\n    Image|contains: '\\\\temp\\\\'\n  condition: sel",
+        "detection:\n  sel:\n    CommandLine|windash|contains: ' -nop'\n  condition: sel",
+    ]
+    .iter()
+    .enumerate()
+    .map(|(i, d)| {
+        format!("title: R{i}\nid: r{i}\nlevel: high\nlogsource:\n  product: windows\n  category: process_creation\n{d}\n")
+    })
+    .collect::<Vec<_>>()
+    .join("---\n");
+    let (s, r) = load_str(&text, &LoadOptions::default());
+    assert!(r.errors.is_empty(), "{r:?}");
+    assert_eq!(s.len(), 7);
+    let images = [
+        "C:\\Windows\\System32\\cmd.exe",
+        "C:\\Users\\x\\AppData\\Local\\Temp\\a.exe",
+        "C:\\x\\POWERSHELL.EXE",
+    ];
+    let lines = [
+        "powershell -ENC aaa -w hidden",
+        "whoami /all",
+        "x Invoke-Mimikatz",
+        "a /nop b",
+        "plain",
+        "Données é",
+    ];
+    let parents = ["C:\\w\\w3wp.exe", "C:\\Windows\\explorer.exe"];
+    let users = ["SYSTEM", "bob"];
+    let mut m = s.matcher();
+    let mut n = 0;
+    for img in images {
+        for cl in lines {
+            for p in parents {
+                for u in users {
+                    let e = ev(
+                        PROC,
+                        1,
+                        &[
+                            ("Image", img),
+                            ("CommandLine", cl),
+                            ("ParentImage", p),
+                            ("User", u),
+                        ],
+                    );
+                    let (mut a, mut b) = (Vec::new(), Vec::new());
+                    m.matches(&e, &mut a);
+                    m.matches_ungated(&e, &mut b);
+                    assert_eq!(a, b, "{img} | {cl} | {p} | {u}");
+                    n += a.len();
+                }
+            }
+        }
+    }
+    assert!(n > 20, "the events match some rules ({n})");
+}
