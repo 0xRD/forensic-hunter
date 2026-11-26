@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.8.0 (unreleased)
+## 0.8.0 (2026-11-26)
 
 Built-in Sigma detection: the Hayabusa binary is no longer needed.
 
