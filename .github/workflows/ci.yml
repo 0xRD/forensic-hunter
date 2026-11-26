@@ -88,7 +88,35 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install an older release, update it, check (Linux, macOS)
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The installer is tested with the forhunt of this commit, served like a
+      # release (archive + SHA256SUMS) through FORHUNT_BASE_URL: the skill
+      # needs features the last published release may not have yet.
+      - name: Build this forhunt as a local release mirror
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build -q -p forhunt
+          ver="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          case "$RUNNER_OS-$(uname -m)" in
+            Linux-x86_64) t=x86_64-unknown-linux-musl ;;
+            Linux-aarch64) t=aarch64-unknown-linux-musl ;;
+            macOS-*) t=aarch64-apple-darwin ;;
+            Windows-*) t=x86_64-pc-windows-msvc ;;
+          esac
+          m="$RUNNER_TEMP/mirror"; d="forhunt-$ver-$t"
+          mkdir -p "$m/$d"
+          if [ "$RUNNER_OS" = Windows ]; then
+            cp target/debug/forhunt.exe "$m/$d/"
+            (cd "$m" && 7z a -tzip -bso0 "$d.zip" "$d" && sha256sum "$d.zip" > SHA256SUMS)
+          else
+            cp target/debug/forhunt "$m/$d/"
+            (cd "$m" && tar czf "$d.tar.gz" "$d" && { sha256sum "$d.tar.gz" 2>/dev/null || shasum -a 256 "$d.tar.gz"; } > SHA256SUMS)
+          fi
+          echo "FH_VER=v$ver" >> "$GITHUB_ENV"
+          echo "MIRROR=$m" >> "$GITHUB_ENV"
+      - name: Install an older release, update it, rules only on a yes (Linux, macOS)
         if: runner.os != 'Windows'
         run: |
           set -euo pipefail
@@ -97,19 +125,22 @@ jobs:
           if i --check; then echo "check passed on an empty prefix"; exit 1; fi
           i --forhunt-version v0.5.1 --no-rules
           if i --check; then echo "check passed on a too old forhunt"; exit 1; fi
-          mkdir "$p/hayabusa-0.0.1"
-          i --with-hayabusa
-          [ ! -e "$p/hayabusa-0.0.1" ]
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory "$MIRROR" > /dev/null 2>&1 &
+          sleep 2
+          export FORHUNT_BASE_URL=http://127.0.0.1:8765
+          # No terminal and no --rules: the rules are never downloaded.
+          i --forhunt-version "$FH_VER" < /dev/null
+          [ ! -e "$p/rules/hayabusa-rules" ]
+          i --forhunt-version "$FH_VER" --rules
           # Rules pinned by content digest, with a folder for your own.
           grep -q '^commit=' "$p/rules/hayabusa-rules/.forhunt-rules"
           [ -d "$p/rules/hayabusa-rules/sigma" ] && [ -d "$p/rules/custom" ]
           "$p/bin/forhunt" sigma fixtures/synthetic -q -g > /dev/null
           # Captured, not piped into `grep -q`: that closes the pipe early.
-          again="$(i)"; grep -q "already installed" <<< "$again"
+          again="$(i --forhunt-version "$FH_VER" < /dev/null)"; grep -q "already installed" <<< "$again"
           state="$(i --check)"; grep -qx ready <<< "$state"
-          (cd / && "$p/bin/hayabusa" help >/dev/null)
           [ -z "$(find "$p" -maxdepth 1 -name '.staging*')" ]
-      - name: Install an older release, update it, check (Windows)
+      - name: Install an older release, update it, rules only on a yes (Windows)
         if: runner.os == 'Windows'
         shell: powershell
         run: |
@@ -119,17 +150,17 @@ jobs:
           I -Check; if ($LASTEXITCODE -eq 0) { throw 'check passed on an empty prefix' }
           I -ForhuntVersion v0.5.1 -NoRules; if ($LASTEXITCODE -ne 0) { throw 'install failed' }
           I -Check; if ($LASTEXITCODE -eq 0) { throw 'check passed on a too old forhunt' }
-          New-Item -ItemType Directory (Join-Path $p 'hayabusa-0.0.1') | Out-Null
-          I -WithHayabusa; if ($LASTEXITCODE -ne 0) { throw 'update failed' }
-          if (Test-Path (Join-Path $p 'hayabusa-0.0.1')) { throw 'old Hayabusa folder kept' }
+          Start-Process python -ArgumentList '-m', 'http.server', '8765', '--bind', '127.0.0.1', '--directory', $env:MIRROR -WindowStyle Hidden
+          Start-Sleep -Seconds 3
+          $env:FORHUNT_BASE_URL = 'http://127.0.0.1:8765'
+          I -ForhuntVersion $env:FH_VER -NoRules; if ($LASTEXITCODE -ne 0) { throw 'update failed' }
+          if (Test-Path (Join-Path $p 'rules\hayabusa-rules')) { throw 'rules downloaded without a yes' }
+          I -ForhuntVersion $env:FH_VER -Rules; if ($LASTEXITCODE -ne 0) { throw 'rules install failed' }
           if (-not (Test-Path (Join-Path $p 'rules\hayabusa-rules\.forhunt-rules'))) { throw 'rules not installed' }
           if (-not (Test-Path (Join-Path $p 'rules\custom'))) { throw 'no custom rules folder' }
-          $again = I | Out-String; if ($again -notmatch 'already installed') { throw "not idempotent: $again" }
+          $again = I -ForhuntVersion $env:FH_VER -NoRules | Out-String; if ($again -notmatch 'already installed') { throw "not idempotent: $again" }
           $out = I -Check | Out-String; if ($LASTEXITCODE -ne 0 -or $out -notmatch 'ready') { throw "not ready: $out" }
-          & (Join-Path $p 'bin\forhunt.exe') --version; if ($LASTEXITCODE -ne 0) { throw 'forhunt does not run' }
-          # Whole output taken: cutting the pipe short would set the exit code.
-          $help = & (Join-Path $p 'bin\hayabusa.cmd') help | Out-String
-          if ($LASTEXITCODE -ne 0 -or $help -notmatch 'Hayabusa') { throw "hayabusa wrapper failed ($LASTEXITCODE)" }
+          & (Join-Path $p 'bin\forhunt.exe') sigma fixtures\synthetic -q -g | Out-Null; if ($LASTEXITCODE -ne 0) { throw 'forhunt sigma failed' }
           exit 0
 
   deny:

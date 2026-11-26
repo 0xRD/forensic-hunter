@@ -14,7 +14,7 @@ resolves.
 | Analyst | Claude (Forensic Hunter skill), for <requester> |
 | Date of report | <YYYY-MM-DD> |
 | Scope | <hosts, log files, time range analysed> |
-| Tools | forhunt <version>, Hayabusa <version> (rules <date>) |
+| Tools | forhunt <version>; Sigma rules: <set and commit, from `<prefix>/rules/*/.forhunt-rules`>, or "not run" |
 
 ## 1. Executive summary
 
@@ -94,4 +94,4 @@ finding or gap it addresses.
 ## Appendix
 
 - Attack path diagram (optional): Mermaid source and/or HTML file.
-- Commands run (key `forhunt`/`hayabusa` invocations).
+- Commands run (key `forhunt` invocations).
