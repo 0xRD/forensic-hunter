@@ -1,6 +1,6 @@
 ---
 name: forensic-hunter
-description: Rigorous Windows event log (EVTX) forensics and threat hunting with the forhunt CLI and Hayabusa. Use when the user wants to analyse Windows event logs or .evtx files, triage a Windows incident (DFIR, incident response, compromise assessment), hunt for attacker activity in Security, System, Sysmon, PowerShell, RDP, WinRM, Task Scheduler or Defender logs (brute force, lateral movement, persistence, privilege escalation, credential theft, Kerberoasting, DCSync, log clearing, ransomware precursors), investigate specific Event IDs (4624, 4625, 4688, 4769, 7045, 1102, Sysmon 1/3/10...), or build an incident timeline, attack path or report from EVTX files.
+description: Rigorous Windows event log (EVTX) forensics and threat hunting with the forhunt CLI and Sigma rules. Use when the user wants to analyse Windows event logs or .evtx files, triage a Windows incident (DFIR, incident response, compromise assessment), hunt for attacker activity in Security, System, Sysmon, PowerShell, RDP, WinRM, Task Scheduler or Defender logs (brute force, lateral movement, persistence, privilege escalation, credential theft, Kerberoasting, DCSync, log clearing, ransomware precursors), investigate specific Event IDs (4624, 4625, 4688, 4769, 7045, 1102, Sysmon 1/3/10...), build an incident timeline, attack path or report from EVTX files, or write and test Sigma detection rules for forhunt.
 ---
 
 # Forensic Hunter: Windows event log investigations
@@ -16,8 +16,12 @@ folder.
 Tools:
 - `forhunt`: fast EVTX parser/search/stats/timeline built for LLM use
   (reference: `references/forhunt.md`).
-- `hayabusa`: Sigma-based detection engine by Yamato Security, an external
-  GPL-3.0 tool, downloaded unmodified (reference: `references/hayabusa.md`).
+- `forhunt sigma`: forhunt's built-in Sigma engine, running Yamato Security's
+  hayabusa-rules (Sigma and Hayabusa rules, Detection Rule License 1.1,
+  downloaded by the installer) and your own rules (reference:
+  `references/sigma-rules.md`). The Hayabusa binary is no longer needed;
+  `forhunt hayabusa` still reads Hayabusa output if a user brings some
+  (`references/hayabusa.md`).
 
 ## 0. Setup (once)
 
@@ -29,12 +33,12 @@ bash scripts/install.sh            # Linux/macOS  (Windows: scripts/install.ps1)
 ```
 
 `--check` installs nothing. It prints `ready` only when forhunt is recent
-enough for these checklists and Hayabusa is present; otherwise it says what is
+enough for these checklists and the Sigma rules are installed; otherwise it says what is
 missing or too old and the command that fixes it (a Homebrew forhunt is
 updated with `brew upgrade 0xrd/tap/forhunt`). Never work with a forhunt it
 calls too old: `forhunt checklist` refuses checklists newer than itself, and
 older releases do not read every artifact. Running `install.sh` again later
-updates both tools in place.
+updates forhunt and the rules in place.
 
 ## Rules (always)
 
@@ -122,21 +126,33 @@ Read it fully (it is short). Note:
 - `logon_types`: counts per type for 4624/4625 (types in `references/logontypes.md`);
 - `bad_chunks`/`bad_records`: corruption; mention it in the report.
 
-## 3. Detections with Hayabusa (step c)
+## 3. Sigma detections (step c)
 
 ```bash
-hayabusa dfir-timeline -d "$CASE/evidence" -t jsonl -p verbose -O -w -q -K -N -C \
-  -o "$CASE/work/hayabusa.jsonl"          # Hayabusa 4.x (3.x: json-timeline -L)
-forhunt hayabusa "$CASE/work/hayabusa.jsonl" -p "$CASE/evidence" --min-level medium -g
+forhunt sigma "$CASE/evidence" --min-level medium -g      # overview per rule and host
+forhunt sigma "$CASE/evidence" --rule-id <rid> -n 50      # one rule, detection by detection
 ```
-`-g` groups detections per rule and host (count, first/last time, sample
-ids); drop it to list detections one by one for a rule you are examining.
-`forhunt hayabusa` attaches forhunt ids to detections. Treat detections as
-leads, not conclusions: confirm each with `forhunt show` and context.
+One pass over the evidence with every installed rule (no Hayabusa binary).
+`-g` groups detections per rule and host (count, first/last time, event ids,
+sample forhunt ids); without it each detection is one line with its forhunt
+`id`, rule `rid`, `lvl`, `mitre` and the rule's key values in `d`. Treat
+detections as leads, not conclusions: confirm each with `forhunt show` and
+context. Quote the rule title and its author (`auth`) when a finding rests on
+a rule: the rule licence (DRL 1.1) asks for the author on messages based on
+matches. The stderr line says how many rules loaded and why others did not
+(deprecated, noisy, unsupported): mention rules not loaded in the gaps.
 
-If Hayabusa is not installed, ask before running `scripts/install.sh`, because
-it downloads a binary. Declined or impossible: go on to step d and write
-"Hayabusa not run, no Sigma detections" in the gaps of the report.
+The case may call for rules of your own (an IOC list, a technique the rule set
+misses, a forhunt artifact such as prefetch or registry): write them as
+`references/sigma-rules.md` explains, test them on the evidence, and keep them
+in the case folder (`-R "$CASE/rules"`, added to the installed ones with
+`-R ~/.local/share/forensic-hunter/rules -R "$CASE/rules"`).
+
+If the rules are not installed (`forhunt sigma` exits 2: "no rules"), ask
+before running `scripts/install.sh --no-forhunt`, because it downloads them.
+Declined or impossible: go on to step d and write "Sigma rules not run" in
+the gaps of the report. Hayabusa output the user already has can be read with
+`forhunt hayabusa` (`references/hayabusa.md`).
 
 ## 4. Walk every checklist (step d)
 
@@ -208,7 +224,7 @@ ambiguity) and report them.
 ## 5. Timeline of suspicious windows (step e)
 
 For each cluster of findings, run `forhunt timeline` on a tight window
-(minutes to an hour) and the involved host(s), merge with Hayabusa
+(minutes to an hour) and the involved host(s), merge with Sigma
 detections, and build the chronological table for the report. When `$MFT`
 / `$J` are in the evidence, run the window over the host's folder so file
 activity (downloads, dropped tools, deletions) sits between the events that
@@ -233,7 +249,8 @@ self-contained HTML file (`references/attack-path.md`).
 ## References
 
 - `references/forhunt.md`: commands, filters, `llm` format keys, exit codes
-- `references/hayabusa.md`: Hayabusa commands, levels, filters, licence notice
+- `references/sigma-rules.md`: `forhunt sigma`, the rule format forhunt runs, writing and testing your own rules (field names per artifact), licence notice
+- `references/hayabusa.md`: reading output of the Hayabusa binary (`forhunt hayabusa`), if a user brings some
 - `references/ntfs-hunting.md`: hunting and interpreting `$MFT` / `$UsnJrnl:$J` (timestomping, staging, persistence, anti-forensics, correlation)
 - `references/mail-hunting.md`: reading `.ost` and `.pst` mailboxes (senders, links, what the host sent on, secrets in drafts, where a mailbox misleads)
 - `references/prefetch-hunting.md`: hunting and interpreting `.pf` files (locations, tools, loaded files, where Prefetch misleads)

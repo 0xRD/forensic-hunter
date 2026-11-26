@@ -1,5 +1,10 @@
 # Hayabusa
 
+**Since forhunt 0.8.0 the Hayabusa binary is optional**: `forhunt sigma`
+runs the same rules itself (`sigma-rules.md`). This page is for Hayabusa
+output a user already has (`forhunt hayabusa` reads it) or a Hayabusa
+installed with `install.sh --with-hayabusa`.
+
 [Hayabusa](https://github.com/Yamato-Security/hayabusa) is a fast Windows
 event log forensics timeline generator and threat hunting tool by Yamato
 Security, using Sigma and Hayabusa rules.

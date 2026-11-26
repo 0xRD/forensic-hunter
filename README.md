@@ -39,6 +39,11 @@ for the picture.
   attachment (with SHA-256) and contact: sender, recipients with blind copies,
   links, body as text, headers, and drafts. Compressed and encrypted stores are
   read, and a mailbox of any size stays out of memory.
+- **Sigma detection built in**: `forhunt sigma` runs Yamato Security's
+  hayabusa-rules (4,600+ Sigma and Hayabusa rules) and your own over every
+  artifact, in one pass: no Hayabusa binary. Rules are picked per channel
+  and event id and gated by their literals: 599 sample logs against 4,686
+  rules in 0.8 s.
 - **Extensible**: an `Artifact`/`Source` abstraction ready for LNK, jump lists
   and shellbags.
 
@@ -48,7 +53,7 @@ for the picture.
 # Homebrew (macOS Apple Silicon, Linux)
 brew install 0xRD/tap/forhunt
 
-# skill installer (forhunt + Hayabusa, SHA-256 verified)
+# skill installer (forhunt + Sigma rules, SHA-256 verified)
 bash skill/scripts/install.sh            # Windows: skill/scripts/install.ps1
 
 # or from source
@@ -98,7 +103,9 @@ forhunt show 4a2aa2ed:53413 -p ./evidence -F xml     # one event in full
 forhunt parse   ./evidence -F csv -o all.csv         # full export, all hosts in one file
 forhunt parse   ./evidence -F csv --computer WS-07 -o ws07.csv   # one host only
 forhunt parse   ./evidence -F csv -O out/ --split host   # one file per host (or --split file)
-forhunt hayabusa hayabusa.jsonl -p ./evidence        # normalise Hayabusa detections
+forhunt sigma   ./evidence --min-level medium -g     # Sigma detections (built in)
+forhunt sigma   ./evidence -R my-rules/              # your own rules
+forhunt hayabusa hayabusa.jsonl -p ./evidence        # normalise Hayabusa output
 forhunt search  ./evidence -c MFT -e 16 -f SiLtFn=true   # timestomped files ($MFT)
 forhunt search  ./evidence -c Prefetch -f 'ExePath~\USERS\'   # programs run from a profile
 forhunt search  ./evidence -f ExePath~winscp             # one program across prefetch, BAM, Amcache, ShimCache
@@ -152,14 +159,17 @@ Full reference: [skill/references/forhunt.md](skill/references/forhunt.md).
 
 [`skill/`](skill/) packages the analysis method:
 [SKILL.md](skill/SKILL.md) (workflow and rules),
-install scripts for forhunt and [Hayabusa](https://github.com/Yamato-Security/hayabusa)
-(checksum-verified downloads; Hayabusa is GPL-3.0 and never bundled),
+install scripts for forhunt and the
+[hayabusa-rules](https://github.com/Yamato-Security/hayabusa-rules) Sigma rules
+(checksum-verified downloads; rules under DRL 1.1, never bundled), a guide to
+writing and testing your own rules for forhunt
+([sigma-rules.md](skill/references/sigma-rules.md)),
 detection checklists per ATT&CK tactic written like Sigma rules
 ([index, coverage matrix and blind spots](skill/references/checklists/INDEX.md)),
 event id and logon type references, a report template, attack path
 visualisation, and [worked examples](skill/examples/).
 
-Workflow: hash and protect the evidence, `stats` first, Hayabusa detections,
+Workflow: hash and protect the evidence, `stats` first, Sigma detections,
 walk every checklist with targeted `search` and pivots (each check ends as
 HIT, NO_HIT, NOT_APPLICABLE or LOG_SOURCE_MISSING), `timeline` on suspicious
 windows, then a report with a full chronological timeline, ATT&CK mapping,
@@ -241,6 +251,11 @@ these crates) and browses multi-GB timelines with Excel-style filters
 ## Licence
 
 Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at
-your option. Hayabusa (GPL-3.0) and its rules (DRL 1.1) are downloaded
-separately and are not part of this project. EVTX parsing builds on the
+your option. The Sigma engine is forhunt's own (no code from Hayabusa or other
+engines). The rules it runs by default, Yamato Security's hayabusa-rules
+(including SigmaHQ rules), are under the
+[Detection Rule License 1.1](https://github.com/SigmaHQ/Detection-Rule-License):
+they are downloaded by the installer, not part of this project, and every
+detection names the rule's author as that licence asks. Hayabusa (GPL-3.0) is
+an optional separate download. EVTX parsing builds on the
 [`evtx`](https://github.com/omerbenamram/evtx) crate (MIT/Apache-2.0).

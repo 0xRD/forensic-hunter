@@ -15,6 +15,9 @@ Open work, roughly by priority.
   set per name), attribute lists (names in extension records).
 
 ## Commands
+- `sigma`: correlation rules (`event_count`, `value_count`, `temporal`) and the
+  deprecated `| count()`; Sigma `logsource` mapping for rules that do not name
+  `Channel`/`EventID` (SigmaHQ originals); a rules cache to load in under 50 ms.
 - `stats`: `$J` first/last time and USN discontinuities (journal reset,
   FH-FS-031); time bucketing for burst detection.
 - Per-file grouping (`EntryNumber` + `SequenceNumber`).

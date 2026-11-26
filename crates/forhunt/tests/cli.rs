@@ -1723,3 +1723,157 @@ fn checklists_state_the_forhunt_they_need() {
     let v: Value = serde_json::from_str(&std::fs::read_to_string(shipped).unwrap()).unwrap();
     assert!(v["min_forhunt"].is_string());
 }
+
+fn sigma_rules(sub: &str) -> String {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/sigma")
+        .join(sub)
+        .display()
+        .to_string()
+}
+
+#[test]
+fn sigma_detects_with_built_in_engine() {
+    let rules = sigma_rules("rules");
+    let pf = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/prefetch/WS-07")
+        .display()
+        .to_string();
+    let v = lines(&ok(&[
+        "sigma",
+        "-q",
+        &fx("Security.evtx"),
+        &fx("Sysmon.evtx"),
+        &pf,
+        "-R",
+        &rules,
+    ]));
+    let s = summary(&v);
+    assert_eq!(s["cmd"], "sigma");
+    assert_eq!(s["rules"], 3);
+    assert_eq!(s["rules_hit"], 3);
+    let dets = &v[..v.len() - 1];
+    // Encoded PowerShell in both Security 4688 and Sysmon 1, with details
+    // from the rule's template and the rule author (DRL 1.1 attribution).
+    let enc: Vec<&Value> = dets
+        .iter()
+        .filter(|d| d["rule"] == "Encoded PowerShell Command Line")
+        .collect();
+    assert_eq!(enc.len(), 2);
+    assert!(enc.iter().any(|d| d["eid"] == 4688) && enc.iter().any(|d| d["eid"] == 1));
+    assert!(enc[0]["d"]["Cmdline"].as_str().unwrap().contains("-Enc"));
+    assert_eq!(enc[0]["auth"], "forhunt tests");
+    assert_eq!(enc[0]["mitre"][1], "T1059.001");
+    // A pivotable id.
+    let id = enc[0]["id"].as_str().unwrap();
+    let shown: Value = serde_json::from_str(&ok(&["show", "-q", id, "-p", &fx("")])).unwrap();
+    assert!(
+        shown["data"]["CommandLine"]
+            .as_str()
+            .unwrap()
+            .contains("-Enc")
+    );
+    // forhunt artifacts work too: the prefetch rule fires on CMD.EXE runs.
+    assert!(
+        dets.iter()
+            .any(|d| d["ch"] == "Prefetch" && d["lvl"] == "low")
+    );
+    // Time order, deterministic across thread counts.
+    let a = ok(&[
+        "sigma",
+        "-q",
+        "-t",
+        "1",
+        &fx("Security.evtx"),
+        &fx("Sysmon.evtx"),
+        "-R",
+        &rules,
+    ]);
+    let b = ok(&[
+        "sigma",
+        "-q",
+        "-t",
+        "4",
+        &fx("Security.evtx"),
+        &fx("Sysmon.evtx"),
+        "-R",
+        &rules,
+    ]);
+    assert_eq!(a, b);
+}
+
+#[test]
+fn sigma_levels_groups_and_reports() {
+    let rules = sigma_rules("rules");
+    let v = lines(&ok(&[
+        "sigma",
+        "-q",
+        &fx(""),
+        "-R",
+        &rules,
+        "--min-level",
+        "critical",
+    ]));
+    assert!(v[..v.len() - 1].iter().all(|d| d["lvl"] == "critical"));
+    let g = lines(&ok(&["sigma", "-q", &fx(""), "-R", &rules, "-g"]));
+    assert!(g[0]["n"].as_u64().unwrap() >= 1 && g[0]["ids"].is_array());
+    assert_eq!(g[0]["lvl"], "critical");
+    // Broken and deprecated rules are reported, never silently dropped.
+    let o = forhunt(&[
+        "sigma",
+        &fx("Security.evtx"),
+        "-R",
+        &rules,
+        "-R",
+        &sigma_rules("broken"),
+    ]);
+    assert!(o.status.success());
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains("3 rules loaded from 5 files"), "{err}");
+    assert!(err.contains("1 status deprecated"), "{err}");
+    assert!(
+        err.contains("unsupported modifier `nosuchmodifier`"),
+        "{err}"
+    );
+    // The rule list.
+    let l = lines(&ok(&["sigma", "-q", &fx(""), "-R", &rules, "--list-rules"]));
+    assert_eq!(l.len(), 3);
+    assert!(l.iter().all(|r| r["auth"] == "forhunt tests"));
+    // Full events.
+    let j = lines(&ok(&[
+        "sigma",
+        "-q",
+        &fx("Security.evtx"),
+        "-R",
+        &rules,
+        "-F",
+        "jsonl",
+    ]));
+    assert!(j.iter().all(|d| d["event"]["event_id"].is_u64()));
+}
+
+#[test]
+fn sigma_without_rules_is_a_usage_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let o = Command::new(env!("CARGO_BIN_EXE_forhunt"))
+        .args(["sigma", &fx("Security.evtx")])
+        .env("FORHUNT_RULES", dir.path().join("missing"))
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(
+        o.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let o = forhunt(&[
+        "sigma",
+        &fx("Security.evtx"),
+        "-R",
+        &sigma_rules("rules"),
+        "--min-level",
+        "bogus",
+    ]);
+    assert_eq!(o.status.code(), Some(2));
+}

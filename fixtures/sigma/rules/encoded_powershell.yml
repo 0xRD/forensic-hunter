@@ -1,0 +1,23 @@
+title: Encoded PowerShell Command Line
+id: 8b0c1a52-3d0e-4c66-9a40-6a1f2e1e0001
+status: test
+description: PowerShell started with an encoded command (test rule).
+author: forhunt tests
+date: 2026-11-26
+tags:
+    - attack.execution
+    - attack.t1059.001
+logsource:
+    product: windows
+    category: process_creation
+detection:
+    process:
+        - Channel: Security
+          EventID: 4688
+        - Channel: Microsoft-Windows-Sysmon/Operational
+          EventID: 1
+    selection:
+        CommandLine|contains|windash: ' -enc'
+    condition: process and selection
+details: 'Cmdline: %CommandLine% ¦ Parent: %ParentProcessName%'
+level: high

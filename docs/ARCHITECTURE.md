@@ -4,12 +4,14 @@
 crates/forhunt-core     event model (EventView), Artifact/Source traits, EVTX,
                         NTFS ($MFT, $UsnJrnl:$J), prefetch, registry and mail sources,
                         LZXPRESS Huffman decoder, JSON scanner, filters,
+                        Sigma rule engine (sigma/: YAML tree, compiler,
+                        evaluator, per-(channel, id) plans),
                         field maps (maps/default.toml), input expansion and
                         opening (input::open_all), order-preserving parallel engine
 crates/forhunt-output   writers: csv (EvtxECmd layout + ForhuntId), jsonl (full
                         fidelity), llm (compact); export::write_all for library users
 crates/forhunt          CLI binary `forhunt`: parse, stats, search, timeline, show,
-                        hayabusa, checklist
+                        hayabusa, sigma, checklist
 tools/evtx-gen          synthetic EVTX / NTFS / prefetch / registry / mail generator (fixtures, multi-GB corpus)
 skill/                  Claude skill: SKILL.md, install scripts, references,
                         detection checklists (YAML + generated JSON index)
@@ -31,3 +33,10 @@ opens inputs in parallel, skips duplicates and returns warnings;
 `forhunt_output::export::write_all` streams every event through a writer with
 progress and cancellation. The CSV it writes is byte-identical to
 `forhunt parse -F csv`. Pin a release tag as a git dependency (D-044).
+
+Sigma (`forhunt_core::sigma`): `load` compiles rule folders (Hayabusa
+`config/` included) into a `RuleSet`; `RuleSet::matcher()` gives a per-thread
+`Matcher` whose `matches(&EventView, &mut Vec<u32>)` appends the matching rule
+indexes. Per (channel, event id) a plan lists the rules always tried and the
+rules gated by literals (one Aho-Corasick automaton per field). Design and
+measurements: DECISIONS D-060 to D-066, plan in [SIGMA-PLAN.md](SIGMA-PLAN.md).

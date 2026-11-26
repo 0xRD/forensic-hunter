@@ -1,0 +1,11 @@
+title: Deprecated Rule
+id: 8b0c1a52-3d0e-4c66-9a40-6a1f2e1e0005
+status: deprecated
+author: forhunt tests
+logsource:
+    product: windows
+detection:
+    selection:
+        EventID: 4624
+    condition: selection
+level: high
