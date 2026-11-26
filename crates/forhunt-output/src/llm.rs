@@ -65,7 +65,6 @@ fn value(out: &mut Vec<u8>, v: &Val<'_>, max: usize) {
 }
 
 pub fn write(w: &Writer<'_>, ev: &EventView<'_>, out: &mut Vec<u8>) {
-    let max = w.opts.max_value_len;
     out.extend_from_slice(b"{\"id\":\"");
     ev.id.write(out);
     out.extend_from_slice(b"\",\"t\":\"");
@@ -81,7 +80,17 @@ pub fn write(w: &Writer<'_>, ev: &EventView<'_>, out: &mut Vec<u8>) {
         out.extend_from_slice(b",\"ti\":");
         json::str(out, &spec.title);
     }
-    out.extend_from_slice(b",\"d\":{");
+    out.extend_from_slice(b",\"d\":");
+    write_fields(w, ev, out);
+    out.extend_from_slice(b"}\n");
+}
+
+/// The compact `d` object of an event (its mapped key fields, short names),
+/// as written in the `llm` format.
+pub fn write_fields(w: &Writer<'_>, ev: &EventView<'_>, out: &mut Vec<u8>) {
+    let max = w.opts.max_value_len;
+    let spec = w.map.event(&ev.channel, ev.event_id);
+    out.push(b'{');
     let mut first = true;
     let mut used: Vec<String> = Vec::new();
     let mut emit = |out: &mut Vec<u8>, name: &str, v: &Val<'_>| {
@@ -132,7 +141,7 @@ pub fn write(w: &Writer<'_>, ev: &EventView<'_>, out: &mut Vec<u8>) {
             }
         }
     }
-    out.extend_from_slice(b"}}\n");
+    out.push(b'}');
 }
 
 #[cfg(test)]

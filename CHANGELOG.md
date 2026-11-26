@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.8.0 (unreleased)
+
+Built-in Sigma detection: the Hayabusa binary is no longer needed.
+
+- `forhunt sigma <evidence>`: runs Sigma and Hayabusa rules (Yamato Security's
+  hayabusa-rules, and your own) over every artifact in one parallel pass, with
+  the same compact output as `forhunt hayabusa` plus the rule id and author
+  (`auth`, credit the Detection Rule License 1.1 asks for). `-g` groups per
+  rule and host, `--min-level`, `--rule-id`, `--noisy`, `--deprecated`,
+  `--list-rules`, `--since`/`--until`/`--computer`, `-F jsonl` for full events.
+  Rules that are skipped or do not compile are counted and named on stderr.
+- The engine (`forhunt_core::sigma`, also used by forhunt-viewer) supports every
+  field modifier of the hayabusa-rules set (`contains`, `startswith`, `endswith`,
+  `all`, `re` with `i`/`m`/`s`, `windash`, `cidr`, `base64`, `base64offset`,
+  `wide`/`utf16*`, `fieldref`, `exists`, `gt`/`gte`/`lt`/`lte`, `cased`,
+  `expand`), wildcards and escapes, keyword selections, `1 of`/`all of`/`them`,
+  and Hayabusa's `config/` (exclusions, noisy rules, level tuning, field aliases,
+  default details). Not yet: correlation rules and `| count()` (3 and 0 active
+  rules in the set; reported at load).
+- Fast: rules are picked per (channel, event id), events no rule can match are
+  not decoded, and a rule is evaluated only when one of its literals is found in
+  the event (one Aho-Corasick pass per field). Hayabusa's 599 sample logs
+  (47,685 events) against 4,686 rules: 0.83 s on 4 cores, rule loading included.
+- Custom rules can target forhunt's artifacts (`Channel: Prefetch`, `Registry`,
+  `MFT`, `UsnJrnl`, `Mail`) with forhunt's field names.
+
+Skill:
+- The installers download hayabusa-rules at a pinned commit, checked against a
+  SHA-256 digest of the content, into `<prefix>/rules/hayabusa-rules` (with
+  `<prefix>/rules/custom` for your own); `--rules-latest` takes the newest rules.
+  Hayabusa is installed only with `--with-hayabusa`.
+- Step c runs `forhunt sigma`; new reference `references/sigma-rules.md` on
+  writing and testing rules for forhunt (field names per artifact, matching
+  rules, test loop).
+
 ## 0.7.0 (2026-11-14)
 
 Audit: parsers fuzzed with 150,000 damaged copies of the fixtures, install and

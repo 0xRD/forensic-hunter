@@ -31,6 +31,9 @@ pub enum Cmd {
     Show(ShowArgs),
     /// Normalise Hayabusa JSON/JSONL detections into the `llm` format.
     Hayabusa(HayabusaArgs),
+    /// Run Sigma / Hayabusa detection rules over the evidence (built in:
+    /// no Hayabusa binary needed).
+    Sigma(SigmaArgs),
     /// Sweep every detection checklist in one pass: log source coverage,
     /// query hits, and a pre-filled checklist-status file for review.
     Checklist(ChecklistArgs),
@@ -269,6 +272,65 @@ pub struct HayabusaArgs {
     /// Directories or files holding the scanned EVTX, to attach forhunt ids to detections.
     #[arg(long, short = 'p', value_name = "PATHS")]
     pub evtx: Vec<String>,
+    #[arg(long, default_value_t = 256, value_name = "N")]
+    pub max_value_len: usize,
+    #[arg(long, short = 'o', default_value = "-")]
+    pub output: String,
+    #[command(flatten)]
+    pub common: Common,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum SigmaFormat {
+    /// Compact detections (like `forhunt hayabusa`), capped, with a summary line.
+    Llm,
+    /// One line per detection: rule, level, author, MITRE tags and the full event.
+    Jsonl,
+}
+
+#[derive(Args, Debug)]
+pub struct SigmaArgs {
+    /// Evidence: files, directories (recursive) or globs.
+    #[arg(required = true, value_name = "PATHS")]
+    pub paths: Vec<String>,
+    /// Rule folders or files: a hayabusa-rules checkout (its config/ is used)
+    /// or your own Sigma rules. Repeatable. Default: $FORHUNT_RULES, else
+    /// the rules/ folder of the install prefix.
+    #[arg(long, short = 'R', value_name = "DIR")]
+    pub rules: Vec<PathBuf>,
+    /// Only run rules at or above this level (informational, low, medium, high, critical).
+    #[arg(long, default_value = "low")]
+    pub min_level: String,
+    /// Also run the rules of noisy_rules.txt (skipped by default, like Hayabusa).
+    #[arg(long)]
+    pub noisy: bool,
+    /// Also run deprecated and unsupported rules.
+    #[arg(long)]
+    pub deprecated: bool,
+    /// Only these rule ids. Repeatable.
+    #[arg(long = "rule-id", value_name = "ID")]
+    pub rule_id: Vec<String>,
+    /// List the loaded rules (JSONL) instead of scanning.
+    #[arg(long)]
+    pub list_rules: bool,
+    /// Only events at or after this time (ISO 8601; no offset = UTC).
+    #[arg(long, value_name = "TIME")]
+    pub since: Option<String>,
+    /// Only events at or before this time.
+    #[arg(long, value_name = "TIME")]
+    pub until: Option<String>,
+    /// Only events from this computer. Repeatable or comma-separated.
+    #[arg(long, value_name = "HOST")]
+    pub computer: Vec<String>,
+    #[arg(long, short = 'F', value_enum, default_value_t = SigmaFormat::Llm)]
+    pub format: SigmaFormat,
+    /// Maximum detections written (0 = unlimited; `llm` keeps the most severe).
+    #[arg(long, short = 'n', default_value_t = 200)]
+    pub limit: usize,
+    /// One line per (rule, host) with count, first/last time and up to 5
+    /// sample event ids, instead of one line per detection.
+    #[arg(long, short = 'g')]
+    pub group: bool,
     #[arg(long, default_value_t = 256, value_name = "N")]
     pub max_value_len: usize,
     #[arg(long, short = 'o', default_value = "-")]

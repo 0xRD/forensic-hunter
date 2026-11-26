@@ -1,0 +1,18 @@
+title: Security Log Cleared
+id: 8b0c1a52-3d0e-4c66-9a40-6a1f2e1e0002
+status: stable
+description: The Security event log was cleared (test rule).
+author: forhunt tests
+date: 2026-11-26
+tags:
+    - attack.defense-evasion
+    - attack.t1070.001
+logsource:
+    product: windows
+    service: security
+detection:
+    selection:
+        Channel: Security
+        EventID: 1102
+    condition: selection
+level: critical

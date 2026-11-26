@@ -1,0 +1,16 @@
+title: Command Shell Run (Prefetch)
+id: 8b0c1a52-3d0e-4c66-9a40-6a1f2e1e0003
+status: test
+description: A forhunt-specific rule on prefetch events (channel Prefetch, id 1).
+author: forhunt tests
+date: 2026-11-26
+logsource:
+    product: forhunt
+    service: prefetch
+detection:
+    selection:
+        Channel: Prefetch
+        EventID: 1
+        ExecutableName: CMD.EXE
+    condition: selection
+level: low

@@ -13,6 +13,7 @@ read-only, positional reads).
 | `show <id>... -p <paths>` | one event in full (`-F json|xml|llm`; `xml`/`raw` is the native record: EVTX XML, hex dump for NTFS) | `json` |
 | `parse` | every event (machine use only) | `jsonl` |
 | `hayabusa <file>` | normalise Hayabusa JSON/JSONL output, attach forhunt ids (`-p <evtx dir>`); `-g` groups per rule and host | `llm`, cap 200 |
+| `sigma <paths>` | run Sigma / Hayabusa rules (installed hayabusa-rules and your own, `-R DIR`), built in; `-g` groups per rule and host, `--min-level`, `--rule-id`, `--list-rules`, `-F jsonl` for full events. See `sigma-rules.md` | `llm`, cap 200 (most severe kept) |
 | `checklist <paths> -k checklists.json` | one-pass sweep of every detection check: log source coverage, query hits, pre-filled status file (`-F md|json`, `--tactic`, `--actionable` for HIT?/REVIEW rows only); per query: source events, covered events (tested fields present), matches | markdown |
 
 ## Filters (search, timeline, stats)

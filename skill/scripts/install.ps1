@@ -1,15 +1,24 @@
 <#
 .SYNOPSIS
-  Installs forhunt and Hayabusa for the Forensic Hunter skill (Windows).
+  Installs forhunt and its Sigma detection rules for the Forensic Hunter
+  skill (Windows).
 .DESCRIPTION
   Downloads release archives from GitHub over HTTPS and verifies SHA-256:
   forhunt against the SHA256SUMS of its release (or a pinned
   checksums\forhunt-<version>.sha256 next to this script), Hayabusa against
   hayabusa.sha256 pinned in this skill. Installs into $Prefix
   (default %LOCALAPPDATA%\forensic-hunter) and creates bin\forhunt.exe and
-  bin\hayabusa.cmd. Nothing is embedded in the skill. -NoForhunt or
-  -NoHayabusa install only the other tool; $env:FORHUNT_BASE_URL points to a
+  bin\hayabusa.cmd (with -WithHayabusa). Nothing is embedded in the skill.
+  -NoForhunt / -NoRules skip one part; $env:FORHUNT_BASE_URL points to a
   mirror of the forhunt release assets.
+
+  Rules: Yamato Security's hayabusa-rules (Sigma and Hayabusa rules,
+  Detection Rule License 1.1) at the commit pinned below, checked against a
+  SHA-256 digest of their content, into $Prefix\rules\hayabusa-rules.
+  `forhunt sigma` runs them (no Hayabusa binary). -RulesLatest takes the
+  newest rules instead (checked by HTTPS only). Your own rules go in
+  $Prefix\rules\custom. -WithHayabusa also installs the Hayabusa binary
+  (optional since forhunt 0.8.0).
 
   -Check installs nothing: it says which forhunt and Hayabusa would be used
   and whether forhunt is recent enough for this skill (exit code 0 when both
@@ -19,6 +28,8 @@
 
   Hayabusa is GPL-3.0 software by Yamato Security, downloaded unmodified from
   https://github.com/Yamato-Security/hayabusa (source code available there).
+  The rules are by their authors (named in each rule and in forhunt's
+  output), under https://github.com/SigmaHQ/Detection-Rule-License.
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File install.ps1
 #>
@@ -28,6 +39,9 @@ param(
   [string]$ForhuntVersion = 'latest',
   [string]$HayabusaVersion = '4.2.0',
   [switch]$NoHayabusa,
+  [switch]$WithHayabusa,
+  [switch]$NoRules,
+  [switch]$RulesLatest,
   [switch]$NoForhunt,
   [switch]$Check,
   [switch]$Force
@@ -41,6 +55,32 @@ $Repo = '0xRD/forensic-hunter'
 # Oldest forhunt this skill's checklists and references work with (kept equal
 # to MIN_FORHUNT in scripts/gen-checklist-index.py, checked in CI).
 $FORHUNT_MIN = '0.6.0'
+# Oldest forhunt with the built-in Sigma engine (`forhunt sigma`).
+$FORHUNT_SIGMA_MIN = '0.8.0'
+$RulesRepo = 'Yamato-Security/hayabusa-rules'
+# Pinned rule set (same values as install.sh): commit, and SHA-256 of the
+# `sha256sum` listing of every file ("<hash>  ./path", paths sorted
+# bytewise), i.e. of the content, not of the archive bytes.
+$RULES_COMMIT = 'fefb31c530e554116041ae106a5d40304fd9d251'
+$RULES_DIGEST = 'ec441b7f5d631f05be2f3f50a88ca9f387b3d4b74d13843075403a4915945d91'
+
+# SHA-256 of a tree's content, as `find . -type f -print0 | LC_ALL=C sort -z |
+# xargs -0 sha256sum | sha256sum` computes it.
+function Get-TreeDigest([string]$Root) {
+  $root = (Resolve-Path $Root).Path.TrimEnd('\')
+  $paths = [string[]](Get-ChildItem -Recurse -File -Force -Path $root | ForEach-Object {
+    './' + $_.FullName.Substring($root.Length + 1).Replace('\', '/')
+  })
+  [Array]::Sort($paths, [StringComparer]::Ordinal)
+  $sb = New-Object Text.StringBuilder
+  foreach ($p in $paths) {
+    $h = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $root $p.Substring(2))).Hash.ToLowerInvariant()
+    [void]$sb.Append("$h  $p`n")
+  }
+  $sha = [Security.Cryptography.SHA256]::Create()
+  $bytes = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($sb.ToString()))
+  return (($bytes | ForEach-Object { $_.ToString('x2') }) -join '')
+}
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 function Verify-Sha256([string]$Path, [string]$Expected) {
@@ -104,8 +144,16 @@ if ($Check) {
     $c = Get-Command hayabusa -ErrorAction SilentlyContinue
     if ($c) { $hb = $c.Source }
   }
-  if ($hb) { Write-Host "hayabusa: $hb" }
-  else { Write-Host 'hayabusa: not installed (optional; install with -NoForhunt)'; $ok = $false }
+  if ($fh -and $v -and (Test-Older $v $FORHUNT_SIGMA_MIN)) {
+    Write-Host "forhunt sigma: needs forhunt $FORHUNT_SIGMA_MIN or later"; $ok = $false
+  }
+  $rinfo = Join-Path $Prefix 'rules\hayabusa-rules\.forhunt-rules'
+  if (Test-Path $rinfo) {
+    $commit = ((Get-Content $rinfo | Where-Object { $_ -like 'commit=*' }) -replace '^commit=', '')
+    Write-Host "rules: $(Join-Path $Prefix 'rules\hayabusa-rules') ($($commit.Substring(0, [Math]::Min(12, $commit.Length))))"
+  }
+  else { Write-Host 'rules: not installed (install with -NoForhunt)'; $ok = $false }
+  if ($hb) { Write-Host "hayabusa: $hb (optional)" }
   if ($ok) { Write-Host 'ready'; exit 0 }
   exit 1
 }
@@ -181,8 +229,52 @@ try {
   }
   }
 
-  # --- Hayabusa ---
-  if (-not $NoHayabusa) {
+  # --- Sigma rules ---
+  if (-not $NoRules) {
+    $rules = Join-Path $Prefix 'rules'
+    $rdest = Join-Path $rules 'hayabusa-rules'
+    $rinfo = Join-Path $rdest '.forhunt-rules'
+    $ref = if ($RulesLatest) { 'main' } else { $RULES_COMMIT }
+    $have = (Test-Path $rinfo) -and ((Get-Content $rinfo) -contains "commit=$RULES_COMMIT")
+    if ($have -and -not $RulesLatest -and -not $Force) {
+      Write-Host "Sigma rules (hayabusa-rules $($RULES_COMMIT.Substring(0, 12))) are already installed in $rdest"
+    }
+    else {
+      Write-Host "Sigma rules: $RulesRepo @ $($ref.Substring(0, [Math]::Min(12, $ref.Length))) (Detection Rule License 1.1)"
+      $tgz = Join-Path $tmp 'rules.tar.gz'
+      Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/$RulesRepo/archive/$ref.tar.gz" -OutFile $tgz
+      $rstage = Join-Path $tmp 'rules'
+      New-Item -ItemType Directory -Force -Path $rstage | Out-Null
+      # tar.exe ships with Windows 10 1803 and later.
+      & tar.exe -xzf $tgz -C $rstage
+      if ($LASTEXITCODE -ne 0) { throw 'cannot extract the rules archive (tar.exe)' }
+      $src = Get-ChildItem -Directory -Path $rstage | Select-Object -First 1
+      if (-not $src -or -not (Test-Path (Join-Path $src.FullName 'config')) -or -not (Test-Path (Join-Path $src.FullName 'sigma'))) {
+        throw 'the archive is not a hayabusa-rules tree; nothing was changed'
+      }
+      if (-not $RulesLatest) {
+        $got = Get-TreeDigest $src.FullName
+        if ($got -ne $RULES_DIGEST) { throw "rules content digest mismatch: expected $RULES_DIGEST, got $got; nothing was changed" }
+        Write-Host "  sha256 ok  hayabusa-rules $($RULES_COMMIT.Substring(0, 12)) (content)"
+      }
+      else { Write-Host '  note: -RulesLatest is not pinned: only HTTPS vouches for it' }
+      Set-Content -Encoding ASCII -Path (Join-Path $src.FullName '.forhunt-rules') -Value @(
+        "commit=$ref", "source=https://github.com/$RulesRepo",
+        'license=Detection Rule License 1.1 (https://github.com/SigmaHQ/Detection-Rule-License)',
+        "installed=$((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))")
+      New-Item -ItemType Directory -Force -Path $rules | Out-Null
+      if (Test-Path $rdest) { Remove-Item -Recurse -Force $rdest }
+      # Copy, not move: the temporary folder may be on another drive.
+      Copy-Item -Recurse -Force $src.FullName $rdest
+      $n = (Get-ChildItem -Recurse -File -Filter '*.yml' -Path (Join-Path $rdest 'hayabusa'), (Join-Path $rdest 'sigma')).Count
+      Write-Host "  installed in $rdest ($n rule files; run with: forhunt sigma <evidence>)"
+    }
+    New-Item -ItemType Directory -Force -Path (Join-Path $rules 'custom') | Out-Null
+    Write-Host "  your own rules: $(Join-Path $rules 'custom') (run with the others)"
+  }
+
+  # --- Hayabusa (optional) ---
+  if ($WithHayabusa -and -not $NoHayabusa) {
     if ($HayabusaVersion -notmatch '^[0-9A-Za-z.+-]+$') { throw "not a version: $HayabusaVersion" }
     $hbZip = "hayabusa-$HayabusaVersion-$hbPlat.zip"
     $dest = Join-Path $Prefix "hayabusa-$HayabusaVersion"
