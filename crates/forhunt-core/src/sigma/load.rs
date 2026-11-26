@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
 
-use super::compile::{self, Cond, Ctx};
+use super::compile::{self, Cond, Ctx, FieldRef, FieldTest, Kind, M, Sel, Sys};
+use super::logsource::{self, Mapped, Variant};
 use super::yaml::{self, Node};
 use super::{Rule, RuleSet, level_rank};
 
@@ -20,6 +21,10 @@ pub struct LoadOptions {
     pub deprecated: bool,
     /// Only these rule ids (all when empty).
     pub ids: Vec<String>,
+    /// How rules use their `logsource` (default for every path).
+    pub profile: Profile,
+    /// Per rule folder or file: its own profile (longest path prefix wins).
+    pub profiles: Vec<(PathBuf, Profile)>,
 }
 
 impl Default for LoadOptions {
@@ -29,7 +34,52 @@ impl Default for LoadOptions {
             noisy: false,
             deprecated: false,
             ids: Vec::new(),
+            profile: Profile::Auto,
+            profiles: Vec::new(),
         }
+    }
+}
+
+/// How a rule's `logsource` becomes the events it is tried on (D-067).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Profile {
+    /// Rules that name a `Channel` run as written (Hayabusa rules, forhunt
+    /// rules); the others are mapped from their logsource (SigmaHQ and most
+    /// public repositories).
+    #[default]
+    Auto,
+    /// Always mapped from the logsource (added to any Channel they name).
+    Sigma,
+    /// Never mapped: the detection alone decides.
+    AsWritten,
+}
+
+impl Profile {
+    pub fn name(self) -> &'static str {
+        match self {
+            Profile::Auto => "auto",
+            Profile::Sigma => "sigma",
+            Profile::AsWritten => "as-written",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Profile> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Profile::Auto),
+            "sigma" | "logsource" => Some(Profile::Sigma),
+            "as-written" | "aswritten" | "hayabusa" | "raw" => Some(Profile::AsWritten),
+            _ => None,
+        }
+    }
+}
+
+impl LoadOptions {
+    fn profile_of(&self, file: &Path) -> Profile {
+        self.profiles
+            .iter()
+            .filter(|(p, _)| file.starts_with(p))
+            .max_by_key(|(p, _)| p.components().count())
+            .map_or(self.profile, |(_, x)| *x)
     }
 }
 
@@ -60,6 +110,12 @@ const CONFIG_FILES: [&str; 3] = ["eventkey_alias.txt", "exclude_rules.txt", "noi
 fn is_config_dir(p: &Path) -> bool {
     p.file_name().is_some_and(|n| n == "config")
         && (CONFIG_FILES.iter().any(|f| p.join(f).is_file()) || p.join("expand").is_dir())
+}
+
+/// A SigmaHQ/sigma checkout: `rules/` next to `rules-*` or `regression_data/`.
+fn is_sigmahq_checkout(p: &Path) -> bool {
+    p.join("rules").is_dir()
+        && (p.join("rules-emerging-threats").is_dir() || p.join("regression_data").is_dir())
 }
 
 /// A hayabusa-rules checkout: its rules are only under `hayabusa/` and
@@ -174,7 +230,23 @@ fn rule_files(paths: &[PathBuf], report: &mut LoadReport) -> Vec<PathBuf> {
         }
         // A hayabusa-rules checkout: only its rule folders (not the test
         // fixtures under scripts/).
-        let roots: Vec<PathBuf> = if is_checkout(p) {
+        let roots: Vec<PathBuf> = if is_sigmahq_checkout(p) {
+            // SigmaHQ: the rule folders, not deprecated/, unsupported/,
+            // tests or regression data.
+            let mut v: Vec<PathBuf> = std::fs::read_dir(p)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|e| e.path())
+                .filter(|d| {
+                    d.is_dir()
+                        && d.file_name()
+                            .is_some_and(|n| n.to_string_lossy().starts_with("rules"))
+                })
+                .collect();
+            v.sort();
+            v
+        } else if is_checkout(p) {
             ["hayabusa", "sigma"]
                 .iter()
                 .map(|d| p.join(d))
@@ -222,6 +294,8 @@ fn rule_files(paths: &[PathBuf], report: &mut LoadReport) -> Vec<PathBuf> {
 
 enum Outcome {
     Rule(Box<Rule>),
+    /// A hidden base rule and the correlation over it (`| count()`).
+    Pair(Box<Rule>, Box<Rule>),
     Skip(String),
     Error(String),
 }
@@ -242,89 +316,66 @@ fn list(n: Option<&Node>) -> Vec<String> {
     n.map(Node::strings).unwrap_or_default()
 }
 
-fn compile_doc(doc: &Node, path: &Path, cfg: &Config, opts: &LoadOptions) -> Outcome {
-    if doc.get("correlation").is_some() {
-        return Outcome::Skip("correlation rule (not supported yet)".into());
+/// A selection value (or list of maps) names `Channel`.
+fn mentions_channel(n: &Node) -> bool {
+    match n {
+        Node::Map(m) => m
+            .iter()
+            .any(|(k, _)| k.split('|').next() == Some("Channel")),
+        Node::Seq(v) => v.iter().any(mentions_channel),
+        _ => false,
     }
-    let Some(det) = doc.get("detection") else {
-        return Outcome::Skip("not a rule (no detection)".into());
+}
+
+/// Shifts selection indexes by `k` (selections of a later variant).
+fn offset(c: Cond, k: usize) -> Cond {
+    match c {
+        Cond::Sel(i) => Cond::Sel(i + k),
+        Cond::Not(x) => Cond::Not(Box::new(offset(*x, k))),
+        Cond::And(xs) => Cond::And(xs.into_iter().map(|x| offset(x, k)).collect()),
+        Cond::Or(xs) => Cond::Or(xs.into_iter().map(|x| offset(x, k)).collect()),
+    }
+}
+
+/// The variant's channel, event ids and extra condition, as a selection.
+fn scope_sel(v: &Variant) -> Sel {
+    let eq = |field: FieldRef, vals: Vec<String>| FieldTest {
+        field,
+        ms: vals
+            .into_iter()
+            .map(|x| M::Str {
+                kind: Kind::Eq,
+                needle: x.to_lowercase().into(),
+                cased: false,
+                finder: None,
+            })
+            .collect(),
+        all: false,
     };
-    let id = text(doc.get("id"));
-    if !opts.ids.is_empty() && !opts.ids.iter().any(|x| x.eq_ignore_ascii_case(&id)) {
-        return Outcome::Skip("not selected".into());
+    let mut tests = vec![eq(
+        FieldRef::Sys(Sys::Channel),
+        v.channels.iter().map(|c| c.to_string()).collect(),
+    )];
+    if !v.eids.is_empty() {
+        tests.push(eq(
+            FieldRef::Sys(Sys::EventId),
+            v.eids.iter().map(|e| e.to_string()).collect(),
+        ));
     }
-    let status = text(doc.get("status")).to_ascii_lowercase();
-    if !opts.deprecated && (status == "deprecated" || status == "unsupported") {
-        return Outcome::Skip(format!("status {status}"));
+    if let Some((f, vals)) = v.extra {
+        tests.push(eq(
+            FieldRef::Payload(f.into(), u32::MAX),
+            vals.iter().map(|x| x.to_string()).collect(),
+        ));
     }
-    if cfg.exclude.contains(&id) {
-        return Outcome::Skip("excluded (exclude_rules.txt)".into());
-    }
-    if !opts.noisy && cfg.noisy.contains(&id) {
-        return Outcome::Skip("noisy (noisy_rules.txt)".into());
-    }
-    let level = cfg
-        .tuning
-        .get(&id)
-        .copied()
-        .unwrap_or_else(|| level_rank(&text(doc.get("level"))));
-    if level < opts.min_level {
-        return Outcome::Skip("below the minimum level".into());
-    }
-    let Node::Map(det) = det else {
-        return Outcome::Error("`detection` is not a map".into());
-    };
-    let cx = Ctx {
-        aliases: &cfg.aliases,
-        expand: &cfg.expand,
-    };
-    let mut names = Vec::new();
-    let mut sels = Vec::new();
-    let mut cond_text: Vec<String> = Vec::new();
-    for (k, v) in det {
-        match k.as_str() {
-            "condition" => cond_text = v.strings(),
-            "timeframe" => {}
-            _ => match compile::selection(v, &cx) {
-                Ok(s) => {
-                    names.push(k.clone());
-                    sels.push(s);
-                }
-                Err(e) if e.starts_with("expand placeholder") => {
-                    return Outcome::Skip(
-                        "expand placeholder without values (config/expand/)".into(),
-                    );
-                }
-                Err(e) => return Outcome::Error(format!("selection `{k}`: {e}")),
-            },
-        }
-    }
-    if cond_text.is_empty() {
-        return Outcome::Error("no condition".into());
-    }
-    let mut conds = Vec::new();
-    for c in &cond_text {
-        match compile::condition(c, &names) {
-            Ok(c) => conds.push(c),
-            Err(e) if e.starts_with("aggregation") => {
-                return Outcome::Skip("count() aggregation (not supported)".into());
-            }
-            Err(e) => return Outcome::Error(format!("condition: {e}")),
-        }
-    }
-    let cond = if conds.len() == 1 {
-        conds.pop().unwrap()
-    } else {
-        Cond::Or(conds)
-    };
-    let scopes: Vec<_> = sels.iter().map(compile::sel_scope).collect();
-    let scope = compile::cond_scope(&cond, &scopes);
-    let mut fields = Vec::new();
-    for s in &sels {
-        compile::tested_fields(s, &mut fields);
-    }
-    Outcome::Rule(Box::new(Rule {
+    Sel::And(tests)
+}
+
+/// The descriptive part of a rule (no detection yet).
+fn meta(doc: &Node, path: &Path, id: String, level: u8, status: String) -> Rule {
+    Rule {
         title: text(doc.get("title")),
+        name: text(doc.get("name")),
         level,
         status,
         author: text(doc.get("author")),
@@ -339,15 +390,255 @@ fn compile_doc(doc: &Node, path: &Path, cfg: &Config, opts: &LoadOptions) -> Out
             .get("details")
             .and_then(Node::as_str)
             .map(str::to_string),
-        fields,
+        fields: Vec::new(),
         path: path.to_path_buf(),
-        sels,
-        cond,
-        chans: scope.chans.map(|s| s.into_iter().collect()),
-        eids: scope.eids.map(|s| s.into_iter().collect()),
+        sels: Vec::new(),
+        // Correlations are never matched per event.
+        cond: Cond::Or(Vec::new()),
+        chans: Some(Vec::new()),
+        eids: Some(Vec::new()),
         req: None,
+        hidden: false,
+        corr: None,
+        derived_from: doc
+            .get("related")
+            .map(|r| match r {
+                Node::Seq(v) => v
+                    .iter()
+                    .filter(|x| x.get("type").and_then(Node::as_str) == Some("derived"))
+                    .filter_map(|x| {
+                        x.get("id")
+                            .and_then(Node::as_str)
+                            .map(str::to_ascii_lowercase)
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            })
+            .unwrap_or_default(),
         id,
-    }))
+    }
+}
+
+fn compile_doc(doc: &Node, path: &Path, cfg: &Config, opts: &LoadOptions) -> Vec<Outcome> {
+    let id = text(doc.get("id"));
+    let status = text(doc.get("status")).to_ascii_lowercase();
+    // A `correlation:` map; some repositories use the key for a note.
+    if let Some(c @ Node::Map(_)) = doc.get("correlation") {
+        if !opts.deprecated && (status == "deprecated" || status == "unsupported") {
+            return vec![Outcome::Skip(format!("status {status}"))];
+        }
+        let level = level_rank(&text(doc.get("level")));
+        return vec![match super::corr::parse(c) {
+            Ok(c) => {
+                let mut r = meta(doc, path, id, level, status);
+                r.corr = Some(Box::new(c));
+                Outcome::Rule(Box::new(r))
+            }
+            Err(e) => Outcome::Error(format!("correlation: {e}")),
+        }];
+    }
+    vec![compile_detection(doc, path, cfg, opts, id, status)]
+}
+
+fn compile_detection(
+    doc: &Node,
+    path: &Path,
+    cfg: &Config,
+    opts: &LoadOptions,
+    id: String,
+    status: String,
+) -> Outcome {
+    let Some(det) = doc.get("detection") else {
+        return Outcome::Skip("not a rule (no detection)".into());
+    };
+    if !opts.deprecated && (status == "deprecated" || status == "unsupported") {
+        return Outcome::Skip(format!("status {status}"));
+    }
+    if cfg.exclude.contains(&id) {
+        return Outcome::Skip("excluded (exclude_rules.txt)".into());
+    }
+    if !opts.noisy && cfg.noisy.contains(&id) {
+        return Outcome::Skip("noisy (noisy_rules.txt)".into());
+    }
+    let level = cfg
+        .tuning
+        .get(&id)
+        .copied()
+        .unwrap_or_else(|| level_rank(&text(doc.get("level"))))
+        // No level: informational (shown, never above the analyst's floor).
+        .max(1);
+    let Node::Map(det) = det else {
+        return Outcome::Error("`detection` is not a map".into());
+    };
+    // Where the rule's events are: as written, or one variant per log the
+    // logsource maps to.
+    let profile = opts.profile_of(path);
+    let names_channel = det
+        .iter()
+        .any(|(k, v)| k != "condition" && mentions_channel(v));
+    let variants: Vec<Option<Variant>> =
+        if profile == Profile::AsWritten || (profile == Profile::Auto && names_channel) {
+            vec![None]
+        } else {
+            let ls = doc.get("logsource");
+            let get = |k: &str| ls.and_then(|l| l.get(k));
+            match logsource::map(
+                get("product").and_then(Node::as_str),
+                &list(get("category")),
+                &list(get("service")),
+            ) {
+                Mapped::Any => vec![None],
+                Mapped::Variants(v) => v.into_iter().map(Some).collect(),
+                Mapped::Unsupported(why) => return Outcome::Skip(why),
+            }
+        };
+    // `selection | count(f) by g > N`: the part before `|` is a hidden base
+    // rule, the aggregation a correlation over it (D-068).
+    let mut aggregation: Option<String> = None;
+    let mut names = Vec::new();
+    let mut sels = Vec::new();
+    let mut alts = Vec::new();
+    for var in &variants {
+        let cx = Ctx {
+            aliases: &cfg.aliases,
+            expand: &cfg.expand,
+            variant: var.as_ref(),
+        };
+        let first = sels.len();
+        names.clear();
+        let mut cond_text: Vec<String> = Vec::new();
+        for (k, v) in det {
+            match k.as_str() {
+                "condition" => {
+                    cond_text = v
+                        .strings()
+                        .into_iter()
+                        .map(|c| match c.split_once('|') {
+                            Some((left, agg)) => {
+                                aggregation = Some(agg.trim().to_string());
+                                left.trim().to_string()
+                            }
+                            None => c,
+                        })
+                        .collect()
+                }
+                "timeframe" => {}
+                _ => match compile::selection(v, &cx) {
+                    Ok(s) => {
+                        names.push(k.clone());
+                        sels.push(s);
+                    }
+                    Err(e) if e.starts_with("expand placeholder") => {
+                        return Outcome::Skip(
+                            "expand placeholder without values (config/expand/)".into(),
+                        );
+                    }
+                    Err(e) => return Outcome::Error(format!("selection `{k}`: {e}")),
+                },
+            }
+        }
+        if cond_text.is_empty() {
+            return Outcome::Error("no condition".into());
+        }
+        let mut conds = Vec::new();
+        for c in &cond_text {
+            match compile::condition(c, &names) {
+                Ok(c) => conds.push(offset(c, first)),
+                Err(e) if e.starts_with("aggregation") => {
+                    return Outcome::Skip("count() aggregation (not supported)".into());
+                }
+                Err(e) => return Outcome::Error(format!("condition: {e}")),
+            }
+        }
+        let cond = if conds.len() == 1 {
+            conds.pop().unwrap()
+        } else {
+            Cond::Or(conds)
+        };
+        alts.push(match var {
+            None => cond,
+            Some(v) => {
+                sels.push(scope_sel(v));
+                Cond::And(vec![Cond::Sel(sels.len() - 1), cond])
+            }
+        });
+    }
+    let cond = if alts.len() == 1 {
+        alts.pop().unwrap()
+    } else {
+        Cond::Or(alts)
+    };
+    let scopes: Vec<_> = sels.iter().map(compile::sel_scope).collect();
+    let scope = compile::cond_scope(&cond, &scopes);
+    let mut fields = Vec::new();
+    for s in &sels {
+        compile::tested_fields(s, &mut fields);
+    }
+    let mut r = meta(doc, path, id.clone(), level, status);
+    r.fields = fields;
+    r.sels = sels;
+    r.cond = cond;
+    r.chans = scope.chans.map(|s| s.into_iter().collect());
+    r.eids = scope.eids.map(|s| s.into_iter().collect());
+    if let Some(agg) = aggregation {
+        let timeframe = doc
+            .get("detection")
+            .and_then(|d| d.get("timeframe"))
+            .or_else(|| doc.get("timeframe"))
+            .and_then(Node::as_str);
+        let base = format!("{id}:base");
+        return match super::corr::parse_aggregation(&agg, timeframe, &base) {
+            Ok(c) => {
+                let mut corr = meta(doc, path, id, level, r.status.clone());
+                corr.corr = Some(Box::new(c));
+                r.id = base.clone();
+                r.name = base;
+                Outcome::Pair(Box::new(r), Box::new(corr))
+            }
+            Err(e) => Outcome::Error(e),
+        };
+    }
+    Outcome::Rule(Box::new(r))
+}
+
+/// Quotes plain scalars that start with `*` (`- *\\evil.exe`,
+/// `Image: *\\x.exe`): wildcards, not aliases.
+/// YAML, read again with `*values` quoted when they were taken as aliases
+/// (a common slip: a wildcard meant).
+fn parse_lenient(text: &str) -> Result<Vec<Node>, String> {
+    yaml::parse(text).or_else(|e| {
+        if e.contains("unknown anchor") {
+            yaml::parse(&quote_star_values(text)).map_err(|_| e)
+        } else {
+            Err(e)
+        }
+    })
+}
+
+fn quote_star_values(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 64);
+    for line in text.lines() {
+        let t = line.trim_start();
+        let lead = &line[..line.len() - t.len()];
+        let (head, val) = if let Some(rest) = t.strip_prefix("- ") {
+            (format!("{lead}- "), rest)
+        } else if let Some(i) = t.find(": ") {
+            (format!("{lead}{}: ", &t[..i]), &t[i + 2..])
+        } else {
+            (String::new(), "")
+        };
+        let v = val.trim_end();
+        if v.starts_with('*') && !v.contains(" #") {
+            out.push_str(&head);
+            out.push('\'');
+            out.push_str(&v.replace('\'', "''"));
+            out.push('\'');
+        } else {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
 }
 
 fn compile_file(path: &Path, cfg: &Config, opts: &LoadOptions) -> Vec<Outcome> {
@@ -355,11 +646,12 @@ fn compile_file(path: &Path, cfg: &Config, opts: &LoadOptions) -> Vec<Outcome> {
         Ok(b) => String::from_utf8_lossy(&b).into_owned(),
         Err(e) => return vec![Outcome::Error(e.to_string())],
     };
-    match yaml::parse(&text) {
+    let parsed = parse_lenient(&text);
+    match parsed {
         Ok(docs) if docs.is_empty() => vec![Outcome::Skip("not a rule (empty)".into())],
         Ok(docs) => docs
             .iter()
-            .map(|d| compile_doc(d, path, cfg, opts))
+            .flat_map(|d| compile_doc(d, path, cfg, opts))
             .collect(),
         Err(e) => vec![Outcome::Error(format!("YAML: {e}"))],
     }
@@ -421,12 +713,21 @@ pub fn load(paths: &[PathBuf], opts: &LoadOptions) -> (RuleSet, LoadReport) {
                     }
                     rules.push(*r);
                 }
+                Outcome::Pair(base, corr) => {
+                    if !ids.insert(corr.id.to_ascii_lowercase()) {
+                        *report.skipped.entry("duplicate id".into()).or_default() += 1;
+                        continue;
+                    }
+                    rules.push(*base);
+                    rules.push(*corr);
+                }
                 Outcome::Skip(why) => *report.skipped.entry(why).or_default() += 1,
                 Outcome::Error(e) => report.errors.push((files[i].clone(), e)),
             }
         }
     }
-    report.loaded = rules.len();
+    let rules = finalize(rules, opts, &mut report);
+    report.loaded = rules.iter().filter(|r| !r.hidden).count();
     (RuleSet::build(rules, cfg.details, cfg.aliases), report)
 }
 
@@ -439,10 +740,10 @@ pub fn load_str(text: &str, opts: &LoadOptions) -> (RuleSet, LoadReport) {
         ..Default::default()
     };
     let path = PathBuf::from("<text>");
-    let outs = match yaml::parse(text) {
+    let outs = match parse_lenient(text) {
         Ok(docs) => docs
             .iter()
-            .map(|d| compile_doc(d, &path, &cfg, opts))
+            .flat_map(|d| compile_doc(d, &path, &cfg, opts))
             .collect(),
         Err(e) => vec![Outcome::Error(format!("YAML: {e}"))],
     };
@@ -450,10 +751,154 @@ pub fn load_str(text: &str, opts: &LoadOptions) -> (RuleSet, LoadReport) {
     for o in outs {
         match o {
             Outcome::Rule(r) => rules.push(*r),
+            Outcome::Pair(a, b) => {
+                rules.push(*a);
+                rules.push(*b);
+            }
             Outcome::Skip(why) => *report.skipped.entry(why).or_default() += 1,
             Outcome::Error(e) => report.errors.push((path.clone(), e)),
         }
     }
-    report.loaded = rules.len();
+    let rules = finalize(rules, opts, &mut report);
+    report.loaded = rules.iter().filter(|r| !r.hidden).count();
     (RuleSet::build(rules, cfg.details, cfg.aliases), report)
+}
+
+/// Links correlations to their rules, then applies the level and id
+/// filters: a correlation kept keeps its rules (hidden unless `generate`).
+fn finalize(rules: Vec<Rule>, opts: &LoadOptions, report: &mut LoadReport) -> Vec<Rule> {
+    let mut by_ref: HashMap<String, usize> = HashMap::new();
+    for (i, r) in rules.iter().enumerate() {
+        for k in [&r.id, &r.name] {
+            if !k.is_empty() {
+                by_ref.entry(k.to_ascii_lowercase()).or_insert(i);
+            }
+        }
+    }
+    // A rule whose converted copy is loaded too (hayabusa-rules keeps the
+    // SigmaHQ id in `related: derived`): the copy runs, not both.
+    let derived: HashSet<String> = rules
+        .iter()
+        .flat_map(|r| r.derived_from.iter().cloned())
+        .collect();
+    let superseded: Vec<bool> = rules
+        .iter()
+        .map(|r| derived.contains(&r.id.to_ascii_lowercase()))
+        .collect();
+    // A correlation without a level takes its rules' highest.
+    let mut rules = rules;
+    for i in 0..rules.len() {
+        if rules[i].level == 0
+            && let Some(c) = &rules[i].corr
+        {
+            let lvl = c
+                .refs
+                .iter()
+                .filter_map(|x| by_ref.get(&x.to_ascii_lowercase()))
+                .map(|&k| rules[k].level)
+                .max()
+                .unwrap_or(1);
+            rules[i].level = lvl.max(1);
+        }
+    }
+    let selected =
+        |r: &Rule| opts.ids.is_empty() || opts.ids.iter().any(|x| x.eq_ignore_ascii_case(&r.id));
+    let mut keep = vec![false; rules.len()];
+    let mut hidden = vec![false; rules.len()];
+    let mut links: Vec<Option<Vec<usize>>> = vec![None; rules.len()];
+    for (i, r) in rules.iter().enumerate() {
+        if let Some(c) = &r.corr {
+            let found: Option<Vec<usize>> = c
+                .refs
+                .iter()
+                .map(|x| by_ref.get(&x.to_ascii_lowercase()).copied())
+                .collect();
+            match found {
+                Some(v) if v.iter().all(|&k| rules[k].corr.is_none()) => links[i] = Some(v),
+                Some(_) => report.errors.push((
+                    r.path.clone(),
+                    "correlation of correlations is not supported".into(),
+                )),
+                None => report.errors.push((
+                    r.path.clone(),
+                    format!(
+                        "correlation `{}` names a rule that is not loaded: {}",
+                        r.title,
+                        c.refs.join(", ")
+                    ),
+                )),
+            }
+        }
+    }
+    for (i, r) in rules.iter().enumerate() {
+        let ok = r.corr.is_none() || links[i].is_some();
+        keep[i] = ok && !superseded[i] && r.level >= opts.min_level && selected(r);
+    }
+    // Rules a kept correlation uses: kept, hidden unless `generate` (or
+    // reported in their own right).
+    for (i, r) in rules.iter().enumerate() {
+        if let (true, Some(v), Some(c)) = (keep[i], &links[i], &r.corr) {
+            for &b in v {
+                if !keep[b] || !c.generate {
+                    hidden[b] = hidden[b] || !keep[b] || !c.generate;
+                }
+                keep[b] = true;
+            }
+        }
+    }
+    // Counted once the correlations took the rules they need.
+    for (i, r) in rules.iter().enumerate() {
+        if keep[i] || (r.corr.is_some() && links[i].is_none()) {
+            continue;
+        }
+        let why = if superseded[i] {
+            "converted copy loaded too (related: derived)"
+        } else if r.level < opts.min_level {
+            "below the minimum level"
+        } else {
+            "not selected"
+        };
+        *report.skipped.entry(why.into()).or_default() += 1;
+    }
+    // New indexes, and the correlations' rule indexes in them.
+    let mut new_ix = vec![u32::MAX; rules.len()];
+    let mut n = 0;
+    for i in 0..rules.len() {
+        if keep[i] {
+            new_ix[i] = n;
+            n += 1;
+        }
+    }
+    let authors: Vec<String> = rules.iter().map(|r| r.author.clone()).collect();
+    let mut out = Vec::with_capacity(n as usize);
+    for (i, mut r) in rules.into_iter().enumerate() {
+        if !keep[i] {
+            continue;
+        }
+        r.hidden = hidden[i];
+        if let (Some(c), Some(v)) = (r.corr.as_mut(), &links[i]) {
+            c.rules = v.iter().map(|&k| new_ix[k]).collect();
+            // Credit: a correlation without an author names its rules'.
+            if r.author.is_empty() {
+                let mut a: Vec<&str> = v
+                    .iter()
+                    .map(|&k| authors[k].as_str())
+                    .filter(|x| !x.is_empty())
+                    .collect();
+                a.dedup();
+                r.author = a.join(", ");
+            }
+            // Something stable to select it by (`--rule-id`).
+            if r.id.is_empty() {
+                let stem = r
+                    .path
+                    .file_stem()
+                    .map(|x| x.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                r.id = format!("{stem}#correlation");
+            }
+        }
+        out.push(r);
+    }
+    out
 }

@@ -23,6 +23,17 @@ Built-in Sigma detection: the Hayabusa binary is no longer needed.
   not decoded, and a rule is evaluated only when one of its literals is found in
   the event (one Aho-Corasick pass per field). Hayabusa's 599 sample logs
   (47,685 events) against 4,686 rules: 0.83 s on 4 cores, rule loading included.
+- SigmaHQ and other public rule sets: rules are scoped by their `logsource`
+  (`process_creation` runs on Sysmon 1 and on Security 4688 with its field
+  names, `service: security` on the Security log...); `--profile auto|sigma|as-written`
+  and `--profile-for DIR=PROFILE`. All 444 SigmaHQ regression samples give the
+  expected match count. Non-Windows rules are skipped with the reason.
+- Correlation rules (`event_count`, `value_count`, `temporal`, `temporal_ordered`,
+  `value_sum`, `value_avg`) and the deprecated `| count() by` aggregation: each
+  burst is one detection line (`corr`, `group`, `n`, `first`, `last`, `ids`).
+- Lenient with common slips in public rule files (unquoted `*` values, PCRE
+  character classes, `sel_*` without `1 of`), and a rule whose Hayabusa
+  conversion is also loaded runs once.
 - Custom rules can target forhunt's artifacts (`Channel: Prefetch`, `Registry`,
   `MFT`, `UsnJrnl`, `Mail`) with forhunt's field names.
 

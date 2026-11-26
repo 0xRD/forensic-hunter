@@ -1750,13 +1750,28 @@ fn sigma_detects_with_built_in_engine() {
     ]));
     let s = summary(&v);
     assert_eq!(s["cmd"], "sigma");
-    assert_eq!(s["rules"], 3);
-    assert_eq!(s["rules_hit"], 3);
-    let dets = &v[..v.len() - 1];
+    // The base rule of the correlation is hidden (Sigma `generate: false`).
+    assert_eq!(s["rules"], 4);
+    assert_eq!(s["rules_hit"], 4);
+    assert_eq!(s["correlations"], 1);
+    let burst = v
+        .iter()
+        .find(|d| d["corr"] == "event_count")
+        .expect("correlation");
+    assert_eq!(burst["rule"], "Password Guessing From One Address");
+    assert_eq!(burst["group"]["IpAddress"], "203.0.113.50");
+    assert_eq!(burst["n"], 37);
+    assert_eq!(burst["ids"].as_array().unwrap().len(), 5);
+    assert!(!v.iter().any(|d| d["rule"] == "Failed Logon"));
+    let dets: Vec<&Value> = v[..v.len() - 1]
+        .iter()
+        .filter(|d| d["corr"].is_null())
+        .collect();
     // Encoded PowerShell in both Security 4688 and Sysmon 1, with details
     // from the rule's template and the rule author (DRL 1.1 attribution).
     let enc: Vec<&Value> = dets
         .iter()
+        .copied()
         .filter(|d| d["rule"] == "Encoded PowerShell Command Line")
         .collect();
     assert_eq!(enc.len(), 2);
@@ -1829,7 +1844,7 @@ fn sigma_levels_groups_and_reports() {
     ]);
     assert!(o.status.success());
     let err = String::from_utf8_lossy(&o.stderr);
-    assert!(err.contains("3 rules loaded from 5 files"), "{err}");
+    assert!(err.contains("4 rules loaded from 6 files"), "{err}");
     assert!(err.contains("1 status deprecated"), "{err}");
     assert!(
         err.contains("unsupported modifier `nosuchmodifier`"),
@@ -1837,7 +1852,7 @@ fn sigma_levels_groups_and_reports() {
     );
     // The rule list.
     let l = lines(&ok(&["sigma", "-q", &fx(""), "-R", &rules, "--list-rules"]));
-    assert_eq!(l.len(), 3);
+    assert_eq!(l.len(), 4);
     assert!(l.iter().all(|r| r["auth"] == "forhunt tests"));
     // Full events.
     let j = lines(&ok(&[
@@ -1849,7 +1864,16 @@ fn sigma_levels_groups_and_reports() {
         "-F",
         "jsonl",
     ]));
-    assert!(j.iter().all(|d| d["event"]["event_id"].is_u64()));
+    assert!(
+        j.iter()
+            .filter(|d| d["corr"].is_null())
+            .all(|d| d["event"]["event_id"].is_u64())
+    );
+    // A correlation line lists every member event.
+    assert!(
+        j.iter()
+            .any(|d| d["corr"] == "event_count" && d["ids"].as_array().unwrap().len() == 37)
+    );
 }
 
 #[test]

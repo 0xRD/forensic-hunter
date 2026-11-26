@@ -13,15 +13,17 @@
 //! decoding events no rule can match.
 
 mod compile;
+pub mod corr;
 mod eval;
 mod load;
+mod logsource;
 pub mod yaml;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub use load::{LoadOptions, LoadReport, load, load_str};
+pub use load::{LoadOptions, LoadReport, Profile, load, load_str};
 
 use crate::event::EventView;
 use compile::{Cond, Sel};
@@ -57,6 +59,8 @@ pub fn level_name(r: u8) -> &'static str {
 #[derive(Debug, Clone)]
 pub struct Rule {
     pub id: String,
+    /// Sigma `name` (what correlations reference), else empty.
+    pub name: String,
     pub title: String,
     /// 1 informational .. 5 critical (after `level_tuning.txt`).
     pub level: u8,
@@ -83,6 +87,12 @@ pub struct Rule {
     eids: Option<Vec<u32>>,
     /// Necessary (field, literal) pairs, when the condition has them.
     req: Option<compile::Req>,
+    /// Only used by correlations: matched, never reported on its own.
+    pub hidden: bool,
+    /// A correlation rule (no per-event detection of its own).
+    pub corr: Option<Box<corr::Corr>>,
+    /// Ids this rule was converted from (`related: type: derived`).
+    pub derived_from: Vec<String>,
 }
 
 impl Rule {
@@ -125,11 +135,16 @@ pub struct RuleSet {
     aliases: HashMap<String, String>,
     /// Number of interned payload field names.
     names: usize,
+    /// Base rule -> (correlation, position of the base in it).
+    corr_of: HashMap<u32, Vec<(u32, u16)>>,
+    /// Correlation -> per base position: group-by fields and value field.
+    corr_fields: HashMap<u32, Vec<CorrFields>>,
     /// Matching plans per (channel, event id), shared by all threads.
     plans: std::sync::Mutex<PlanCache>,
 }
 
 type PlanCache = HashMap<(Box<str>, u32), Arc<Plan>>;
+type CorrFields = (Vec<compile::FieldRef>, Option<compile::FieldRef>);
 /// Field -> (literal -> gated rule indexes).
 type FieldLits = Vec<(compile::FieldRef, HashMap<Box<str>, Vec<u32>>)>;
 /// Event id -> (channel, plan).
@@ -180,7 +195,40 @@ impl RuleSet {
                 _ => {}
             }
         }
+        let mut corr_of: HashMap<u32, Vec<(u32, u16)>> = HashMap::new();
+        let mut corr_fields: HashMap<u32, Vec<CorrFields>> = HashMap::new();
+        for (i, r) in rules.iter().enumerate() {
+            let Some(c) = &r.corr else { continue };
+            let mut per = Vec::new();
+            for (pos, &b) in c.rules.iter().enumerate() {
+                corr_of.entry(b).or_default().push((i as u32, pos as u16));
+                let base = &rules[b as usize];
+                // A group-by alias names each rule's own field.
+                let field = |g: &str| -> compile::FieldRef {
+                    let f = c
+                        .aliases
+                        .get(g)
+                        .and_then(|m| {
+                            m.iter()
+                                .find(|(k, _)| {
+                                    k.eq_ignore_ascii_case(&base.name)
+                                        || k.eq_ignore_ascii_case(&base.id)
+                                })
+                                .map(|(_, f)| f.as_str())
+                        })
+                        .unwrap_or(g);
+                    compile::resolve_field(f, &aliases)
+                };
+                per.push((
+                    c.group_by.iter().map(|g| field(g)).collect(),
+                    c.field.as_deref().map(field),
+                ));
+            }
+            corr_fields.insert(i as u32, per);
+        }
         RuleSet {
+            corr_of,
+            corr_fields,
             rules,
             by_channel,
             any_channel,
@@ -285,6 +333,67 @@ impl RuleSet {
         let p = Arc::new(p);
         plans.insert((channel.into(), eid), p.clone());
         p
+    }
+
+    /// True when some rule is a correlation (callers then keep
+    /// [`RuleSet::observe`] results and run [`RuleSet::correlate`]).
+    pub fn has_correlations(&self) -> bool {
+        !self.corr_fields.is_empty()
+    }
+
+    /// What correlations need from an event that matched `hits`.
+    pub fn observe(&self, ev: &EventView<'_>, hits: &[u32], out: &mut Vec<corr::Obs>) {
+        if self.corr_of.is_empty() {
+            return;
+        }
+        let mut e: Option<eval::Ev<'_, '_>> = None;
+        for &h in hits {
+            let Some(cs) = self.corr_of.get(&h) else {
+                continue;
+            };
+            let e = e.get_or_insert_with(|| eval::Ev::new(ev, 0));
+            let val = |f: &compile::FieldRef| {
+                let mut v = None;
+                e.each(f, |i| {
+                    v = Some(e.orig(i).to_string());
+                    true
+                });
+                v
+            };
+            for &(c, pos) in cs {
+                let Some((group, value)) =
+                    self.corr_fields.get(&c).and_then(|v| v.get(pos as usize))
+                else {
+                    continue;
+                };
+                let g: Vec<String> = group
+                    .iter()
+                    .map(|f| val(f).unwrap_or_default().to_lowercase())
+                    .collect();
+                out.push(corr::Obs {
+                    corr: c,
+                    base: pos,
+                    ts: ev.ts,
+                    group: g.join("\u{1f}").into(),
+                    value: value
+                        .as_ref()
+                        .and_then(val)
+                        .map(|v| v.to_lowercase().into()),
+                });
+            }
+        }
+    }
+
+    /// Runs every correlation over the observations; one burst per
+    /// detection (rule = the correlation's index).
+    pub fn correlate<H: Clone>(&self, obs: Vec<(corr::Obs, H)>) -> Vec<corr::Burst<H>> {
+        let corrs: HashMap<u32, &corr::Corr> = self
+            .rules
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| Some((i as u32, r.corr.as_deref()?)))
+            .collect();
+        corr::correlate(&corrs, obs)
     }
 
     /// A matcher for one thread.

@@ -1,0 +1,29 @@
+title: Failed Logon
+name: failed_logon
+id: 8b0c1a52-3d0e-4c66-9a40-6a1f2e1e0006
+status: test
+description: A failed logon (base rule of the correlation below; test rule).
+author: forhunt tests
+logsource:
+    product: windows
+    service: security
+detection:
+    selection:
+        EventID: 4625
+    condition: selection
+level: informational
+---
+title: Password Guessing From One Address
+id: 8b0c1a52-3d0e-4c66-9a40-6a1f2e1e0007
+status: test
+author: forhunt tests
+correlation:
+    type: event_count
+    rules:
+        - failed_logon
+    group-by:
+        - IpAddress
+    timespan: 10m
+    condition:
+        gte: 20
+level: high
