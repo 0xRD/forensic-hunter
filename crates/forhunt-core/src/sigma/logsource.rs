@@ -85,7 +85,6 @@ const REG_4657: Variant = Variant {
         ("TargetObject", "ObjectName"),
         ("Details", "NewValue"),
         ("Image", "ProcessName"),
-        ("ProcessId", "ProcessId"),
     ],
     values: &[],
     extra: None,
@@ -178,7 +177,6 @@ fn service(s: &str) -> Option<&'static [&'static str]> {
         "bits" => "bits-client",
         "defender" | "windows-defender" => "windefend",
         "task-scheduler" => "taskscheduler",
-        "image_loaded" => return None,
         s => s,
     };
     Some(match s {

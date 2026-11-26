@@ -132,7 +132,8 @@ if [ "$CHECK" = 1 ]; then
     n="$(find "$PREFIX/rules/hayabusa-rules/hayabusa" "$PREFIX/rules/hayabusa-rules/sigma" -name '*.yml' 2>/dev/null | wc -l | tr -d ' ')"
     echo "rules: $PREFIX/rules/hayabusa-rules ($(sed -n 's/^commit=//p' "$rinfo" | cut -c1-12), $n files)"
   else
-    echo "rules: not installed (bash $HERE/install.sh --no-forhunt asks before downloading them, ~10 MB)"; ok=0
+    # Optional (downloaded only on a yes): not a reason to say "not ready".
+    echo "rules: not installed, optional (bash $HERE/install.sh --no-forhunt asks before downloading them, ~10 MB)"
   fi
   if [ "$ok" = 1 ]; then echo ready; exit 0; fi
   exit 1
@@ -273,7 +274,10 @@ if [ "$WITH_RULES" = yes ] || { [ "$rules_current" = 1 ] && [ "$WITH_RULES" != n
     mkdir -p "$PREFIX/rules"
     rm -rf "$rdest.old"
     [ -d "$rdest" ] && mv "$rdest" "$rdest.old"
-    mv "$src" "$rdest"
+    if ! mv "$src" "$rdest"; then
+      [ -d "$rdest.old" ] && mv "$rdest.old" "$rdest"
+      die "cannot install the rules in $rdest; the previous rules were kept"
+    fi
     rm -rf "$rdest.old"
     n="$(find "$rdest/hayabusa" "$rdest/sigma" -name '*.yml' | wc -l | tr -d ' ')"
     echo "  installed in $rdest ($n rule files; run with: forhunt sigma <evidence>)"

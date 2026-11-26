@@ -18,10 +18,10 @@ pub(crate) struct Ev<'e, 'v> {
 
 /// `name` or `name[N]` (how forhunt names the items of a list value).
 fn name_is(field: &str, name: &str, ci: bool) -> bool {
-    if field.len() < name.len() {
+    // Event field names come from the evidence: not always ASCII.
+    let (Some(head), Some(tail)) = (field.get(..name.len()), field.get(name.len()..)) else {
         return false;
-    }
-    let (head, tail) = field.split_at(name.len());
+    };
     let head_ok = if ci {
         head.eq_ignore_ascii_case(name)
     } else {
@@ -62,15 +62,15 @@ impl<'e, 'v> Ev<'e, 'v> {
         }
         // Last: spaces and underscores ignored (Defender writes `New Value`
         // and `Threat Name`, rules `NewValue` and `ThreatName`).
-        let squash = |x: &str| -> String {
+        // Compared without allocating: this runs for every name a rule
+        // tests that the event lacks.
+        fn squash(x: &str) -> impl Iterator<Item = char> + '_ {
             x.chars()
                 .filter(|c| *c != ' ' && *c != '_')
                 .flat_map(char::to_lowercase)
-                .collect()
-        };
-        let want = squash(name);
+        }
         let v: Vec<u16> = (0..self.ev.fields.len().min(u16::MAX as usize))
-            .filter(|&i| squash(&self.ev.fields[i].name) == want)
+            .filter(|&i| squash(&self.ev.fields[i].name).eq(squash(name)))
             .map(|i| i as u16)
             .collect();
         v.into()
@@ -173,15 +173,7 @@ impl<'e, 'v> Ev<'e, 'v> {
                 re.is_match(if *lowered { self.low(i) } else { self.orig(i) })
             }
             M::Cidr(n) => n.contains(self.orig(i)),
-            M::Cmp(op, n) => parse_num(self.orig(i)).is_some_and(|x| {
-                use super::compile::CmpOp::*;
-                match op {
-                    Gt => x > *n,
-                    Ge => x >= *n,
-                    Lt => x < *n,
-                    Le => x <= *n,
-                }
-            }),
+            M::Cmp(op, n) => parse_num(self.orig(i)).is_some_and(|x| op.holds(x, *n)),
             M::FieldRef { other, kind } => self
                 .each(other, |o| {
                     let (a, b) = (self.low(i), self.low(o));

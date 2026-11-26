@@ -63,7 +63,7 @@ $RULES_DIGEST = 'ec441b7f5d631f05be2f3f50a88ca9f387b3d4b74d13843075403a4915945d9
 # xargs -0 sha256sum | sha256sum` computes it.
 function Get-TreeDigest([string]$Root) {
   $root = (Resolve-Path $Root).Path.TrimEnd('\')
-  $paths = [string[]](Get-ChildItem -Recurse -File -Force -Path $root | ForEach-Object {
+  $paths = [string[]](Get-ChildItem -Recurse -File -Force -LiteralPath $root | ForEach-Object {
     './' + $_.FullName.Substring($root.Length + 1).Replace('\', '/')
   })
   [Array]::Sort($paths, [StringComparer]::Ordinal)
@@ -79,7 +79,7 @@ function Get-TreeDigest([string]$Root) {
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 function Verify-Sha256([string]$Path, [string]$Expected) {
-  $got = (Get-FileHash -Algorithm SHA256 -Path $Path).Hash.ToLowerInvariant()
+  $got = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
   if ($got -ne $Expected.ToLowerInvariant()) {
     throw "checksum mismatch for $(Split-Path -Leaf $Path): expected $Expected, got $got"
   }
@@ -140,7 +140,8 @@ if ($Check) {
     $commit = ((Get-Content $rinfo | Where-Object { $_ -like 'commit=*' }) -replace '^commit=', '')
     Write-Host "rules: $(Join-Path $Prefix 'rules\hayabusa-rules') ($($commit.Substring(0, [Math]::Min(12, $commit.Length))))"
   }
-  else { Write-Host 'rules: not installed (-NoForhunt asks before downloading them, ~10 MB)'; $ok = $false }
+  # Optional (downloaded only on a yes): not a reason to say "not ready".
+  else { Write-Host 'rules: not installed, optional (-NoForhunt asks before downloading them, ~10 MB)' }
   if ($ok) { Write-Host 'ready'; exit 0 }
   exit 1
 }
@@ -255,14 +256,24 @@ try {
         Write-Host "  sha256 ok  hayabusa-rules $($RULES_COMMIT.Substring(0, 12)) (content)"
       }
       else { Write-Host '  note: -RulesLatest is not pinned: only HTTPS vouches for it' }
-      Set-Content -Encoding ASCII -Path (Join-Path $src.FullName '.forhunt-rules') -Value @(
+      New-Item -ItemType Directory -Force -Path $rulesDir | Out-Null
+      # Copied next to the installed set (the temporary folder may be on
+      # another drive), marked last, then swapped in: a failed copy leaves
+      # the previous rules as they were.
+      $rnew = "$rdest.new"; $rold = "$rdest.old"
+      foreach ($d in $rnew, $rold) { if (Test-Path -LiteralPath $d) { Remove-Item -Recurse -Force -LiteralPath $d } }
+      Copy-Item -Recurse -Force -LiteralPath $src.FullName -Destination $rnew
+      Set-Content -Encoding ASCII -LiteralPath (Join-Path $rnew '.forhunt-rules') -Value @(
         "commit=$ref", "source=https://github.com/$RulesRepo",
         'license=Detection Rule License 1.1 (https://github.com/SigmaHQ/Detection-Rule-License)',
         "installed=$((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))")
-      New-Item -ItemType Directory -Force -Path $rulesDir | Out-Null
-      if (Test-Path $rdest) { Remove-Item -Recurse -Force $rdest }
-      # Copy, not move: the temporary folder may be on another drive.
-      Copy-Item -Recurse -Force $src.FullName $rdest
+      if (Test-Path -LiteralPath $rdest) { Move-Item -LiteralPath $rdest -Destination $rold }
+      try { Move-Item -LiteralPath $rnew -Destination $rdest }
+      catch {
+        if (Test-Path -LiteralPath $rold) { Move-Item -LiteralPath $rold -Destination $rdest }
+        throw "cannot install the rules in ${rdest}; the previous rules were kept: $_"
+      }
+      if (Test-Path -LiteralPath $rold) { Remove-Item -Recurse -Force -LiteralPath $rold -ErrorAction SilentlyContinue }
       $n = (Get-ChildItem -Recurse -File -Filter '*.yml' -Path (Join-Path $rdest 'hayabusa'), (Join-Path $rdest 'sigma')).Count
       Write-Host "  installed in $rdest ($n rule files; run with: forhunt sigma <evidence>)"
     }

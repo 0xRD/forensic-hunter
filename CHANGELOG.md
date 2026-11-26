@@ -17,8 +17,7 @@ Built-in Sigma detection: the Hayabusa binary is no longer needed.
   `wide`/`utf16*`, `fieldref`, `exists`, `gt`/`gte`/`lt`/`lte`, `cased`,
   `expand`), wildcards and escapes, keyword selections, `1 of`/`all of`/`them`,
   and Hayabusa's `config/` (exclusions, noisy rules, level tuning, field aliases,
-  default details). Not yet: correlation rules and `| count()` (3 and 0 active
-  rules in the set; reported at load).
+  default details).
 - Fast: rules are picked per (channel, event id), events no rule can match are
   not decoded, and a rule is evaluated only when one of its literals is found in
   the event (one Aho-Corasick pass per field). Hayabusa's 599 sample logs
@@ -46,7 +45,9 @@ Skill:
   `-Rules`, which the skill passes only after asking the user. They come from
   hayabusa-rules at a pinned commit, checked against a SHA-256 digest of the
   content, into `<prefix>/rules/hayabusa-rules` (with `<prefix>/rules/custom`
-  for your own); `--rules-latest` takes the newest rules.
+  for your own); `--rules-latest` takes the newest rules. `--check` / `-Check`
+  reports them but does not require them, and a rules update swaps the new
+  set in only once it is complete (the previous one is kept on failure).
 - CI tests the installers with the forhunt of the commit, served as a local
   release mirror (`FORHUNT_BASE_URL`).
 - Step c runs `forhunt sigma`; new reference `references/sigma-rules.md` on

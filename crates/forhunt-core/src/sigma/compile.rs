@@ -12,6 +12,7 @@ use std::net::IpAddr;
 use memchr::memmem;
 use regex::{Regex, RegexBuilder};
 
+pub(crate) use super::corr::CmpOp;
 use super::yaml::Node;
 
 /// `System` values a rule can test.
@@ -105,14 +106,6 @@ pub(crate) enum Kind {
     Starts,
     Ends,
     Contains,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum CmpOp {
-    Gt,
-    Ge,
-    Lt,
-    Le,
 }
 
 #[derive(Debug, Clone)]
@@ -444,7 +437,9 @@ pub(crate) fn lower(s: &str) -> std::borrow::Cow<'_, str> {
             std::borrow::Cow::Borrowed(s)
         }
     } else {
-        let l = s.to_lowercase();
+        // Per character: `str::to_lowercase` turns a word-final Σ into ς,
+        // and a needle would then miss the same letters inside a word.
+        let l: String = s.chars().flat_map(char::to_lowercase).collect();
         if l == s {
             std::borrow::Cow::Borrowed(s)
         } else {
@@ -671,7 +666,6 @@ impl Ctx<'_> {
     }
 }
 
-/// Compiles one `Field|mod|mod: values` entry.
 /// Compiles one `Field|mod|mod: values` entry. Usually one test; `|all`
 /// over values that expand into variants (windash, base64offset) gives one
 /// test per value, each matching any of its variants.

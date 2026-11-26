@@ -310,6 +310,7 @@ impl RuleSet {
                 }
             }
         }
+        let mut moved = HashSet::new();
         for (f, lits) in by_field {
             let mut lits: Vec<(Box<str>, Vec<u32>)> = lits.into_iter().collect();
             lits.sort();
@@ -323,8 +324,18 @@ impl RuleSet {
                     for (_, v) in lits {
                         for g in v {
                             p.always.push(p.gated[g as usize]);
+                            moved.insert(g);
                         }
                     }
+                }
+            }
+        }
+        // Moved rules are no longer opened by their other fields' literals
+        // (they would run twice).
+        if !moved.is_empty() {
+            for (_, _, rules) in &mut p.fields {
+                for v in rules {
+                    v.retain(|g| !moved.contains(g));
                 }
             }
         }
@@ -366,19 +377,20 @@ impl RuleSet {
                 else {
                     continue;
                 };
-                let g: Vec<String> = group
-                    .iter()
-                    .map(|f| val(f).unwrap_or_default().to_lowercase())
-                    .collect();
+                let g: Vec<String> = group.iter().map(|f| val(f).unwrap_or_default()).collect();
+                let g = g.join("\u{1f}");
+                let key = compile::lower(&g);
+                let shown = matches!(key, std::borrow::Cow::Owned(_)).then(|| g.as_str().into());
                 out.push(corr::Obs {
                     corr: c,
                     base: pos,
                     ts: ev.ts,
-                    group: g.join("\u{1f}").into(),
+                    group: key.as_ref().into(),
+                    shown,
                     value: value
                         .as_ref()
                         .and_then(val)
-                        .map(|v| v.to_lowercase().into()),
+                        .map(|v| compile::lower(&v).into()),
                 });
             }
         }
@@ -487,22 +499,35 @@ impl Matcher<'_> {
 
     /// Appends the rules matching `ev` to `out` (ascending rule index).
     pub fn matches(&mut self, ev: &EventView<'_>, out: &mut Vec<u32>) {
-        let slot = self.cache.entry(ev.event_id).or_default();
-        let plan = match slot.iter().find(|(c, _)| c.as_ref() == ev.channel.as_ref()) {
-            Some((_, p)) => p.clone(),
+        // Borrowed from the local cache (no shared refcount touched per event).
+        let Matcher {
+            set,
+            cache,
+            memo,
+            open,
+        } = self;
+        let slot = cache.entry(ev.event_id).or_default();
+        let k = match slot
+            .iter()
+            .position(|(c, _)| c.as_ref() == ev.channel.as_ref())
+        {
+            Some(k) => k,
             None => {
-                let p = self.set.plan(&ev.channel, ev.event_id);
-                slot.push((ev.channel.as_ref().into(), p.clone()));
-                p
+                slot.push((
+                    ev.channel.as_ref().into(),
+                    set.plan(&ev.channel, ev.event_id),
+                ));
+                slot.len() - 1
             }
         };
+        let plan: &Plan = &slot[k].1;
         if plan.always.is_empty() && plan.gated.is_empty() {
             return;
         }
-        let e = eval::Ev::new(ev, self.set.names);
+        let e = eval::Ev::new(ev, set.names);
         let first = out.len();
         let run = |r: u32, memo: &mut Vec<u8>, out: &mut Vec<u32>| {
-            let rule = &self.set.rules[r as usize];
+            let rule = &set.rules[r as usize];
             memo.clear();
             memo.resize(rule.sels.len(), 0);
             if e.cond(&rule.cond, &rule.sels, memo) {
@@ -510,24 +535,24 @@ impl Matcher<'_> {
             }
         };
         for &r in &plan.always {
-            run(r, &mut self.memo, out);
+            run(r, memo, out);
         }
         if !plan.gated.is_empty() {
-            self.open.clear();
-            self.open.resize(plan.gated.len(), false);
+            open.clear();
+            open.resize(plan.gated.len(), false);
             for (f, ac, rules) in &plan.fields {
                 e.each(f, |i| {
                     for m in ac.find_overlapping_iter(e.low(i)) {
                         for &g in &rules[m.pattern().as_usize()] {
-                            self.open[g as usize] = true;
+                            open[g as usize] = true;
                         }
                     }
                     false
                 });
             }
             for (g, &r) in plan.gated.iter().enumerate() {
-                if self.open[g] {
-                    run(r, &mut self.memo, out);
+                if open[g] {
+                    run(r, memo, out);
                 }
             }
             out[first..].sort_unstable();

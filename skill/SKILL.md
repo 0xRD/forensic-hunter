@@ -31,7 +31,8 @@ bash scripts/install.sh --no-rules # Linux/macOS  (Windows: scripts/install.ps1 
 ```
 
 `--check` installs nothing. It prints `ready` only when forhunt is recent
-enough for these checklists and the Sigma rules are installed; otherwise it says what is
+enough for these checklists (the Sigma rules are optional: it reports
+whether they are installed but does not require them); otherwise it says what is
 missing or too old and the command that fixes it (a Homebrew forhunt is
 updated with `brew upgrade 0xrd/tap/forhunt`). Never work with a forhunt it
 calls too old: `forhunt checklist` refuses checklists newer than itself, and
