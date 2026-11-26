@@ -155,6 +155,68 @@ fully qualified names of one host, leftover files in an `-O` folder.
 Exit codes: 0 ok, 1 error, 2 usage, 3 no readable input, 4 corrupt input with `--strict`.
 Full reference: [skill/references/forhunt.md](skill/references/forhunt.md).
 
+## Sigma detection
+
+`forhunt sigma` runs Sigma rules over the same evidence as the other commands,
+with its own engine: no Hayabusa, no Python, nothing else to install.
+
+```bash
+bash skill/scripts/install.sh --rules        # download hayabusa-rules (asks first without --rules)
+forhunt sigma ./evidence -g                  # one line per (rule, host), most severe first
+forhunt sigma ./evidence --min-level high    # only high and critical rules
+forhunt sigma ./evidence -R ~/sigma/rules -R my-rules/   # other rule sets, your own
+forhunt sigma ./evidence -F jsonl -n 0 -o detections.jsonl   # every detection with its full event
+forhunt sigma --list-rules -R my-rules/      # what loads, what is skipped and why
+```
+
+**Rules.** No rule is shipped with forhunt. The skill installer downloads
+[hayabusa-rules](https://github.com/Yamato-Security/hayabusa-rules) only when
+you say yes (a prompt that defaults to no, or `--rules`). It pins them to a
+commit, checks them against a SHA-256 content digest and puts them in
+`<prefix>/rules/hayabusa-rules`, next to an empty `<prefix>/rules/custom` for
+your own rules. Without `-R`, forhunt reads `$FORHUNT_RULES`, else that
+`rules/` folder. You can also point `-R` at any other folder of Sigma rules:
+- a [SigmaHQ](https://github.com/SigmaHQ/sigma) checkout,
+- [mdecrevoisier](https://github.com/mdecrevoisier/SIGMA-detection-rules) or
+  [mbabinski](https://github.com/mbabinski/Sigma-Rules),
+- your own rules.
+
+[sigma-rules.md](skill/references/sigma-rules.md) covers writing rules for
+forhunt's artifacts (Prefetch, Registry, MFT, UsnJrnl, Mail) and testing them.
+
+**How it works.**
+1. *Loading.* Rules are compiled once. Hayabusa's `config/` is applied:
+   exclusions, noisy rules, level tuning, field aliases and details. A rule
+   whose Hayabusa conversion is also loaded runs only once.
+2. *Logsource mapping.* Each rule runs only on the (channel, event id) pairs
+   it can match. Generic rules (SigmaHQ style) are mapped from their
+   `logsource` to the Windows logs that hold such events. For example,
+   `process_creation` runs on Sysmon 1 and on Security 4688, with 4688's
+   field names. `--profile` and `--profile-for DIR=PROFILE` choose how
+   `logsource` is used (`auto`, `sigma` or `as-written`).
+3. *Matching.* Events that no rule can match are not decoded. A rule is
+   evaluated only when one of its literal strings occurs in the event (one
+   Aho-Corasick pass per field), and every artifact is scanned in parallel.
+4. *Correlations.* `event_count`, `value_count`, `temporal`,
+   `temporal_ordered`, `value_sum`, `value_avg` and the older `| count() by`
+   are run on the event times. Each burst is reported as one detection.
+
+Every field modifier used by the public rule sets is supported. All 444
+SigmaHQ regression samples give the expected match count. Hayabusa's 599 sample
+logs against 4,686 rules take 0.8 s on 4 cores. Each detection carries the
+rule's id, level, title and author, and the matched event's forhunt id
+(`forhunt show <id>`).
+
+> [!WARNING]
+> **Some Sigma rules can trigger antivirus / EDR detections.** Rule files
+> contain the strings they look for: malware names, attack tool command
+> lines, encoded PowerShell, mimikatz keywords. Some security products flag
+> these files when they are downloaded, unpacked or read. They may quarantine
+> part of the rule set or raise an alert on the analysis machine. Download the
+> rules on a machine where that is expected, or add an exclusion for the
+> rules folder (`<prefix>/rules`) with your security team's approval. forhunt
+> itself only reads the rules: it never runs anything they contain.
+
 ## Claude skill
 
 [`skill/`](skill/) packages the analysis method:
