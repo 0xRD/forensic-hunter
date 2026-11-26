@@ -71,7 +71,11 @@ struct DetSink<'a> {
     src: &'a str,
     hits: Vec<u32>,
     out: Vec<Det>,
+    /// Kept for correlations: what they need, and the event (id, host).
+    obs: Vec<(sigma::corr::Obs, Member)>,
 }
+
+type Member = (EventRef, Box<str>);
 
 impl Sink for DetSink<'_> {
     fn want_time(&mut self, t: Ts) -> bool {
@@ -91,9 +95,18 @@ impl Sink for DetSink<'_> {
         if self.hits.is_empty() {
             return;
         }
+        if self.set.has_correlations() {
+            let mut o = Vec::new();
+            self.set.observe(ev, &self.hits, &mut o);
+            let m: Member = (ev.id, ev.computer.as_ref().into());
+            self.obs.extend(o.into_iter().map(|x| (x, m.clone())));
+        }
         let mut shared: Option<Vec<u8>> = None;
         for &r in &self.hits {
             let rule = &self.set.rules()[r as usize];
+            if rule.hidden {
+                continue;
+            }
             let body = if self.full {
                 shared
                     .get_or_insert_with(|| {
@@ -172,7 +185,29 @@ pub fn run(a: SigmaArgs) -> anyhow::Result<()> {
              or install them with the skill installer (skill/scripts/install.sh)",
         ));
     }
+    let bad_profile = |p: &str| {
+        fail(
+            exit::USAGE,
+            format!("profile `{p}`: use auto, sigma or as-written"),
+        )
+    };
+    let profile = sigma::Profile::parse(&a.profile).ok_or_else(|| bad_profile(&a.profile))?;
+    let mut profiles = Vec::new();
+    for x in &a.profile_for {
+        let (dir, p) = x.rsplit_once('=').ok_or_else(|| {
+            fail(
+                exit::USAGE,
+                format!("--profile-for `{x}`: expected DIR=PROFILE"),
+            )
+        })?;
+        profiles.push((
+            PathBuf::from(dir),
+            sigma::Profile::parse(p).ok_or_else(|| bad_profile(p))?,
+        ));
+    }
     let opts = LoadOptions {
+        profile,
+        profiles,
         min_level: min,
         noisy: a.noisy,
         deprecated: a.deprecated,
@@ -188,7 +223,7 @@ pub fn run(a: SigmaArgs) -> anyhow::Result<()> {
             .collect();
         eprintln!(
             "forhunt: {} rules loaded from {} files in {:.2}s{}{}",
-            set.len(),
+            rep.loaded,
             rep.files,
             t.elapsed().as_secs_f64(),
             if skipped.is_empty() {
@@ -221,7 +256,7 @@ pub fn run(a: SigmaArgs) -> anyhow::Result<()> {
     if a.list_rules {
         let mut out = common::output(&a.output)?;
         let mut buf = Vec::new();
-        for r in set.rules() {
+        for r in set.rules().iter().filter(|r| !r.hidden) {
             buf.extend_from_slice(b"{\"rid\":");
             json::str(&mut buf, &r.id);
             buf.extend_from_slice(b",\"rule\":");
@@ -266,6 +301,7 @@ pub fn run(a: SigmaArgs) -> anyhow::Result<()> {
     );
     let progress = common::Progress::new(ctx.progress, inputs.bytes);
     let mut dets: Vec<Det> = Vec::new();
+    let mut obs: Vec<(sigma::corr::Obs, Member)> = Vec::new();
     let mut totals = Totals::default();
     let stop = AtomicBool::new(false);
     Engine::new(&ctx.pool).run(
@@ -283,17 +319,28 @@ pub fn run(a: SigmaArgs) -> anyhow::Result<()> {
                 src: &path,
                 hits: Vec::new(),
                 out: Vec::new(),
+                obs: Vec::new(),
             };
             let rep: UnitReport = src.parse_unit(u.unit, &mut sink);
             progress.add(common::unit_bytes(src), rep.records);
-            (sink.out, rep)
+            (sink.out, sink.obs, rep)
         },
-        |u, (part, rep)| {
+        |u, (part, o, rep)| {
             totals.add(inputs.sources[u.source].path(), &rep);
             dets.extend(part);
+            obs.extend(o);
         },
     );
     progress.clear();
+    // Correlations: bursts, most severe first, then by time.
+    let mut bursts = set.correlate(std::mem::take(&mut obs));
+    bursts.sort_by(|x, y| {
+        let (rx, ry) = (&set.rules()[x.rule as usize], &set.rules()[y.rule as usize]);
+        ry.level
+            .cmp(&rx.level)
+            .then(x.first.cmp(&y.first))
+            .then_with(|| rx.title.cmp(&ry.title))
+    });
     let rules = set.rules();
     // Deterministic: time, level (most severe first), rule title, event.
     dets.sort_by(|x, y| {
@@ -306,7 +353,7 @@ pub fn run(a: SigmaArgs) -> anyhow::Result<()> {
             })
             .then(x.id.cmp(&y.id))
     });
-    totals.matched = dets.len() as u64;
+    totals.matched = (dets.len() + bursts.len()) as u64;
 
     let mut out = common::output(&a.output)?;
     let mut buf = Vec::new();
@@ -324,9 +371,65 @@ pub fn run(a: SigmaArgs) -> anyhow::Result<()> {
         Some(tz) => t.write_in_tz(tz, buf),
         None => t.write_iso(buf),
     };
+    // Correlation detections: few, each standing for many events. Listed
+    // first, or with -g among the groups by level.
+    let mut burst_lines: Vec<(u8, Vec<u8>)> = Vec::new();
+    for b in &bursts {
+        let r = &set.rules()[b.rule as usize];
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"{\"rule\":");
+        json::str(&mut buf, &r.title);
+        buf.extend_from_slice(b",\"rid\":");
+        json::str(&mut buf, &r.id);
+        buf.extend_from_slice(b",\"lvl\":");
+        json::str(&mut buf, level_name(r.level));
+        if let Some(c) = &r.corr {
+            buf.extend_from_slice(b",\"corr\":");
+            json::str(&mut buf, c.kind.name());
+            if !c.group_by.is_empty() {
+                buf.extend_from_slice(b",\"group\":{");
+                for (j, (k, v)) in c.group_by.iter().zip(b.group.split('\u{1f}')).enumerate() {
+                    if j > 0 {
+                        buf.push(b',');
+                    }
+                    json::str(&mut buf, k);
+                    buf.push(b':');
+                    json::str(&mut buf, v);
+                }
+                buf.push(b'}');
+            }
+        }
+        buf.extend_from_slice(b",\"h\":");
+        json::str(&mut buf, b.members.first().map_or("", |m| &m.1));
+        buf.extend_from_slice(b",\"n\":");
+        json::u64(&mut buf, b.members.len() as u64);
+        buf.extend_from_slice(b",\"first\":\"");
+        write_ts(&mut buf, b.first);
+        buf.extend_from_slice(b"\",\"last\":\"");
+        write_ts(&mut buf, b.last);
+        buf.push(b'"');
+        write_mitre(&mut buf, &r.mitre());
+        buf.extend_from_slice(b",\"auth\":");
+        json::str(&mut buf, &r.author);
+        buf.extend_from_slice(b",\"ids\":[");
+        let cap = if full { usize::MAX } else { 5 };
+        for (j, m) in b.members.iter().take(cap).enumerate() {
+            if j > 0 {
+                buf.push(b',');
+            }
+            buf.push(b'"');
+            m.0.write(&mut buf);
+            buf.push(b'"');
+        }
+        buf.extend_from_slice(b"]}\n");
+        burst_lines.push((r.level, buf));
+    }
     if a.group {
-        write_groups(&set, &dets, a.limit, &mut buf, &write_ts);
+        write_groups(&set, &dets, a.limit, &mut buf, &write_ts, burst_lines);
     } else {
+        for (_, l) in burst_lines {
+            buf.extend_from_slice(&l);
+        }
         for &i in &shown {
             let d = &dets[i];
             let r = &rules[d.rule as usize];
@@ -383,15 +486,26 @@ pub fn run(a: SigmaArgs) -> anyhow::Result<()> {
             *by_rule.entry(d.rule).or_default() += 1;
             *hosts.entry(d.computer.clone()).or_default() += 1;
         }
+        for b in &bursts {
+            *levels
+                .entry(set.rules()[b.rule as usize].level)
+                .or_default() += 1;
+            *by_rule.entry(b.rule).or_default() += 1;
+        }
         buf.extend_from_slice(b"{\"summary\":{\"cmd\":\"sigma\",\"detections\":");
         json::u64(&mut buf, dets.len() as u64);
+        buf.extend_from_slice(b",\"correlations\":");
+        json::u64(&mut buf, bursts.len() as u64);
         buf.extend_from_slice(b",\"shown\":");
         json::u64(
             &mut buf,
             if a.group { dets.len() } else { shown.len() } as u64,
         );
         buf.extend_from_slice(b",\"rules\":");
-        json::u64(&mut buf, set.len() as u64);
+        json::u64(
+            &mut buf,
+            set.rules().iter().filter(|r| !r.hidden).count() as u64,
+        );
         buf.extend_from_slice(b",\"rules_hit\":");
         json::u64(&mut buf, by_rule.len() as u64);
         buf.extend_from_slice(b",\"rules_not_loaded\":");
@@ -475,7 +589,9 @@ fn write_groups(
     limit: usize,
     buf: &mut Vec<u8>,
     write_ts: &dyn Fn(&mut Vec<u8>, Ts),
+    bursts: Vec<(u8, Vec<u8>)>,
 ) {
+    let mut bursts = bursts.into_iter().peekable();
     struct G<'d> {
         rule: u32,
         host: &'d str,
@@ -529,6 +645,9 @@ fn write_groups(
     };
     for g in &groups[..n] {
         let r = &rules[g.rule as usize];
+        while let Some((_, l)) = bursts.next_if(|(lvl, _)| *lvl >= r.level) {
+            buf.extend_from_slice(&l);
+        }
         buf.extend_from_slice(b"{\"rule\":");
         json::str(buf, &r.title);
         buf.extend_from_slice(b",\"rid\":");
@@ -564,5 +683,8 @@ fn write_groups(
             buf.push(b'"');
         }
         buf.extend_from_slice(b"]}\n");
+    }
+    for (_, l) in bursts {
+        buf.extend_from_slice(&l);
     }
 }

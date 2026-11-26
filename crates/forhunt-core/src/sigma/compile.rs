@@ -648,10 +648,34 @@ pub(crate) struct Ctx<'a> {
     pub aliases: &'a HashMap<String, String>,
     /// Placeholder name (without `%`) -> values, for `|expand`.
     pub expand: &'a HashMap<String, Vec<String>>,
+    /// Logsource variant being compiled (field renames, value maps).
+    pub variant: Option<&'a super::logsource::Variant>,
+}
+
+impl Ctx<'_> {
+    /// A rule's field name, renamed for the variant, then resolved.
+    pub(crate) fn field(&self, name: &str) -> FieldRef {
+        let name = self
+            .variant
+            .and_then(|v| v.renames.iter().find(|(a, _)| *a == name))
+            .map_or(name, |(_, b)| *b);
+        resolve_field(name, self.aliases)
+    }
+
+    /// A value as the variant's events write it (`High` -> `S-1-16-12288`).
+    fn value(&self, field: &str, v: String) -> String {
+        self.variant
+            .and_then(|x| x.values.iter().find(|(f, _)| *f == field))
+            .and_then(|(_, m)| m.iter().find(|(a, _)| a.eq_ignore_ascii_case(v.trim())))
+            .map_or(v, |(_, b)| b.to_string())
+    }
 }
 
 /// Compiles one `Field|mod|mod: values` entry.
-pub(crate) fn field_test(key: &str, val: &Node, cx: &Ctx<'_>) -> Result<FieldTest, String> {
+/// Compiles one `Field|mod|mod: values` entry. Usually one test; `|all`
+/// over values that expand into variants (windash, base64offset) gives one
+/// test per value, each matching any of its variants.
+pub(crate) fn field_test(key: &str, val: &Node, cx: &Ctx<'_>) -> Result<Vec<FieldTest>, String> {
     let mut parts = key.split('|');
     let name = parts.next().unwrap_or_default().trim();
     let mut kind = Kind::Eq;
@@ -692,10 +716,14 @@ pub(crate) fn field_test(key: &str, val: &Node, cx: &Ctx<'_>) -> Result<FieldTes
             other => return Err(format!("unsupported modifier `{other}` in `{key}`")),
         }
     }
-    let field = resolve_field(name, cx.aliases);
+    let field = cx.field(name);
     let mut ms = Vec::new();
     let vals = scalars(val)?;
+    // Where each value's matchers start in `ms`.
+    let mut bounds = Vec::new();
     for v in vals {
+        bounds.push(ms.len());
+        let v = v.map(|v| cx.value(name, v));
         let Some(v) = v else {
             ms.push(M::Null);
             continue;
@@ -711,7 +739,7 @@ pub(crate) fn field_test(key: &str, val: &Node, cx: &Ctx<'_>) -> Result<FieldTes
         }
         if fieldref {
             ms.push(M::FieldRef {
-                other: resolve_field(v.trim(), cx.aliases),
+                other: cx.field(v.trim()),
                 kind,
             });
             continue;
@@ -723,7 +751,7 @@ pub(crate) fn field_test(key: &str, val: &Node, cx: &Ctx<'_>) -> Result<FieldTes
             continue;
         }
         if re {
-            let mut b = RegexBuilder::new(&v);
+            let mut b = RegexBuilder::new(&pcre_to_rust(&v));
             b.case_insensitive(re_flags.contains('i'))
                 .multi_line(re_flags.contains('m'))
                 .dot_matches_new_line(re_flags.contains('s'))
@@ -772,20 +800,104 @@ pub(crate) fn field_test(key: &str, val: &Node, cx: &Ctx<'_>) -> Result<FieldTes
             }
             continue;
         }
+        let device = cx.variant.is_some_and(|x| x.device_paths.contains(&name));
         for t in &texts {
-            ms.push(str_matcher(t, kind, cased, false)?);
+            let b = t.as_bytes();
+            let drive = b.len() > 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\';
+            match (device && drive, kind) {
+                (true, Kind::Eq) => ms.push(str_matcher(&t[2..], Kind::Ends, cased, false)?),
+                (true, Kind::Starts) => {
+                    ms.push(str_matcher(&t[2..], Kind::Contains, cased, false)?)
+                }
+                _ => ms.push(str_matcher(t, kind, cased, false)?),
+            }
         }
     }
     // `base64offset` gives 3 variants per value: `all` means "every value",
     // so variants of one value must be ORed. Rules never combine them; keep
     // `all` only where it is unambiguous.
-    if all && (b64off || wdash) && ms.len() > 1 {
-        return Err(format!(
-            "`{key}`: `all` with windash/base64offset is not supported"
-        ));
+    if all && ms.len() > bounds.len() {
+        bounds.push(ms.len());
+        let mut out = Vec::new();
+        for w in bounds.windows(2).rev() {
+            let group: Vec<M> = ms.drain(w[0]..w[1]).collect();
+            out.push(FieldTest {
+                field: field.clone(),
+                ms: fold(group)?,
+                all: false,
+            });
+        }
+        out.reverse();
+        return Ok(out);
     }
     let ms = if all { ms } else { fold(ms)? };
-    Ok(FieldTest { field, ms, all })
+    Ok(vec![FieldTest { field, ms, all }])
+}
+
+/// Rewrites PCRE / Python regex syntax the Rust engine reads differently:
+/// inside a character class, `[` is a nested class and `&&`, `--`, `~~` are
+/// set operations in Rust, literal characters in the rules' dialect.
+pub(crate) fn pcre_to_rust(re: &str) -> String {
+    let cs: Vec<char> = re.chars().collect();
+    let mut out = String::with_capacity(re.len() + 8);
+    let (mut i, mut class) = (0, false);
+    while i < cs.len() {
+        let c = cs[i];
+        if c == '\\' {
+            out.push(c);
+            if let Some(&n) = cs.get(i + 1) {
+                out.push(n);
+            }
+            i += 2;
+            continue;
+        }
+        if !class {
+            if c == '[' {
+                class = true;
+                out.push('[');
+                // `[^]...]` / `[]...]`: a leading `]` is a literal.
+                if cs.get(i + 1) == Some(&'^') {
+                    out.push('^');
+                    i += 1;
+                }
+                if cs.get(i + 1) == Some(&']') {
+                    out.push_str("\\]");
+                    i += 1;
+                }
+            } else {
+                out.push(c);
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            ']' => {
+                class = false;
+                out.push(']');
+            }
+            '[' if cs.get(i + 1) == Some(&':') => {
+                // POSIX class `[:alpha:]`: copy as is.
+                let end =
+                    (i + 2..cs.len().saturating_sub(1)).find(|&k| cs[k] == ':' && cs[k + 1] == ']');
+                match end {
+                    Some(e) => {
+                        out.extend(&cs[i..=e + 1]);
+                        i = e + 2;
+                        continue;
+                    }
+                    None => out.push_str("\\["),
+                }
+            }
+            '[' => out.push_str("\\["),
+            '&' | '-' | '~' if cs.get(i + 1) == Some(&c) => {
+                out.push(c);
+                out.push('\\');
+            }
+            _ => out.push(c),
+        }
+        i += 1;
+    }
+    out
 }
 
 fn expand_value(v: &str, table: &HashMap<String, Vec<String>>) -> Result<Vec<String>, String> {
@@ -822,7 +934,7 @@ pub(crate) fn selection(n: &Node, cx: &Ctx<'_>) -> Result<Sel, String> {
         Node::Map(m) => {
             let mut tests = Vec::with_capacity(m.len());
             for (k, v) in m {
-                tests.push(field_test(k, v, cx)?);
+                tests.extend(field_test(k, v, cx)?);
             }
             Ok(Sel::And(tests))
         }
@@ -1009,6 +1121,18 @@ impl CondParser<'_> {
                 self.i += 1;
                 match self.names.iter().position(|x| *x == n) {
                     Some(k) => Ok(Cond::Sel(k)),
+                    // `sel_*` without `1 of`: read as `1 of sel_*`.
+                    None if n.contains('*') => {
+                        let xs: Vec<Cond> = (0..self.names.len())
+                            .filter(|&k| glob_match(&n, &self.names[k]))
+                            .map(Cond::Sel)
+                            .collect();
+                        if xs.is_empty() {
+                            Err(format!("`{n}` names no selection"))
+                        } else {
+                            Ok(Cond::Or(xs))
+                        }
+                    }
                     None => Err(format!("unknown selection `{n}`")),
                 }
             }
@@ -1212,6 +1336,20 @@ mod tests {
         let n = Net::parse("fe80::/10").unwrap();
         assert!(n.contains("fe80::1"));
         assert!(!n.contains("10.0.0.1"));
+    }
+
+    #[test]
+    fn pcre_classes() {
+        assert_eq!(pcre_to_rust(r"[^^=%![(; ]*"), r"[^^=%!\[(; ]*");
+        assert_eq!(pcre_to_rust(r"[a&&b]"), r"[a&\&b]");
+        assert_eq!(pcre_to_rust(r"[[:alpha:]]x\["), r"[[:alpha:]]x\[");
+        assert_eq!(pcre_to_rust(r"[]a]"), r"[\]a]");
+        assert!(
+            regex::Regex::new(&pcre_to_rust(
+                r"^([^^=%![(; ]*[\^=%![(; ]){8,}[^^=%![(; ]*$"
+            ))
+            .is_ok()
+        );
     }
 
     #[test]

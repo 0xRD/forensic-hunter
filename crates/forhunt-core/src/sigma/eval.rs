@@ -60,7 +60,20 @@ impl<'e, 'v> Ev<'e, 'v> {
                 return v.into();
             }
         }
-        Box::new([])
+        // Last: spaces and underscores ignored (Defender writes `New Value`
+        // and `Threat Name`, rules `NewValue` and `ThreatName`).
+        let squash = |x: &str| -> String {
+            x.chars()
+                .filter(|c| *c != ' ' && *c != '_')
+                .flat_map(char::to_lowercase)
+                .collect()
+        };
+        let want = squash(name);
+        let v: Vec<u16> = (0..self.ev.fields.len().min(u16::MAX as usize))
+            .filter(|&i| squash(&self.ev.fields[i].name) == want)
+            .map(|i| i as u16)
+            .collect();
+        v.into()
     }
 
     fn sys_text(&self, s: Sys) -> &str {

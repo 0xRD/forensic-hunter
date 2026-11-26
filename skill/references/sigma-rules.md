@@ -17,6 +17,27 @@ when a report finding rests on a rule, name the rule and its author. Do not
 copy rule files into reports or repositories (that is sharing them, which
 needs the author, a link and the licence).
 
+## Rule sets
+
+Any folder of Sigma rules works; each source is read the way it is written:
+
+| Set | Licence | Notes |
+|---|---|---|
+| [hayabusa-rules](https://github.com/Yamato-Security/hayabusa-rules) (installed) | DRL 1.1 | Sigma + Hayabusa rules with `Channel`/`EventID` written in; 3 correlations |
+| [SigmaHQ/sigma](https://github.com/SigmaHQ/sigma) | DRL 1.1 | ~2,700 Windows rules, scoped by `logsource`; when hayabusa-rules is loaded too, its converted copies run instead of the originals |
+| [mdecrevoisier/SIGMA-detection-rules](https://github.com/mdecrevoisier/SIGMA-detection-rules) | CC0 | Active Directory and Security log rules, many correlations |
+| [mbabinski/Sigma-Rules](https://github.com/mbabinski/Sigma-Rules) | GPL-3.0 | threat-report rules |
+| [magicsword-io/LOLDrivers](https://github.com/magicsword-io/LOLDrivers) `detections/sigma*` | Apache-2.0 | vulnerable / malicious driver loads (Sysmon 6) |
+
+Add one with `git clone --depth 1 <repo> ~/.local/share/forensic-hunter/rules/<name>`
+(it then runs with every `forhunt sigma`), or `-R DIR` for one run. Never copy
+rule files into a report or a repository; name the rule and its author.
+
+`--profile` decides how rules use their `logsource`: `auto` (default: rules
+that name a `Channel` run as written, the others are mapped to the logs that
+hold such events), `sigma` (always mapped), `as-written` (never). Per folder:
+`--profile-for DIR=as-written`.
+
 ## Running
 
 ```bash
@@ -87,6 +108,12 @@ falsepositives:
     - Backup jobs that use rclone
 ```
 
+A generic Sigma rule (`logsource` only, no `Channel`) works too:
+`category: process_creation` runs on Sysmon 1 and on Security 4688 (where
+`Image` is read as `NewProcessName`), `service: security` on the Security log,
+`product: forhunt` + `service: prefetch|registry|mft|usnjrnl|mail` on forhunt's
+artifacts. Rules for other products (Linux, cloud) are skipped with the reason.
+
 Rules of thumb:
 - **Name `Channel` and `EventID`.** forhunt picks the rules to try for each
   event from them, and skips decoding events no rule can match. A rule without
@@ -125,9 +152,15 @@ Rules of thumb:
 - Conditions: `and`, `or`, `not`, parentheses, `1 of sel*`, `all of sel*`,
   `1 of them`, `all of them` (`them` leaves out selections named `_...`), or
   a list of conditions (OR).
-- Not supported (reported at load): correlation rules (`correlation:`) and
-  `| count()` aggregations. For counts, use `forhunt stats` / `search` and
-  judge thresholds yourself.
+- Correlations: `correlation:` documents (`event_count`, `value_count`,
+  `temporal`, `temporal_ordered`, `value_sum`, `value_avg`; `rules:` by `name`
+  or `id`, `group-by`, `timespan`, `condition: {gte: N, field: F}`) and the old
+  `condition: sel | count(F) by G > N` with `timeframe:`. A burst is one line:
+  `corr`, `group`, `n`, `first`, `last`, `ids` (up to 5; all with `-F jsonl`).
+  The rules a correlation uses do not report on their own unless the
+  correlation says `generate: true`.
+- Not supported (reported at load): `value_percentile`, correlations of
+  correlations, look-around regexes.
 - Values are compared as written in the rule (`0x1410` stays text; YAML does
   not turn it into a number).
 

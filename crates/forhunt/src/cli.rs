@@ -310,6 +310,14 @@ pub struct SigmaArgs {
     /// Only these rule ids. Repeatable.
     #[arg(long = "rule-id", value_name = "ID")]
     pub rule_id: Vec<String>,
+    /// How rules use their `logsource`: `auto` (rules naming a Channel run
+    /// as written, others are mapped to the Windows logs holding such
+    /// events: SigmaHQ rules), `sigma` (always mapped), `as-written`.
+    #[arg(long, default_value = "auto", value_name = "PROFILE")]
+    pub profile: String,
+    /// Profile of one rule folder: `DIR=PROFILE`. Repeatable.
+    #[arg(long = "profile-for", value_name = "DIR=PROFILE")]
+    pub profile_for: Vec<String>,
     /// List the loaded rules (JSONL) instead of scanning.
     #[arg(long)]
     pub list_rules: bool,
