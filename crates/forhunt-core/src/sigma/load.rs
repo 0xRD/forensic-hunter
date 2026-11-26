@@ -267,7 +267,8 @@ fn rule_files(paths: &[PathBuf], report: &mut LoadReport) -> Vec<PathBuf> {
                     !(e.file_type().is_dir()
                         && (n.starts_with('.') && e.depth() > 0
                             || is_config_dir(e.path())
-                            || (e.depth() > 0 && is_checkout(e.path()))))
+                            || (e.depth() > 0
+                                && (is_checkout(e.path()) || is_sigmahq_checkout(e.path())))))
                 });
             for e in walk {
                 match e {
@@ -673,7 +674,9 @@ fn expand_roots(paths: &[PathBuf]) -> Vec<PathBuf> {
             let mut kids: Vec<PathBuf> = rd
                 .flatten()
                 .map(|e| e.path())
-                .filter(|c| c.is_dir() && is_config_dir(&c.join("config")))
+                .filter(|c| {
+                    c.is_dir() && (is_config_dir(&c.join("config")) || is_sigmahq_checkout(c))
+                })
                 .collect();
             kids.sort();
             out.extend(kids);
