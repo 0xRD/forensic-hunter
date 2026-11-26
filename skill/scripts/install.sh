@@ -1,38 +1,34 @@
 #!/usr/bin/env bash
-# Installs or updates forhunt and its Sigma detection rules for the Forensic
-# Hunter skill (Linux, macOS).
+# Installs or updates forhunt and, if you say yes, its Sigma detection rules,
+# for the Forensic Hunter skill (Linux, macOS).
 #
 #   install.sh [--check] [--force] [--prefix DIR] [--forhunt-version vX.Y.Z]
-#              [--no-forhunt] [--no-rules] [--rules-latest]
-#              [--with-hayabusa [--hayabusa-version X.Y.Z]]
+#              [--no-forhunt] [--rules | --no-rules] [--rules-latest]
 #
 # - --check installs nothing: it says which forhunt and rules would be used,
 #   whether forhunt is recent enough for this skill, and how to update it.
 #   Exit code 0 when both are ready, 1 otherwise.
-# - Rules: Yamato Security's hayabusa-rules (Sigma and Hayabusa rules,
-#   Detection Rule License 1.1), at the commit pinned below and checked
-#   against a SHA-256 digest of its content, into <prefix>/rules/hayabusa-rules.
-#   `forhunt sigma` runs them (no Hayabusa binary). --rules-latest takes the
-#   newest rules instead (checked by HTTPS only). Your own rules go in
-#   <prefix>/rules/custom.
-# - --with-hayabusa also installs the Hayabusa binary (optional since forhunt
-#   0.8.0, which runs the rules itself).
+# - forhunt runs the detection rules itself (`forhunt sigma`): nothing else is
+#   installed.
+# - Rules are never downloaded without asking: in a terminal the script asks
+#   (default no); without one it downloads them only with --rules (an answer
+#   given in advance: the skill asks you before passing it). They are Yamato
+#   Security's hayabusa-rules (Sigma and Hayabusa rules, Detection Rule
+#   License 1.1, ~10 MB) at the commit pinned below, checked against a
+#   SHA-256 digest of their content, into <prefix>/rules/hayabusa-rules.
+#   --rules-latest takes the newest rules instead (checked by HTTPS only).
+#   Your own rules go in <prefix>/rules/custom.
 # - Run again at any time to update: what is already at the wanted version is
-#   left alone (--force installs it again), files are replaced atomically, and
-#   older Hayabusa versions in the prefix are removed.
+#   left alone (--force installs it again), files are replaced atomically.
 # - Detects OS and architecture.
-# - Downloads release archives from GitHub over HTTPS and verifies SHA-256:
-#   forhunt against the SHA256SUMS published with its release (or a pinned
-#   checksums/forhunt-<version>.sha256 file next to this script when present),
-#   Hayabusa against hayabusa.sha256 pinned in this skill, the rules against
-#   RULES_DIGEST below.
+# - Downloads over HTTPS and verifies SHA-256: forhunt against the SHA256SUMS
+#   published with its release (or a pinned checksums/forhunt-<version>.sha256
+#   file next to this script when present), the rules against RULES_DIGEST.
 # - Installs into --prefix, or $FORHUNT_PREFIX (default
-#   ~/.local/share/forensic-hunter), with forhunt and a hayabusa wrapper in
-#   <prefix>/bin. Nothing is embedded in the skill.
+#   ~/.local/share/forensic-hunter), with forhunt in <prefix>/bin. Nothing is
+#   embedded in the skill.
 # - FORHUNT_BASE_URL: optional mirror holding the forhunt release assets.
 #
-# Hayabusa is GPL-3.0 software by Yamato Security, downloaded unmodified from
-# https://github.com/Yamato-Security/hayabusa (source code available there).
 # The rules are by their authors (named in each rule and in forhunt's output),
 # under the Detection Rule License 1.1: https://github.com/SigmaHQ/Detection-Rule-License
 set -euo pipefail
@@ -49,12 +45,11 @@ RULES_REPO="Yamato-Security/hayabusa-rules"
 # the archive bytes, which GitHub does not keep stable).
 RULES_COMMIT="fefb31c530e554116041ae106a5d40304fd9d251"
 RULES_DIGEST="ec441b7f5d631f05be2f3f50a88ca9f387b3d4b74d13843075403a4915945d91"
-WITH_RULES=1
+# ask (default), yes (--rules), no (--no-rules).
+WITH_RULES=ask
 RULES_LATEST=0
 FORHUNT_VERSION="${FORHUNT_VERSION:-latest}"
-HAYABUSA_VERSION="${HAYABUSA_VERSION:-4.2.0}"
 PREFIX="${FORHUNT_PREFIX:-$HOME/.local/share/forensic-hunter}"
-WITH_HAYABUSA=0
 WITH_FORHUNT=1
 CHECK=0
 FORCE=0
@@ -67,10 +62,8 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --prefix) value "$@"; PREFIX="$2"; shift 2 ;;
     --forhunt-version) value "$@"; FORHUNT_VERSION="$2"; shift 2 ;;
-    --hayabusa-version) value "$@"; HAYABUSA_VERSION="$2"; shift 2 ;;
-    --no-hayabusa) WITH_HAYABUSA=0; shift ;;
-    --with-hayabusa) WITH_HAYABUSA=1; shift ;;
-    --no-rules) WITH_RULES=0; shift ;;
+    --rules) WITH_RULES=yes; shift ;;
+    --no-rules) WITH_RULES=no; shift ;;
     --rules-latest) RULES_LATEST=1; shift ;;
     --no-forhunt) WITH_FORHUNT=0; shift ;;
     --check) CHECK=1; shift ;;
@@ -139,13 +132,7 @@ if [ "$CHECK" = 1 ]; then
     n="$(find "$PREFIX/rules/hayabusa-rules/hayabusa" "$PREFIX/rules/hayabusa-rules/sigma" -name '*.yml' 2>/dev/null | wc -l | tr -d ' ')"
     echo "rules: $PREFIX/rules/hayabusa-rules ($(sed -n 's/^commit=//p' "$rinfo" | cut -c1-12), $n files)"
   else
-    echo "rules: not installed (install: bash $HERE/install.sh --no-forhunt)"; ok=0
-  fi
-  hb=""
-  if [ -x "$PREFIX/bin/hayabusa" ]; then hb="$PREFIX/bin/hayabusa"
-  elif command -v hayabusa >/dev/null 2>&1; then hb="$(command -v hayabusa)"; fi
-  if [ -n "$hb" ] && "$hb" help >/dev/null 2>&1; then
-    echo "hayabusa: $hb (optional)"
+    echo "rules: not installed (bash $HERE/install.sh --no-forhunt asks before downloading them, ~10 MB)"; ok=0
   fi
   if [ "$ok" = 1 ]; then echo ready; exit 0; fi
   exit 1
@@ -165,15 +152,15 @@ verify() { # file expected
 
 os="$(uname -s)"; arch="$(uname -m)"
 case "$os" in
-  Linux)  ft_os="unknown-linux-musl"; hb_os="lin" ;;
-  Darwin) ft_os="apple-darwin"; hb_os="mac"
+  Linux)  ft_os="unknown-linux-musl" ;;
+  Darwin) ft_os="apple-darwin"
     # A shell under Rosetta says x86_64 on Apple Silicon.
     if [ "$arch" = x86_64 ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" = 1 ]; then arch=arm64; fi ;;
   *) die "unsupported OS $os (use install.ps1 on Windows)" ;;
 esac
 case "$arch" in
-  x86_64|amd64) ft_arch="x86_64"; hb_arch="x64" ;;
-  arm64|aarch64) ft_arch="aarch64"; hb_arch="aarch64" ;;
+  x86_64|amd64) ft_arch="x86_64" ;;
+  arm64|aarch64) ft_arch="aarch64" ;;
   *) die "unsupported architecture $arch" ;;
 esac
 target="${ft_arch}-${ft_os}"
@@ -181,14 +168,9 @@ target="${ft_arch}-${ft_os}"
 if [ "$WITH_FORHUNT" = 1 ] && [ "$target" = "x86_64-apple-darwin" ]; then
   die "no Intel macOS build; use: cargo install --git https://github.com/0xRD/forensic-hunter forhunt (rules alone: --no-forhunt)"
 fi
-case "$hb_os" in
-  lin) hb_plat="lin-${hb_arch}-musl" ;;
-  mac) hb_plat="mac-${hb_arch}" ;;
-esac
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$PREFIX/bin"
-# Absolute: the hayabusa wrapper changes directory.
 PREFIX="$(cd "$PREFIX" && pwd)"
 # Staging inside the prefix, so the final rename never crosses file systems.
 stage="$PREFIX/.staging.$$"
@@ -249,10 +231,26 @@ fi
 fi
 
 # --- Sigma rules ---------------------------------------------------------------
-if [ "$WITH_RULES" = 1 ]; then
-  rdest="$PREFIX/rules/hayabusa-rules"
-  ref="$RULES_COMMIT"; [ "$RULES_LATEST" = 1 ] && ref="main"
-  if [ "$RULES_LATEST" = 0 ] && [ "$FORCE" = 0 ] && grep -qx "commit=$RULES_COMMIT" "$rdest/.forhunt-rules" 2>/dev/null; then
+rdest="$PREFIX/rules/hayabusa-rules"
+ref="$RULES_COMMIT"; [ "$RULES_LATEST" = 1 ] && ref="main"
+rules_current=0
+if [ "$RULES_LATEST" = 0 ] && [ "$FORCE" = 0 ] && grep -qx "commit=$RULES_COMMIT" "$rdest/.forhunt-rules" 2>/dev/null; then
+  rules_current=1
+fi
+# Never downloaded without a yes: asked in a terminal, else only --rules.
+if [ "$WITH_RULES" = ask ] && [ "$rules_current" = 0 ]; then
+  if [ -t 0 ] && [ -t 1 ]; then
+    what="Download"; [ -f "$rdest/.forhunt-rules" ] && what="Update"
+    printf '%s the Sigma detection rules (Yamato Security hayabusa-rules, ~10 MB, Detection Rule License 1.1)? [y/N] ' "$what"
+    read -r answer || answer=""
+    case "$answer" in [yY]|[yY][eE][sS]) WITH_RULES=yes ;; *) WITH_RULES=no ;; esac
+  else
+    WITH_RULES=no
+    echo "Sigma rules: not downloaded (no terminal to ask; run with --rules to download them, ~10 MB)"
+  fi
+fi
+if [ "$WITH_RULES" = yes ] || { [ "$rules_current" = 1 ] && [ "$WITH_RULES" != no ]; }; then
+  if [ "$rules_current" = 1 ]; then
     echo "Sigma rules (hayabusa-rules ${RULES_COMMIT:0:12}) are already installed in $rdest"
   else
     echo "Sigma rules: $RULES_REPO @ ${ref:0:12} (Detection Rule License 1.1)"
@@ -282,46 +280,6 @@ if [ "$WITH_RULES" = 1 ]; then
   fi
   mkdir -p "$PREFIX/rules/custom"
   echo "  your own rules: $PREFIX/rules/custom (run with the others)"
-fi
-
-# --- Hayabusa (optional) -------------------------------------------------------
-if [ "$WITH_HAYABUSA" = 1 ]; then
-  case "$HAYABUSA_VERSION" in ""|*[!0-9A-Za-z.+-]*) die "not a version: $HAYABUSA_VERSION" ;; esac
-  hb_zip="hayabusa-${HAYABUSA_VERSION}-${hb_plat}.zip"
-  dest="$PREFIX/hayabusa-${HAYABUSA_VERSION}"
-  hb_bin="hayabusa-${HAYABUSA_VERSION}-${hb_plat}"
-  if [ -x "$dest/$hb_bin" ] && [ -x "$PREFIX/bin/hayabusa" ] && grep -qF "$dest" "$PREFIX/bin/hayabusa" && [ "$FORCE" = 0 ]; then
-    echo "Hayabusa ${HAYABUSA_VERSION} is already installed in $dest"
-  else
-    need unzip
-    expected="$(awk -v f="$hb_zip" '$2 == f {print $1}' "$HERE/hayabusa.sha256")"
-    [ -n "$expected" ] || die "Hayabusa $HAYABUSA_VERSION ($hb_plat) is not pinned in hayabusa.sha256; refusing an unverified download"
-    echo "Hayabusa ${HAYABUSA_VERSION} (${hb_plat})"
-    curl -fsSL -o "$tmp/$hb_zip" "https://github.com/Yamato-Security/hayabusa/releases/download/v${HAYABUSA_VERSION}/${hb_zip}" \
-      || die "Hayabusa download failed"
-    verify "$tmp/$hb_zip" "$expected"
-    mkdir -p "$stage/hayabusa"
-    unzip -q "$tmp/$hb_zip" -d "$stage/hayabusa"
-    [ -f "$stage/hayabusa/$hb_bin" ] || die "the Hayabusa archive does not hold $hb_bin; nothing was changed"
-    chmod +x "$stage/hayabusa/$hb_bin"
-    rm -rf "$dest"
-    mv "$stage/hayabusa" "$dest"
-    # Hayabusa finds rules/ and config/ next to its binary: wrap instead of copying.
-    cat > "$stage/hayabusa.wrap" <<WRAP
-#!/usr/bin/env bash
-cd "$dest" && exec "./$hb_bin" "\$@"
-WRAP
-    chmod +x "$stage/hayabusa.wrap"
-    mv -f "$stage/hayabusa.wrap" "$PREFIX/bin/hayabusa"
-    echo "  installed in $dest (rules included; refresh with: hayabusa update-rules)"
-  fi
-  # Versions installed earlier by this script: the wrapper no longer uses them.
-  for old in "$PREFIX"/hayabusa-[0-9]*; do
-    [ -d "$old" ] && [ "$old" != "$dest" ] || continue
-    rm -rf "$old"
-    echo "  removed $(basename "$old")"
-  done
-  echo "  note: the wrapper runs from the Hayabusa directory; pass absolute paths to -d/-f/-o."
 fi
 
 echo

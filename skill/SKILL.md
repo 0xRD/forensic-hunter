@@ -16,20 +16,18 @@ folder.
 Tools:
 - `forhunt`: fast EVTX parser/search/stats/timeline built for LLM use
   (reference: `references/forhunt.md`).
-- `forhunt sigma`: forhunt's built-in Sigma engine, running Yamato Security's
-  hayabusa-rules (Sigma and Hayabusa rules, Detection Rule License 1.1,
-  downloaded by the installer) and your own rules (reference:
-  `references/sigma-rules.md`). The Hayabusa binary is no longer needed;
-  `forhunt hayabusa` still reads Hayabusa output if a user brings some
-  (`references/hayabusa.md`).
+- `forhunt sigma`: forhunt's built-in Sigma engine (the only detection tool:
+  nothing else is installed), running Yamato Security's hayabusa-rules (Sigma
+  and Hayabusa rules, Detection Rule License 1.1, downloaded only when the
+  user agrees) and your own rules (reference: `references/sigma-rules.md`).
 
 ## 0. Setup (once)
 
 ```bash
 export PATH="$HOME/.local/share/forensic-hunter/bin:$PATH"
 bash scripts/install.sh --check    # Windows: scripts/install.ps1 -Check
-# not "ready"? install or update, with checksum verification:
-bash scripts/install.sh            # Linux/macOS  (Windows: scripts/install.ps1)
+# not "ready"? install or update forhunt, with checksum verification:
+bash scripts/install.sh --no-rules # Linux/macOS  (Windows: scripts/install.ps1 -NoRules)
 ```
 
 `--check` installs nothing. It prints `ready` only when forhunt is recent
@@ -38,7 +36,18 @@ missing or too old and the command that fixes it (a Homebrew forhunt is
 updated with `brew upgrade 0xrd/tap/forhunt`). Never work with a forhunt it
 calls too old: `forhunt checklist` refuses checklists newer than itself, and
 older releases do not read every artifact. Running `install.sh` again later
-updates forhunt and the rules in place.
+updates forhunt in place.
+
+**The Sigma rules are never downloaded without the user's yes.** When
+`--check` says they are missing (or offers an update), ask the user, in one
+message: "Download the Sigma detection rules (Yamato Security hayabusa-rules,
+~10 MB, Detection Rule License 1.1) into ~/.local/share/forensic-hunter/rules?
+Some antivirus / EDR products flag rule files, which contain attacker command
+lines." Only on a clear yes run `bash scripts/install.sh --no-forhunt --rules`
+(Windows: `scripts/install.ps1 -NoForhunt -Rules`). Without `--rules` the
+script never downloads them in a session without a terminal, and asks
+(default no) in one with a terminal. On a no, go on without them (step c
+below says how).
 
 ## Rules (always)
 
@@ -132,7 +141,7 @@ Read it fully (it is short). Note:
 forhunt sigma "$CASE/evidence" --min-level medium -g      # overview per rule and host
 forhunt sigma "$CASE/evidence" --rule-id <rid> -n 50      # one rule, detection by detection
 ```
-One pass over the evidence with every installed rule (no Hayabusa binary).
+One pass over the evidence with every installed rule.
 `-g` groups detections per rule and host (count, first/last time, event ids,
 sample forhunt ids); without it each detection is one line with its forhunt
 `id`, rule `rid`, `lvl`, `mitre` and the rule's key values in `d`. Treat
@@ -149,10 +158,10 @@ in the case folder (`-R "$CASE/rules"`, added to the installed ones with
 `-R ~/.local/share/forensic-hunter/rules -R "$CASE/rules"`).
 
 If the rules are not installed (`forhunt sigma` exits 2: "no rules"), ask
-before running `scripts/install.sh --no-forhunt`, because it downloads them.
+the user as in step 0 before running `scripts/install.sh --no-forhunt --rules`;
+never download them on your own.
 Declined or impossible: go on to step d and write "Sigma rules not run" in
-the gaps of the report. Hayabusa output the user already has can be read with
-`forhunt hayabusa` (`references/hayabusa.md`).
+the gaps of the report (rules of the case folder still run with `-R`).
 
 ## 4. Walk every checklist (step d)
 
@@ -250,7 +259,6 @@ self-contained HTML file (`references/attack-path.md`).
 
 - `references/forhunt.md`: commands, filters, `llm` format keys, exit codes
 - `references/sigma-rules.md`: `forhunt sigma`, the rule format forhunt runs, writing and testing your own rules (field names per artifact), licence notice
-- `references/hayabusa.md`: reading output of the Hayabusa binary (`forhunt hayabusa`), if a user brings some
 - `references/ntfs-hunting.md`: hunting and interpreting `$MFT` / `$UsnJrnl:$J` (timestomping, staging, persistence, anti-forensics, correlation)
 - `references/mail-hunting.md`: reading `.ost` and `.pst` mailboxes (senders, links, what the host sent on, secrets in drafts, where a mailbox misleads)
 - `references/prefetch-hunting.md`: hunting and interpreting `.pf` files (locations, tools, loaded files, where Prefetch misleads)

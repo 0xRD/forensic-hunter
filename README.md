@@ -53,7 +53,7 @@ for the picture.
 # Homebrew (macOS Apple Silicon, Linux)
 brew install 0xRD/tap/forhunt
 
-# skill installer (forhunt + Sigma rules, SHA-256 verified)
+# skill installer (forhunt; the Sigma rules only if you say yes; SHA-256 verified)
 bash skill/scripts/install.sh            # Windows: skill/scripts/install.ps1
 
 # or from source
@@ -256,6 +256,5 @@ engines). The rules it runs by default, Yamato Security's hayabusa-rules
 (including SigmaHQ rules), are under the
 [Detection Rule License 1.1](https://github.com/SigmaHQ/Detection-Rule-License):
 they are downloaded by the installer, not part of this project, and every
-detection names the rule's author as that licence asks. Hayabusa (GPL-3.0) is
-an optional separate download. EVTX parsing builds on the
+detection names the rule's author as that licence asks. EVTX parsing builds on the
 [`evtx`](https://github.com/omerbenamram/evtx) crate (MIT/Apache-2.0).

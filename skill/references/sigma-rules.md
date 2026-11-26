@@ -23,13 +23,15 @@ Any folder of Sigma rules works; each source is read the way it is written:
 
 | Set | Licence | Notes |
 |---|---|---|
-| [hayabusa-rules](https://github.com/Yamato-Security/hayabusa-rules) (installed) | DRL 1.1 | Sigma + Hayabusa rules with `Channel`/`EventID` written in; 3 correlations |
+| [hayabusa-rules](https://github.com/Yamato-Security/hayabusa-rules) (the installer offers it) | DRL 1.1 | Sigma + Hayabusa rules with `Channel`/`EventID` written in; 3 correlations |
 | [SigmaHQ/sigma](https://github.com/SigmaHQ/sigma) | DRL 1.1 | ~2,700 Windows rules, scoped by `logsource`; when hayabusa-rules is loaded too, its converted copies run instead of the originals |
 | [mdecrevoisier/SIGMA-detection-rules](https://github.com/mdecrevoisier/SIGMA-detection-rules) | CC0 | Active Directory and Security log rules, many correlations |
 | [mbabinski/Sigma-Rules](https://github.com/mbabinski/Sigma-Rules) | GPL-3.0 | threat-report rules |
 | [magicsword-io/LOLDrivers](https://github.com/magicsword-io/LOLDrivers) `detections/sigma*` | Apache-2.0 | vulnerable / malicious driver loads (Sysmon 6) |
 
-Add one with `git clone --depth 1 <repo> ~/.local/share/forensic-hunter/rules/<name>`
+Download a set only after the user agreed to it (name, size, licence, and that
+some antivirus / EDR products flag rule files). Add one with
+`git clone --depth 1 <repo> ~/.local/share/forensic-hunter/rules/<name>`
 (it then runs with every `forhunt sigma`), or `-R DIR` for one run. Never copy
 rule files into a report or a repository; name the rule and its author.
 

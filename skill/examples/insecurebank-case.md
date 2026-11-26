@@ -10,6 +10,10 @@ this limitation. Commands are real; outputs are trimmed (`…`).
 
 Tools: forhunt 0.1.0, Hayabusa 4.2.0 (rules bundled with the release).
 
+> Recorded before forhunt 0.8.0. Step c now runs the rules with forhunt itself:
+> `forhunt sigma $CASE/evidence --min-level medium -g` (no Hayabusa); the
+> outputs below are those of the original run.
+
 ## a. Evidence intake
 
 ```bash

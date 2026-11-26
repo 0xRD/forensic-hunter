@@ -1,33 +1,30 @@
 <#
 .SYNOPSIS
-  Installs forhunt and its Sigma detection rules for the Forensic Hunter
-  skill (Windows).
+  Installs forhunt and, if you say yes, its Sigma detection rules, for the
+  Forensic Hunter skill (Windows).
 .DESCRIPTION
   Downloads release archives from GitHub over HTTPS and verifies SHA-256:
   forhunt against the SHA256SUMS of its release (or a pinned
-  checksums\forhunt-<version>.sha256 next to this script), Hayabusa against
-  hayabusa.sha256 pinned in this skill. Installs into $Prefix
-  (default %LOCALAPPDATA%\forensic-hunter) and creates bin\forhunt.exe and
-  bin\hayabusa.cmd (with -WithHayabusa). Nothing is embedded in the skill.
-  -NoForhunt / -NoRules skip one part; $env:FORHUNT_BASE_URL points to a
-  mirror of the forhunt release assets.
+  checksums\forhunt-<version>.sha256 next to this script). Installs into
+  $Prefix (default %LOCALAPPDATA%\forensic-hunter) and creates
+  bin\forhunt.exe. forhunt runs the detection rules itself (forhunt sigma):
+  nothing else is installed. -NoForhunt skips forhunt;
+  $env:FORHUNT_BASE_URL points to a mirror of the forhunt release assets.
 
-  Rules: Yamato Security's hayabusa-rules (Sigma and Hayabusa rules,
-  Detection Rule License 1.1) at the commit pinned below, checked against a
-  SHA-256 digest of their content, into $Prefix\rules\hayabusa-rules.
-  `forhunt sigma` runs them (no Hayabusa binary). -RulesLatest takes the
-  newest rules instead (checked by HTTPS only). Your own rules go in
-  $Prefix\rules\custom. -WithHayabusa also installs the Hayabusa binary
-  (optional since forhunt 0.8.0).
+  Rules are never downloaded without asking: in an interactive session the
+  script asks (default no); otherwise it downloads them only with -Rules (an
+  answer given in advance: the skill asks you before passing it). -NoRules
+  never downloads them. They are Yamato Security's hayabusa-rules (Sigma and
+  Hayabusa rules, Detection Rule License 1.1, ~10 MB) at the commit pinned
+  below, checked against a SHA-256 digest of their content, into
+  $Prefix\rules\hayabusa-rules. -RulesLatest takes the newest rules instead
+  (checked by HTTPS only). Your own rules go in $Prefix\rules\custom.
 
-  -Check installs nothing: it says which forhunt and Hayabusa would be used
-  and whether forhunt is recent enough for this skill (exit code 0 when both
-  are ready, 1 otherwise). Run the script again at any time to update: what
-  is already at the wanted version is left alone (-Force installs it again),
-  and older Hayabusa versions in the prefix are removed.
+  -Check installs nothing: it says which forhunt and rules would be used and
+  whether forhunt is recent enough for this skill (exit code 0 when both are
+  ready, 1 otherwise). Run the script again at any time to update: what is
+  already at the wanted version is left alone (-Force installs it again).
 
-  Hayabusa is GPL-3.0 software by Yamato Security, downloaded unmodified from
-  https://github.com/Yamato-Security/hayabusa (source code available there).
   The rules are by their authors (named in each rule and in forhunt's
   output), under https://github.com/SigmaHQ/Detection-Rule-License.
 .EXAMPLE
@@ -37,9 +34,7 @@
 param(
   [string]$Prefix = (Join-Path $env:LOCALAPPDATA 'forensic-hunter'),
   [string]$ForhuntVersion = 'latest',
-  [string]$HayabusaVersion = '4.2.0',
-  [switch]$NoHayabusa,
-  [switch]$WithHayabusa,
+  [switch]$Rules,
   [switch]$NoRules,
   [switch]$RulesLatest,
   [switch]$NoForhunt,
@@ -117,7 +112,6 @@ function Test-Older([string]$A, [string]$B) {
 
 $binDir = Join-Path $Prefix 'bin'
 $fhExe = Join-Path $binDir 'forhunt.exe'
-$hbCmd = Join-Path $binDir 'hayabusa.cmd'
 
 if ($Check) {
   $ok = $true
@@ -138,12 +132,6 @@ if ($Check) {
     }
     else { Write-Host "forhunt: $v at $fh" }
   }
-  $hb = $null
-  if (Test-Path $hbCmd) { $hb = $hbCmd }
-  else {
-    $c = Get-Command hayabusa -ErrorAction SilentlyContinue
-    if ($c) { $hb = $c.Source }
-  }
   if ($fh -and $v -and (Test-Older $v $FORHUNT_SIGMA_MIN)) {
     Write-Host "forhunt sigma: needs forhunt $FORHUNT_SIGMA_MIN or later"; $ok = $false
   }
@@ -152,16 +140,15 @@ if ($Check) {
     $commit = ((Get-Content $rinfo | Where-Object { $_ -like 'commit=*' }) -replace '^commit=', '')
     Write-Host "rules: $(Join-Path $Prefix 'rules\hayabusa-rules') ($($commit.Substring(0, [Math]::Min(12, $commit.Length))))"
   }
-  else { Write-Host 'rules: not installed (install with -NoForhunt)'; $ok = $false }
-  if ($hb) { Write-Host "hayabusa: $hb (optional)" }
+  else { Write-Host 'rules: not installed (-NoForhunt asks before downloading them, ~10 MB)'; $ok = $false }
   if ($ok) { Write-Host 'ready'; exit 0 }
   exit 1
 }
 
 $arch = $env:PROCESSOR_ARCHITECTURE
 switch ($arch) {
-  'AMD64' { $target = 'x86_64-pc-windows-msvc'; $hbPlat = 'win-x64' }
-  'ARM64' { $target = 'x86_64-pc-windows-msvc'; $hbPlat = 'win-aarch64' } # x64 forhunt runs under emulation
+  'AMD64' { $target = 'x86_64-pc-windows-msvc' }
+  'ARM64' { $target = 'x86_64-pc-windows-msvc' } # x64 forhunt runs under emulation
   default { throw "unsupported architecture $arch" }
 }
 
@@ -230,13 +217,23 @@ try {
   }
 
   # --- Sigma rules ---
-  if (-not $NoRules) {
-    $rules = Join-Path $Prefix 'rules'
-    $rdest = Join-Path $rules 'hayabusa-rules'
-    $rinfo = Join-Path $rdest '.forhunt-rules'
-    $ref = if ($RulesLatest) { 'main' } else { $RULES_COMMIT }
-    $have = (Test-Path $rinfo) -and ((Get-Content $rinfo) -contains "commit=$RULES_COMMIT")
-    if ($have -and -not $RulesLatest -and -not $Force) {
+  $rulesDir = Join-Path $Prefix 'rules'
+  $rdest = Join-Path $rulesDir 'hayabusa-rules'
+  $rinfo = Join-Path $rdest '.forhunt-rules'
+  $ref = if ($RulesLatest) { 'main' } else { $RULES_COMMIT }
+  $current = (Test-Path $rinfo) -and ((Get-Content $rinfo) -contains "commit=$RULES_COMMIT") -and -not $RulesLatest -and -not $Force
+  # Never downloaded without a yes: asked when interactive, else only -Rules.
+  $want = $Rules -or ($current -and -not $NoRules)
+  if (-not $Rules -and -not $NoRules -and -not $current) {
+    if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+      $what = if (Test-Path $rinfo) { 'Update' } else { 'Download' }
+      $answer = Read-Host "$what the Sigma detection rules (Yamato Security hayabusa-rules, ~10 MB, Detection Rule License 1.1)? [y/N]"
+      $want = $answer -match '^(y|yes)$'
+    }
+    else { Write-Host 'Sigma rules: not downloaded (not interactive; run with -Rules to download them, ~10 MB)' }
+  }
+  if ($want) {
+    if ($current) {
       Write-Host "Sigma rules (hayabusa-rules $($RULES_COMMIT.Substring(0, 12))) are already installed in $rdest"
     }
     else {
@@ -262,49 +259,17 @@ try {
         "commit=$ref", "source=https://github.com/$RulesRepo",
         'license=Detection Rule License 1.1 (https://github.com/SigmaHQ/Detection-Rule-License)',
         "installed=$((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))")
-      New-Item -ItemType Directory -Force -Path $rules | Out-Null
+      New-Item -ItemType Directory -Force -Path $rulesDir | Out-Null
       if (Test-Path $rdest) { Remove-Item -Recurse -Force $rdest }
       # Copy, not move: the temporary folder may be on another drive.
       Copy-Item -Recurse -Force $src.FullName $rdest
       $n = (Get-ChildItem -Recurse -File -Filter '*.yml' -Path (Join-Path $rdest 'hayabusa'), (Join-Path $rdest 'sigma')).Count
       Write-Host "  installed in $rdest ($n rule files; run with: forhunt sigma <evidence>)"
     }
-    New-Item -ItemType Directory -Force -Path (Join-Path $rules 'custom') | Out-Null
-    Write-Host "  your own rules: $(Join-Path $rules 'custom') (run with the others)"
+    New-Item -ItemType Directory -Force -Path (Join-Path $rulesDir 'custom') | Out-Null
+    Write-Host "  your own rules: $(Join-Path $rulesDir 'custom') (run with the others)"
   }
 
-  # --- Hayabusa (optional) ---
-  if ($WithHayabusa -and -not $NoHayabusa) {
-    if ($HayabusaVersion -notmatch '^[0-9A-Za-z.+-]+$') { throw "not a version: $HayabusaVersion" }
-    $hbZip = "hayabusa-$HayabusaVersion-$hbPlat.zip"
-    $dest = Join-Path $Prefix "hayabusa-$HayabusaVersion"
-    $exe = "hayabusa-$HayabusaVersion-$hbPlat.exe"
-    $wrapped = (Test-Path $hbCmd) -and (Get-Content -Raw $hbCmd).Contains($dest)
-    if ((Test-Path (Join-Path $dest $exe)) -and $wrapped -and -not $Force) {
-      Write-Host "Hayabusa $HayabusaVersion is already installed in $dest"
-    }
-    else {
-      $expected = Find-Sum (Get-Content (Join-Path $Here 'hayabusa.sha256') | Where-Object { $_ -notmatch '^#' }) $hbZip
-      if (-not $expected) { throw "Hayabusa $HayabusaVersion ($hbPlat) is not pinned in hayabusa.sha256; refusing an unverified download" }
-      Write-Host "Hayabusa $HayabusaVersion ($hbPlat)"
-      Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/Yamato-Security/hayabusa/releases/download/v$HayabusaVersion/$hbZip" -OutFile (Join-Path $tmp $hbZip)
-      Verify-Sha256 (Join-Path $tmp $hbZip) $expected
-      $stage = Join-Path $tmp 'hayabusa'
-      Expand-Archive -Force -Path (Join-Path $tmp $hbZip) -DestinationPath $stage
-      if (-not (Test-Path (Join-Path $stage $exe))) { throw "the Hayabusa archive does not hold $exe; nothing was changed" }
-      if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
-      # Copy, not move: the temporary folder may be on another drive.
-      Copy-Item -Recurse -Force $stage $dest
-      Set-Content -Encoding ASCII -Path $hbCmd -Value "@echo off`r`npushd `"$dest`"`r`n`"$dest\$exe`" %*`r`nset FH_RC=%ERRORLEVEL%`r`npopd`r`nexit /b %FH_RC%"
-      Write-Host "  installed in $dest (rules included; refresh with: hayabusa update-rules)"
-    }
-    # Versions installed earlier by this script: the wrapper no longer uses them.
-    Get-ChildItem -Directory -Path $Prefix -Filter 'hayabusa-*' | Where-Object { $_.FullName -ne $dest -and $_.Name -match '^hayabusa-[0-9]' } | ForEach-Object {
-      Remove-Item -Recurse -Force $_.FullName
-      Write-Host "  removed $($_.Name)"
-    }
-    Write-Host "  note: the wrapper runs from the Hayabusa directory; pass absolute paths to -d/-f/-o."
-  }
   Write-Host ""
   Write-Host "Done. Add $(Join-Path $Prefix 'bin') to PATH."
 }

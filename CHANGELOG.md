@@ -38,10 +38,17 @@ Built-in Sigma detection: the Hayabusa binary is no longer needed.
   `MFT`, `UsnJrnl`, `Mail`) with forhunt's field names.
 
 Skill:
-- The installers download hayabusa-rules at a pinned commit, checked against a
-  SHA-256 digest of the content, into `<prefix>/rules/hayabusa-rules` (with
-  `<prefix>/rules/custom` for your own); `--rules-latest` takes the newest rules.
-  Hayabusa is installed only with `--with-hayabusa`.
+- The skill uses forhunt only: the installers no longer download Hayabusa
+  (`--with-hayabusa`, `--hayabusa-version` and `hayabusa.sha256` are gone;
+  `forhunt hayabusa` still reads Hayabusa output you already have).
+- The Sigma rules are never downloaded without a yes: the installers ask in a
+  terminal (default no) and, without one, download them only with `--rules` /
+  `-Rules`, which the skill passes only after asking the user. They come from
+  hayabusa-rules at a pinned commit, checked against a SHA-256 digest of the
+  content, into `<prefix>/rules/hayabusa-rules` (with `<prefix>/rules/custom`
+  for your own); `--rules-latest` takes the newest rules.
+- CI tests the installers with the forhunt of the commit, served as a local
+  release mirror (`FORHUNT_BASE_URL`).
 - Step c runs `forhunt sigma`; new reference `references/sigma-rules.md` on
   writing and testing rules for forhunt (field names per artifact, matching
   rules, test loop).
