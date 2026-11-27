@@ -591,7 +591,7 @@ dependencies = [
 
 [[package]]
 name = "evtx-gen"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -643,7 +643,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "forhunt"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -661,7 +661,7 @@ dependencies = [
 
 [[package]]
 name = "forhunt-core"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -687,7 +687,7 @@ dependencies = [
 
 [[package]]
 name = "forhunt-output"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "forhunt-core",

@@ -55,8 +55,23 @@ struct Builder {
     stack: Vec<Frame>,
     docs: Vec<Node>,
     /// Anchored nodes, for aliases.
-    anchors: Vec<(usize, Node)>,
+    anchors: Vec<(usize, Node, usize)>,
     pending_anchor: Vec<usize>,
+    /// Nodes added through aliases so far (bounded: nested aliases double at
+    /// each level, a few lines would otherwise fill the memory).
+    alias_nodes: usize,
+    too_big: bool,
+}
+
+/// Most nodes aliases may add to one file (a Sigma rule uses a handful).
+const MAX_ALIAS_NODES: usize = 100_000;
+
+fn size(n: &Node) -> usize {
+    match n {
+        Node::Null | Node::Str(_) => 1,
+        Node::Seq(v) => 1 + v.iter().map(size).sum::<usize>(),
+        Node::Map(m) => 1 + m.iter().map(|(_, v)| size(v)).sum::<usize>(),
+    }
 }
 
 impl Builder {
@@ -81,7 +96,7 @@ impl Builder {
 
     fn close(&mut self, aid: usize, n: Node) {
         if aid > 0 {
-            self.anchors.push((aid, n.clone()));
+            self.anchors.push((aid, n.clone(), size(&n)));
         }
         self.push(n);
     }
@@ -118,13 +133,19 @@ impl MarkedEventReceiver for Builder {
                 self.close(aid, n);
             }
             Event::Alias(id) => {
-                let n = self
-                    .anchors
-                    .iter()
-                    .rev()
-                    .find(|(a, _)| *a == id)
-                    .map(|(_, n)| n.clone())
-                    .unwrap_or(Node::Null);
+                let found = self.anchors.iter().rev().find(|(a, _, _)| *a == id);
+                let n = match found {
+                    Some((_, n, k)) if !self.too_big => {
+                        self.alias_nodes = self.alias_nodes.saturating_add(*k);
+                        if self.alias_nodes > MAX_ALIAS_NODES {
+                            self.too_big = true;
+                            Node::Null
+                        } else {
+                            n.clone()
+                        }
+                    }
+                    _ => Node::Null,
+                };
                 self.push(n);
             }
             _ => {}
@@ -137,6 +158,11 @@ pub fn parse(text: &str) -> Result<Vec<Node>, String> {
     let mut b = Builder::default();
     let mut p = Parser::new_from_str(text.trim_start_matches('\u{feff}'));
     p.load(&mut b, true).map_err(|e| e.to_string())?;
+    if b.too_big {
+        return Err(format!(
+            "aliases expand to more than {MAX_ALIAS_NODES} nodes"
+        ));
+    }
     Ok(b.docs)
 }
 
@@ -161,5 +187,14 @@ mod tests {
         let d = parse("a: &x [1, 2]\nb: *x\n---\nc: 3\n").unwrap();
         assert_eq!(d.len(), 2);
         assert_eq!(d[0].get("b").unwrap().strings(), ["1", "2"]);
+    }
+
+    #[test]
+    fn alias_bomb_is_refused() {
+        let mut y = String::from("l0: &a0 [x, x]\n");
+        for i in 1..40 {
+            y += &format!("l{i}: &a{i} [*a{}, *a{}]\n", i - 1, i - 1);
+        }
+        assert!(parse(&y).unwrap_err().contains("aliases"));
     }
 }

@@ -1022,24 +1022,36 @@ struct CondParser<'a> {
     t: Vec<Tok>,
     i: usize,
     names: &'a [String],
+    /// Nesting of `not` and parentheses (bounded: a crafted rule must not
+    /// overflow the stack, which aborts the process).
+    depth: usize,
 }
 
+/// Deepest `not` / `(` nesting a condition may use (real rules stay below 10).
+const MAX_COND_DEPTH: usize = 64;
+
+/// `*` wildcard match (iterative: linear in practice, never exponential
+/// on a pattern with many `*`).
 fn glob_match(pat: &str, name: &str) -> bool {
-    match pat.split_once('*') {
-        None => pat == name,
-        Some((pre, rest)) => {
-            if !name.starts_with(pre) {
-                return false;
-            }
-            let tail = &name[pre.len()..];
-            if rest.is_empty() {
-                return true;
-            }
-            (0..=tail.len())
-                .filter(|&k| tail.is_char_boundary(k))
-                .any(|k| glob_match(rest, &tail[k..]))
+    let (p, n) = (pat.as_bytes(), name.as_bytes());
+    let (mut i, mut j) = (0, 0);
+    let mut star: Option<(usize, usize)> = None;
+    while j < n.len() {
+        if i < p.len() && p[i] == b'*' {
+            star = Some((i, j));
+            i += 1;
+        } else if i < p.len() && p[i] == n[j] {
+            i += 1;
+            j += 1;
+        } else if let Some((si, sj)) = star {
+            i = si + 1;
+            j = sj + 1;
+            star = Some((si, sj + 1));
+        } else {
+            return false;
         }
     }
+    p[i..].iter().all(|&b| b == b'*')
 }
 
 impl CondParser<'_> {
@@ -1075,13 +1087,22 @@ impl CondParser<'_> {
 
     fn unary(&mut self) -> Result<Cond, String> {
         match self.t.get(self.i).cloned() {
+            Some(Tok::Not | Tok::LParen) if self.depth >= MAX_COND_DEPTH => Err(format!(
+                "condition nested deeper than {MAX_COND_DEPTH} levels"
+            )),
             Some(Tok::Not) => {
                 self.i += 1;
-                Ok(Cond::Not(Box::new(self.unary()?)))
+                self.depth += 1;
+                let c = self.unary();
+                self.depth -= 1;
+                Ok(Cond::Not(Box::new(c?)))
             }
             Some(Tok::LParen) => {
                 self.i += 1;
-                let c = self.or()?;
+                self.depth += 1;
+                let c = self.or();
+                self.depth -= 1;
+                let c = c?;
                 if self.peek() != Some(&Tok::RParen) {
                     return Err("missing `)`".into());
                 }
@@ -1145,7 +1166,12 @@ pub(crate) fn condition(text: &str, names: &[String]) -> Result<Cond, String> {
     if t.contains(&Tok::Pipe) {
         return Err("aggregation (`| count()`) is not supported; use a correlation rule".into());
     }
-    let mut p = CondParser { t, i: 0, names };
+    let mut p = CondParser {
+        t,
+        i: 0,
+        names,
+        depth: 0,
+    };
     let c = p.or()?;
     if p.i != p.t.len() {
         return Err(format!("unexpected text after the condition `{text}`"));
@@ -1360,5 +1386,15 @@ mod tests {
         assert!(condition("nope", &names).is_err());
         let c = condition("(sel or sel_a) and filter", &names).unwrap();
         assert!(matches!(c, Cond::And(_)));
+        // Deep nesting is refused, not a stack overflow.
+        let deep = format!("{}sel{}", "(".repeat(100_000), ")".repeat(100_000));
+        assert!(condition(&deep, &names).unwrap_err().contains("nested"));
+        assert!(condition(&"not ".repeat(100_000), &names).is_err());
+        let ok = format!("{}sel{}", "(".repeat(30), ")".repeat(30));
+        assert!(condition(&ok, &names).is_ok());
+        assert!(
+            glob_match("s*_*a", "sel_a") && glob_match("*", "") && !glob_match("f*x", "filter")
+        );
+        assert!(!glob_match(&"a*".repeat(40), &"a".repeat(30)));
     }
 }
