@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.8.1 (2026-11-27)
+
+Audit of the Sigma engine (also used by forhunt-viewer): rule files from a
+public set, or a crafted one, could take the process down.
+
+- A rule file with nested YAML aliases (each one doubling the last) grew to tens
+  of GB of memory from 2 KB of text and never finished loading. Aliases may now
+  add at most 100,000 nodes to a file; beyond that the file is not loaded and is
+  named with the reason.
+- A condition nested very deep (`((((…))))`, `not not not …`) overflowed the
+  stack and aborted the process (forhunt-viewer closed at once). Conditions may
+  nest 64 levels; deeper ones are refused like any rule that does not compile.
+- `1 of sel_*`-style name patterns are matched without backtracking (a pattern
+  with many `*` took exponential time).
+- 26,000 mutated hayabusa-rules and SigmaHQ files loaded and run over every
+  fixture: no other fault.
+
 ## 0.8.0 (2026-11-26)
 
 Built-in Sigma detection: the Hayabusa binary is no longer needed.
